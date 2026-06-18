@@ -1,0 +1,24 @@
+node_modules/
+.env
+backend/.env
+*.log
+dist/
+.vite/
+
+# 데이터베이스 (실제 채무자 데이터)
+db/debtflow.db
+db/debtflow.db-shm
+db/debtflow.db-wal
+
+# 엑셀 원본 데이터 파일
+db/*.xlsx
+
+# JSON 데이터 파일
+excel_debtors.json
+
+# Windows 바로가기
+*.lnk
+
+# 코드베이스 내보내기
+CODEBASE_EXPORT.md
+CODEBASE_EXPORT.txt

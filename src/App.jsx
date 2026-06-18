@@ -1,0 +1,5407 @@
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { EXCEL_DEBTORS } from "./excelData.js";
+import { EXCEL_REHABS } from "./rehabData.js";
+import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
+import { COLLECTION_ORDERS } from "./collectionData.js";
+
+// ─── Utilities ────────────────────────────────────────────
+const fmt = (n) => `${(n || 0).toLocaleString("ko-KR")}원`;
+const fmtDate = (d) => {
+  if (!d) return "-";
+  const dt = new Date(d);
+  return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
+};
+const today = () => new Date().toISOString().split("T")[0];
+const daysUntil = (d) => (d ? Math.ceil((new Date(d) - new Date()) / 864e5) : Infinity);
+const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+const uid = (prefix) => `${prefix}${Date.now()}${rand(100, 999)}`;
+
+// ─── Default Config (editable via admin) ──────────────────
+const DEFAULT_CONFIG = {
+  brands: [
+    { code: "B", name: "바로고",   color: "#3b82f6" },
+    { code: "D", name: "딜버",     color: "#8b5cf6" },
+    { code: "M", name: "모아라인", color: "#f59e0b" },
+    { code: "G", name: "그라이더", color: "#10b981" },
+  ],
+  categories: ["장기채권", "추심의뢰", "회생/파산", "협의소송", "분할상환", "캐쉬상환", "완료", "대손채권"],
+  collStatuses: ["추심진행", "추심보류", "완료", "대손채권"],
+  assignees: ["준원", "덕진"],
+  debtCauses: ["본사", "웰컴", "물품대금"],
+  hubNames: [
+    "광진본점허브", "충남천안원콜성두7지점", "강서마곡허브", "동대문허브",
+    "용산허브", "송파석촌허브", "인천서구허브", "부산해운대허브",
+    "대구수성허브", "수원영통허브", "성남분당허브", "안양만안허브",
+  ],
+  activityTypes: ["전화", "문자", "입금확인", "법적조치", "방문", "카카오톡", "내용증명"],
+  paymentChannels: ["본사계좌", "캐쉬충전", "웰컴직접상환"],
+  installmentTimings: ["월초", "월중", "월말", "수시"],
+  courts: ["서울중앙지법", "서울동부지법", "인천지법", "수원지법", "부산지법", "대구지법", "대전지법"],
+  rehabTypes: ["회생", "파산/면책"],
+  chargeTypes: ["사기", "횡령"],
+  policeStations: ["광진경찰서", "강서경찰서", "송파경찰서", "서초경찰서", "강남경찰서"],
+};
+
+const DEBTOR_NAMES = [
+  "㈜에스플러스","한준희","김용진","박찬영","이정석","장연옥","김호순",
+  "최민수","강태양","오서연","윤재호","임미경","조성훈","배수진",
+  "신동우","허지영","류현우","문예진","권도현","황수빈","안지훈",
+  "서하은","전민재","양나경","노태영","하지원","구본석","유서현",
+  "남기태","엄혜원","정대호","송민서","강다은","조재욱","홍예진",
+  "문성훈","권나영","황도윤","박상현","최유리","이미진","김영수",
+];
+const GUARANTOR_NAMES = ["이정석","장연옥","김호순","박미영","최재원","한수진"];
+const THIRD_PARTIES = [
+  "국민은행","신한은행","우리은행","하나은행","농협은행",
+  "카카오뱅크","토스뱅크","기업은행","SC제일은행","대구은행",
+  "부산은행","경남은행","쿠팡이츠","배달의민족","요기요",
+];
+
+function pickW(items, w) {
+  let r = Math.random(), c = 0;
+  for (let i = 0; i < items.length; i++) { c += w[i]; if (r <= c) return items[i]; }
+  return items[items.length - 1];
+}
+
+// 대시보드 분류별 현황
+const DASHBOARD_GROUPS = [
+  { label: "추심진행중", color: "#3b82f6", cats: ["장기채권"] },
+  { label: "협의소송",   color: "#f97316", cats: ["협의소송"] },
+  { label: "회생/파산",  color: "#7c3aed", cats: ["회생/파산"] },
+  { label: "추심의뢰",   color: "#f59e0b", cats: ["추심의뢰"] },
+  { label: "분할상환",   color: "#06b6d4", cats: ["분할상환"] },
+  { label: "캐쉬상환",   color: "#10b981", cats: ["캐쉬상환"] },
+  { label: "완료",       color: "#22c55e", cats: ["완료"] },
+  { label: "대손채권",   color: "#ef4444", cats: ["대손채권"] },
+];
+
+// ─── Data Generation ──────────────────────────────────────
+function generateData(cfg) {
+  const debtors = [], payments = [], activities = [], seizureCases = [], rehabilitations = [], installmentPlans = [], complaints = [];
+  for (let i = 0; i < 500; i++) {
+    const brand = pick(cfg.brands);
+    const category = pickW(cfg.categories, [0.6, 0.25, 0.15]);
+    const status = category === "회생파산" ? "추심보류" : pick(cfg.collStatuses);
+    const hubCode = String(rand(1000, 9999));
+    const subCode = Math.random() > 0.8 ? `${hubCode}-${rand(1, 3)}` : hubCode;
+    const principal = rand(50, 5000) * 10000;
+    const adjustment = Math.random() > 0.7 ? rand(10, 200) * 10000 : 0;
+    const collected = Math.round(principal * Math.random() * 0.6);
+    const finalFinance = principal - collected;
+    const finalLegal = finalFinance + adjustment;
+    const assignee = pick(cfg.assignees);
+    const debtorName = pick(DEBTOR_NAMES);
+    const loanDate = new Date(2019 + rand(0, 5), rand(0, 11), rand(1, 28)).toISOString().split("T")[0];
+    const monthlyCollected = {};
+    for (let m = 1; m <= 12; m++) monthlyCollected[m] = m <= 4 ? rand(0, 5) * 100000 : 0;
+
+    const debtor = {
+      id: `NPL${String(i + 1).padStart(4, "0")}`, brand: brand.code, brandName: brand.name, brandColor: brand.color,
+      category, assignee, name: debtorName,
+      guarantors: Math.random() > 0.6 ? Array.from({ length: rand(1, 2) }, () => pick(GUARANTOR_NAMES)) : [],
+      phone: `010-${rand(1000, 9999)}-${rand(1000, 9999)}`,
+      phoneHistory: Math.random() > 0.7 ? [`010-${rand(1000, 9999)}-${rand(1000, 9999)} (결번)`] : [],
+      hubCode: subCode, hubName: pick(cfg.hubNames), debtCause: pick(cfg.debtCauses),
+      collectionStatus: status,
+      creditCheck: Math.random() > 0.5 ? fmtDate(new Date(2023, rand(0, 11), rand(1, 28))) : null,
+      creditGrade: Math.random() > 0.5 ? pick(["1등급","2등급","3등급","4등급","5등급","6등급","7등급","8등급","9등급","10등급"]) : null,
+      execTitle: Math.random() > 0.4,
+      residentCopy: Math.random() > 0.5 ? fmtDate(new Date(2023, rand(0, 11), rand(1, 28))) : null,
+      salesRep: Math.random() > 0.6 ? `${rand(1, 3)}팀 ${pick(["김상원","박지호","이승현"])} 010-${rand(1000, 9999)}-${rand(1000, 9999)}` : null,
+      loanDate, subrogationMonth: Math.random() > 0.7 ? `${2020 + rand(0, 4)}년 ${rand(1, 12)}월` : null,
+      keyNotes: Math.random() > 0.5 ? pick(["2024.03 내용증명 발송 완료","지급명령 확정, 강제집행 준비중","분납 협의 진행중 - 월 30만원","주소불명, 초본 재발급 필요","연대보증인 통해 일부 회수","파산면책 신청 확인됨","2025.01 채권압류 신청"]) : "",
+      principalBalance: principal, adjustment, collectedAmount: collected,
+      finalBalanceFinance: finalFinance, finalBalanceLegal: finalLegal, monthlyCollected,
+    };
+    debtors.push(debtor);
+
+    for (let p = 0; p < rand(0, 8); p++) {
+      const total = rand(1, 50) * 10000; const ch = pick(cfg.paymentChannels);
+      payments.push({ id: `PAY${String(payments.length + 1).padStart(5, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, assignee: debtor.assignee, hubName: debtor.hubName, hubCode: debtor.hubCode, paymentDate: new Date(2025 + rand(0, 1), rand(0, 11), rand(1, 28)).toISOString().split("T")[0], payerName: Math.random() > 0.8 ? pick(GUARANTOR_NAMES) : debtor.name, totalAmount: total, companyAccount: ch === "본사계좌" ? total : 0, cashCharge: ch === "캐쉬충전" ? total : 0, welcomeDirect: ch === "웰컴직접상환" ? total : 0, note: pick(["","","회생금","분납","일시납","연대보증인 입금"]) });
+    }
+    for (let a = 0; a < rand(1, 12); a++) {
+      activities.push({ id: `ACT${String(activities.length + 1).padStart(5, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, activityDate: new Date(2025, rand(0, 11), rand(1, 28)).toISOString().split("T")[0], activityType: pick(cfg.activityTypes), content: pick(["통화 성공 - 다음주 월요일 50만원 입금 약속","부재중, 문자 발송","입금 확인 30만원","지급명령 신청 완료","카카오톡 발송 - 읽음 확인","현장 방문 - 부재","분납 협의 - 월 20만원 합의","연락 불가, 결번 확인","내용증명 발송","연대보증인 연락 - 상황 안내","채무자 연락옴 - 상환 의사 확인","압류 결정문 수령"]), assignee: debtor.assignee });
+    }
+    if (Math.random() > 0.7 && debtor.execTitle) {
+      seizureCases.push({ id: `SEZ${String(seizureCases.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, hubName: debtor.hubName, court: pick(cfg.courts), caseNumber: `2025타채${rand(10000, 99999)}`, procedureType: pickW(["압류","지급명령","재산명시 및 재산조회"],[0.5,0.3,0.2]), status: pick(["결정","송달완료","추심중","배당완료","취하"]), targets: Array.from({ length: rand(2, 8) }, (_, ti) => ({ seq: ti + 1, thirdPartyName: pick(THIRD_PARTIES), responseDate: Math.random() > 0.4 ? new Date(2025, rand(0, 11), rand(1, 28)).toISOString().split("T")[0] : null, claimAmount: rand(50, 3000) * 10000, balance: rand(0, 500) * 10000, collected: rand(0, 200) * 10000, note: pick(["","","청구필요","추심포기","잔액없음","추심중"]), completed: Math.random() > 0.6 })) });
+    }
+    if (category === "회생파산") {
+      rehabilitations.push({ id: `REH${String(rehabilitations.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, court: pick(cfg.courts), caseNumber: `2024개회${rand(1000, 9999)}`, type: pick(cfg.rehabTypes), creditorNumber: rand(1, 30), planApproved: Math.random() > 0.3, dismissed: Math.random() > 0.85, debtAmount: principal, approvedAmount: Math.round(principal * (rand(10, 40) / 100)), currentRound: `${rand(1, 36)}회차`, monthlyPayment: rand(5, 30) * 10000, repaymentNote: pick(["변제 진행중","1~36회차 진행","미납 2회","정상 변제중","폐지 검토"]), overdueStatus: Math.random() > 0.7 ? "미납" : "" });
+    }
+    if (status === "추심진행" && Math.random() > 0.6) {
+      const mAmt = rand(10, 100) * 10000;
+      installmentPlans.push({ id: `INS${String(installmentPlans.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, brandName: brand.name, hubCode: subCode, paymentTiming: pick(cfg.installmentTimings), monthlyAmount: mAmt, totalDebt: principal, totalClaim: finalLegal, assignee: debtor.assignee, startDate: new Date(2024, rand(0, 11), 1).toISOString().split("T")[0], status: pick(["진행중","진행중","진행중","완료","중단"]), logs: Array.from({ length: rand(3, 12) }, (_, li) => ({ targetMonth: `${2024 + Math.floor((li + rand(0, 5)) / 12)}년 ${((li + rand(1, 3)) % 12) + 1}월`, paidAmount: Math.random() > 0.2 ? mAmt : 0, memo: pick(["입금확인","","미납","지연입금","일부입금",""]), status: Math.random() > 0.2 ? "완납" : Math.random() > 0.5 ? "미납" : "지연" })) });
+    }
+    if (Math.random() > 0.9) {
+      complaints.push({ id: `CRM${String(complaints.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, assignee: debtor.assignee, complainant: "㈜바로고", hubName: debtor.hubName, goodsAmount: rand(100, 3000) * 10000, loanAmount: principal, charge: pick(cfg.chargeTypes), complaintDate: new Date(2024, rand(0, 11), rand(1, 28)).toISOString().split("T")[0], policeStation: pick(cfg.policeStations), statusNote: pick(["수사중","기소","불기소","재정신청","1심 진행중"]) });
+    }
+  }
+  activities.sort((a, b) => b.activityDate.localeCompare(a.activityDate));
+  payments.sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
+  return { debtors, payments, activities, seizureCases, rehabilitations, installmentPlans, complaints, legalCases: [], minsaCases: [], assetDisclosures: [] };
+}
+
+// ─── Excel 데이터 로더 ────────────────────────────────────
+const CATEGORY_NORMALIZE = { "회생파산": "회생/파산" };
+
+// 채무자 이름 정규화: (회생), (파산면책), ㈜ 등 제거하여 매칭에 사용
+function normNameForMatch(s) {
+  return String(s || "")
+    .replace(/\([^)]*\)/g, "")    // 괄호 안 내용 전체 제거: (회생), (파산 면책), (파산) 등
+    .replace(/㈜|주식회사|\(주\)/g, "")
+    .replace(/회생|파산|면책|회셍/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// ─── 수동 추가 데이터 (localStorage 영구 저장) ────────────
+const MK = {
+  legalCases:       "manual_legal_cases",
+  minsaCases:       "manual_minsa_cases",
+  assetDisclosures: "manual_asset_disclosures",
+  rehabilitations:  "manual_rehabilitations",
+  installmentPlans: "manual_installment_plans",
+  complaints:       "manual_complaints",
+  debtors:          "manual_debtors",
+  payments:         "manual_payments",
+  activities:       "manual_activities",
+};
+function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
+function saveMR(key, recs) { localStorage.setItem(key, JSON.stringify(recs)); }
+function addMR(key, rec)   { const r = [rec, ...getMR(key)]; saveMR(key, r); return r; }
+function delMR(key, id)    { const r = getMR(key).filter(x => x.id !== id); saveMR(key, r); return r; }
+
+// ─── 채무자 히스토리 localStorage ──────────────────────────
+// hist_m_{id}: 수동 추가 항목 [{id, date, content}]
+// hist_e_{id}: Excel 항목 편집 { "e_N": {date, content} }
+// hist_d_{id}: Excel 항목 삭제 [N, ...]
+const getHistM = (id) => { try { return JSON.parse(localStorage.getItem(`hist_m_${id}`) || "[]"); } catch { return []; } };
+const saveHistM = (id, arr) => localStorage.setItem(`hist_m_${id}`, JSON.stringify(arr));
+const getHistE = (id) => { try { return JSON.parse(localStorage.getItem(`hist_e_${id}`) || "{}"); } catch { return {}; } };
+const saveHistE = (id, obj) => localStorage.setItem(`hist_e_${id}`, JSON.stringify(obj));
+const getHistD = (id) => { try { return JSON.parse(localStorage.getItem(`hist_d_${id}`) || "[]"); } catch { return []; } };
+const saveHistD = (id, arr) => localStorage.setItem(`hist_d_${id}`, JSON.stringify(arr));
+const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
+const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
+
+// ─── 수동 매칭 override (localStorage 영구 저장) ─────────
+const REHAB_OVERRIDES_KEY = "rehab_manual_overrides";
+function getRehabOverrides() {
+  try { return JSON.parse(localStorage.getItem(REHAB_OVERRIDES_KEY) || "{}"); } catch { return {}; }
+}
+function saveRehabOverride(rehabId, debtorId) {
+  const ov = getRehabOverrides();
+  if (debtorId === null) delete ov[rehabId]; else ov[rehabId] = debtorId;
+  localStorage.setItem(REHAB_OVERRIDES_KEY, JSON.stringify(ov));
+}
+function applyRehabOverrides(rehabs) {
+  const ov = getRehabOverrides();
+  if (!Object.keys(ov).length) return rehabs;
+  return rehabs.map(r => ov[r.id] !== undefined ? { ...r, debtorId: ov[r.id] } : r);
+}
+
+// 채무자 목록(기준)을 받아 회생파산 데이터의 debtorId를 재매칭
+// 채무자 관리가 마스터 데이터 → 카테고리 '회생/파산'인 채무자를 최우선 매칭
+function matchRehabsToDebtors(rehabs, debtors) {
+  const byBrand = {};   // "brand:norm" → id  (회생/파산 카테고리가 덮어씀)
+  const byName = {};    // "norm" → id         (회생/파산 카테고리가 덮어씀)
+
+  // 1차: 전체 채무자 등록
+  debtors.forEach(d => {
+    const norm = normNameForMatch(d.name);
+    if (!norm) return;
+    if (!byBrand[`${d.brand}:${norm}`]) byBrand[`${d.brand}:${norm}`] = d.id;
+    if (!byName[norm]) byName[norm] = d.id;
+  });
+  // 2차: 회생/파산 카테고리 채무자로 덮어쓰기 (최우선)
+  debtors.forEach(d => {
+    const isRehab = d.category === "회생/파산" || d.category === "회생파산";
+    if (!isRehab) return;
+    const norm = normNameForMatch(d.name);
+    if (!norm) return;
+    byBrand[`${d.brand}:${norm}`] = d.id;
+    byName[norm] = d.id;
+  });
+
+  return rehabs.map(r => {
+    const norm = normNameForMatch(r.debtorName);
+    const debtorId = byBrand[`${r.brand}:${norm}`] || byName[norm] || null;
+    return { ...r, debtorId };
+  });
+}
+
+// ─── 법적절차 수동 매칭 override (localStorage 영구 저장) ──
+const LEGAL_OVERRIDES_KEY = "legal_manual_overrides";
+const MINSA_OVERRIDES_KEY = "minsa_manual_overrides";
+const AD_OVERRIDES_KEY    = "ad_manual_overrides";
+function getLegalOv(key)  { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } }
+function saveLegalOv(key, caseId, debtorId) {
+  const ov = getLegalOv(key);
+  if (debtorId === null) delete ov[caseId]; else ov[caseId] = debtorId;
+  localStorage.setItem(key, JSON.stringify(ov));
+}
+function applyLegalOv(cases, key) {
+  const ov = getLegalOv(key);
+  if (!Object.keys(ov).length) return cases;
+  return cases.map(c => ov[c.id] !== undefined ? { ...c, debtorId: ov[c.id] } : c);
+}
+
+// ─── 사건별 OneDrive URL ─────────────────────────────────
+const CASE_URLS_KEY = "case_onedrive_urls";
+function getCaseUrls() { try { return JSON.parse(localStorage.getItem(CASE_URLS_KEY) || "{}"); } catch { return {}; } }
+function saveCaseUrl(caseId, url) { const m = getCaseUrls(); if (url && url.trim()) m[caseId] = url.trim(); else delete m[caseId]; localStorage.setItem(CASE_URLS_KEY, JSON.stringify(m)); }
+function getCaseUrl(caseId) { return getCaseUrls()[caseId] || ""; }
+
+// ─── 추심의뢰 수동 매칭 + 편집 + 수동추가 + 삭제 override ───
+const COLLECTION_OV_KEY      = "collection_manual_overrides";
+const COLLECTION_EDIT_KEY    = "collection_edits";
+const COLLECTION_MANUAL_KEY  = "collection_manual";
+const COLLECTION_DELETED_KEY = "collection_deleted_ids";
+function getCollectionOv()      { try { return JSON.parse(localStorage.getItem(COLLECTION_OV_KEY)      || "{}"); } catch { return {}; } }
+function getCollectionEdits()   { try { return JSON.parse(localStorage.getItem(COLLECTION_EDIT_KEY)    || "{}"); } catch { return {}; } }
+function getCollectionManual()  { try { return JSON.parse(localStorage.getItem(COLLECTION_MANUAL_KEY)  || "[]"); } catch { return []; } }
+function getCollectionDeleted() { try { return JSON.parse(localStorage.getItem(COLLECTION_DELETED_KEY) || "[]"); } catch { return []; } }
+function saveCollectionOv(orderId, debtorId) {
+  const ov = getCollectionOv();
+  if (debtorId === null) delete ov[orderId]; else ov[orderId] = debtorId;
+  localStorage.setItem(COLLECTION_OV_KEY, JSON.stringify(ov));
+}
+function saveCollectionEdit(orderId, fields) {
+  const ed = getCollectionEdits();
+  ed[orderId] = { ...(ed[orderId] || {}), ...fields };
+  localStorage.setItem(COLLECTION_EDIT_KEY, JSON.stringify(ed));
+}
+function saveCollectionManual(records) {
+  localStorage.setItem(COLLECTION_MANUAL_KEY, JSON.stringify(records));
+}
+function addCollectionDeleted(id) {
+  const del = getCollectionDeleted();
+  if (!del.includes(id)) localStorage.setItem(COLLECTION_DELETED_KEY, JSON.stringify([...del, id]));
+}
+function applyCollectionOv(orders, debtors) {
+  const ov      = getCollectionOv();
+  const ed      = getCollectionEdits();
+  const manual  = getCollectionManual();
+  const deleted = getCollectionDeleted();
+  const all     = [...orders, ...manual];
+  const normName = (s) => String(s || "").replace(/\(.*?\)|\s+|㈜|주식회사/g, "").toLowerCase();
+  return all
+    .filter(o => !deleted.includes(o.id))
+    .map(o => {
+      let debtorId = ov[o.id] !== undefined ? ov[o.id] : o.debtorId;
+      if (!debtorId) {
+        const on = normName(o.debtorName);
+        const candidates = debtors.filter(d => normName(d.name) === on);
+        const match = candidates.find(d => d.brand === o.brand) || candidates[0] || null;
+        debtorId = match?.id || null;
+      }
+      return { ...o, ...(ed[o.id] || {}), debtorId };
+    });
+}
+
+// ─── 제3채무자 편집 override (localStorage 영구 저장) ────────
+const THIRDS_OV_KEY = "legal_thirds_overrides";
+function getThirdsOv() { try { return JSON.parse(localStorage.getItem(THIRDS_OV_KEY) || "{}"); } catch { return {}; } }
+function saveThirdsOv(caseId, thirds) {
+  const ov = getThirdsOv();
+  ov[caseId] = thirds;
+  localStorage.setItem(THIRDS_OV_KEY, JSON.stringify(ov));
+}
+function applyThirdsOv(cases) {
+  const ov = getThirdsOv();
+  if (!Object.keys(ov).length) return cases;
+  return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
+}
+
+// ─── 강화된 이름 정규화 (전자소송 피고명용) ────────────────
+function normLegalName(raw) {
+  return String(raw || "")
+    .replace(/외\s*\d+\s*명/g, "")               // "외 N명" 제거
+    .replace(/[변개]경전[^:：)]*[:：]\s*[가-힣a-z]+/gi, "") // "변경전:이름", "개명전:이름" 제거
+    .replace(/성명\s*[:：]\s*/gi, "")             // "성명:" 제거
+    .replace(/\([^)]*\)/g, "")                   // 나머지 괄호 내용 제거
+    .replace(/㈜|주식회사|\(주\)/g, "")           // 법인 표기 제거
+    .replace(/회생|파산|면책/g, "")
+    .replace(/\s+/g, "").toLowerCase().trim();
+}
+
+// "변경전:xxx" 에서 이전 이름 추출 → 매칭 후보 확장
+function extractPrevNames(raw) {
+  const results = [];
+  const s = String(raw || "");
+  // "(변경전:김성진)", "(개명전:김연길)", "(변경전 : 박현욱)" 등 처리
+  for (const m of s.matchAll(/[변개]경전[^:：)]*[:：]\s*([가-힣]{2,6})/g)) {
+    const n = normNameForMatch(m[1]);
+    if (n) results.push(n);
+  }
+  return results;
+}
+
+// 채무자 인덱스 구축
+// - 같은 브랜드 내 동명이인 → 충돌(ambiguous) 처리 → 자동매칭 안 하고 수동 연결 유도
+// - "(구 장민철)" 패턴 → byAlias 인덱스로 정확 매칭 (유태걸(구 장민철) 구분용)
+// - "김용진95" → "김용진" 숫자 접미사 제거 (낮은 우선순위)
+function buildDebtorIndex(debtors) {
+  const byBrand = {}, byName = {}, byAlias = {};
+  const ambBrand = new Set(), ambName = new Set();
+
+  // 1차: 이름 등록 + 충돌 감지
+  debtors.forEach(d => {
+    const norm = normNameForMatch(d.name);
+    if (!norm) return;
+    const bk = `${d.brand}:${norm}`;
+    if (byBrand[bk]) ambBrand.add(bk); else byBrand[bk] = d.id;
+    if (byName[norm]) ambName.add(norm); else byName[norm] = d.id;
+
+    // "(구 xxx)" 패턴 → alias 인덱스 (구 이름으로도 찾을 수 있게)
+    const aliasM = d.name.match(/[\(（]구\s*([가-힣]{2,6})[\)）]/);
+    if (aliasM) {
+      const an = normNameForMatch(aliasM[1]);
+      if (an) {
+        if (!byAlias[`${d.brand}:${an}`]) byAlias[`${d.brand}:${an}`] = d.id;
+        if (!byAlias[an]) byAlias[an] = d.id;
+      }
+    }
+  });
+
+  // 충돌 항목 제거 (동명이인 → 수동 매칭으로)
+  ambBrand.forEach(k => delete byBrand[k]);
+  ambName.forEach(k => delete byName[k]);
+
+  // 2차: 숫자 접미사 제거 (김용진95→김용진) — 충돌 없는 경우만
+  debtors.forEach(d => {
+    const norm = normNameForMatch(d.name);
+    const noNum = norm.replace(/\d+$/, "");
+    if (!noNum || noNum === norm) return;
+    if (!byName[noNum] && !ambName.has(noNum)) byName[noNum] = d.id;
+    const bk2 = `${d.brand}:${noNum}`;
+    if (!byBrand[bk2] && !ambBrand.has(bk2)) byBrand[bk2] = d.id;
+  });
+
+  return { byBrand, byName, byAlias };
+}
+
+// ─── 전자소송 사건 → 채무자 매칭 ──────────────────────────
+function matchLegalCasesToDebtors(cases, debtors) {
+  const { byBrand, byName, byAlias } = buildDebtorIndex(debtors);
+
+  const tryMatch = (rawName, brand) => {
+    const n1 = normLegalName(rawName);       // 괄호·외N명·변경전 모두 제거
+    const n2 = normNameForMatch(rawName);    // 기본 정규화
+
+    // 1. 브랜드+이름 (가장 정확)
+    if (brand) {
+      const id = byBrand[`${brand}:${n1}`] || byBrand[`${brand}:${n2}`];
+      if (id) return id;
+    }
+
+    // 2. 브랜드+구이름 — rawName에서 (구 xxx) 추출
+    const aliasM = rawName.match(/[\(（]구\s*([가-힣]{2,6})[\)）]/);
+    if (aliasM) {
+      const an = normNameForMatch(aliasM[1]);
+      if (an) {
+        const id = (brand ? byAlias[`${brand}:${an}`] : null) || byAlias[an] || null;
+        if (id) return id;
+      }
+    }
+
+    // 3. 브랜드 없이 이름만 (폴백)
+    const id3 = byName[n1] || byName[n2];
+    if (id3) return id3;
+
+    // 4. 변경전:xxx 이전 이름
+    for (const pn of extractPrevNames(rawName)) {
+      const id4 = (brand ? byBrand[`${brand}:${pn}`] : null) || byName[pn] || null;
+      if (id4) return id4;
+    }
+
+    return null;
+  };
+
+  return cases.map(c => ({ ...c, debtorId: tryMatch(c.defendant || "", c.brand) }));
+}
+
+// ─── 재산명시 → 채무자 매칭 ────────────────────────────────
+function matchAssetDisclosuresToDebtors(cases, debtors) {
+  const { byBrand, byName, byAlias } = buildDebtorIndex(debtors);
+
+  const tryMatch = (rawName, brand) => {
+    const n1 = normLegalName(rawName);
+    const n2 = normNameForMatch(rawName);
+    const base = (n) => brand ? (byBrand[`${brand}:${n}`] || byName[n] || null) : (byName[n] || null);
+    let id = base(n1) || base(n2);
+    if (!id) {
+      const aliasM = rawName.match(/[\(（]구\s*([가-힣]{2,6})[\)）]/);
+      if (aliasM) {
+        const an = normNameForMatch(aliasM[1]);
+        if (an) id = (brand ? byAlias[`${brand}:${an}`] : null) || byAlias[an] || null;
+      }
+    }
+    return id || null;
+  };
+
+  return cases.map(c => {
+    const debtorId = tryMatch(c.debtorName || "", c.brand);
+    const brand = c.brand || (debtorId ? (debtors.find(x => x.id === debtorId)?.brand || null) : null);
+    return { ...c, debtorId, brand };
+  });
+}
+
+function loadExcelData(cfg) {
+  const brandMap = {};
+  cfg.brands.forEach(b => { brandMap[b.code] = b; });
+
+  const debtors = EXCEL_DEBTORS.map(d => {
+    const brand = brandMap[d.brand] || { code: d.brand, name: d.brand, color: "#64748b" };
+    return {
+      ...d,
+      category: CATEGORY_NORMALIZE[d.category] || d.category,
+      brandName: brand.name,
+      brandColor: brand.color,
+    };
+  });
+
+  const allDebtors = [...debtors, ...getMR(MK.debtors)];
+  return {
+    debtors:          allDebtors,
+    payments:         getMR(MK.payments),
+    activities:       getMR(MK.activities),
+    seizureCases:     [],
+    installmentPlans:     getMR(MK.installmentPlans),
+    installmentSchedules: [],
+    complaints:       getMR(MK.complaints),
+    rehabilitations:  [...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)],
+    legalCases:       applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]),
+    minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
+    assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
+    collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
+  };
+}
+
+// ─── Icons ────────────────────────────────────────────────
+const I = ({ name, size = 18 }) => {
+  const s = {
+    dashboard: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
+    users: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+    calendar: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+    won: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4l4 16h1l3-10 3 10h1l4-16"/><line x1="2" y1="10" x2="22" y2="10"/><line x1="2" y1="14" x2="22" y2="14"/></svg>,
+    gavel: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2.5l5 5-8 8-5-5z"/><path d="M3 21l3.5-3.5"/><path d="M6.5 17.5l5-5"/><line x1="18" y1="2" x2="22" y2="6"/></svg>,
+    activity: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+    settings: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+    search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+    bell: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>,
+    close: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+    plus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+    upload: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
+    edit: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+    trash: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+    arrowUp: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>,
+    arrowDown:  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>,
+    arrowRight: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>,
+    back: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+    eye: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
+    eyeOff: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>,
+    userPlus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>,
+    key: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
+    shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+    scale: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><path d="M4 9h16"/><path d="M4 9l4 6c0 1.1-.9 2-2 2s-2-.9-2-2l4-6z"/><path d="M20 9l-4 6c0 1.1.9 2 2 2s2-.9 2-2l-4-6z"/></svg>,
+    refresh: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+  };
+  return s[name] || null;
+};
+
+// ─── Badges ───────────────────────────────────────────────
+const Badge = ({ status, small }) => {
+  const c = { "추심진행":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"추심보류":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"추심진행중":{bg:"#f1f5f9",t:"#475569",b:"#e2e8f0"},"장기채권":{bg:"#f1f5f9",t:"#475569",b:"#e2e8f0"},"회생파산":{bg:"#faf5ff",t:"#7e22ce",b:"#e9d5ff"},"회생/파산":{bg:"#faf5ff",t:"#7e22ce",b:"#e9d5ff"},"추심의뢰":{bg:"#fffbeb",t:"#b45309",b:"#fde68a"},"대손채권":{bg:"#fef2f2",t:"#991b1b",b:"#fecaca"},"분할상환":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"협의소송":{bg:"#fff7ed",t:"#c2410c",b:"#fed7aa"},"캐쉬상환":{bg:"#ecfdf5",t:"#047857",b:"#a7f3d0"},"완납":{bg:"#ecfdf5",t:"#047857",b:"#a7f3d0"},"미납":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"지연":{bg:"#fffbeb",t:"#b45309",b:"#fde68a"},"진행중":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"진행":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"완료":{bg:"#ecfdf5",t:"#047857",b:"#a7f3d0"},"중단":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"결정":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"송달완료":{bg:"#ecfdf5",t:"#047857",b:"#a7f3d0"},"추심중":{bg:"#fffbeb",t:"#b45309",b:"#fde68a"},"배당완료":{bg:"#ecfdf5",t:"#047857",b:"#a7f3d0"},"취하":{bg:"#f1f5f9",t:"#475569",b:"#e2e8f0"},"각하":{bg:"#fef3c7",t:"#92400e",b:"#fde68a"},"회생":{bg:"#faf5ff",t:"#7e22ce",b:"#e9d5ff"},"파산/면책":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"수사중":{bg:"#fffbeb",t:"#b45309",b:"#fde68a"},"기소":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"불기소":{bg:"#f1f5f9",t:"#475569",b:"#e2e8f0"},"사기":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"횡령":{bg:"#faf5ff",t:"#7e22ce",b:"#e9d5ff"},"지급명령":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"압류":{bg:"#faf5ff",t:"#7e22ce",b:"#e9d5ff"},"재산명시":{bg:"#fff7ed",t:"#c2410c",b:"#fed7aa"},"민사소송":{bg:"#f0fdf4",t:"#166534",b:"#bbf7d0"},"채권자":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"원고":{bg:"#eff6ff",t:"#1d4ed8",b:"#bfdbfe"},"피고":{bg:"#fef2f2",t:"#b91c1c",b:"#fecaca"},"미연결":{bg:"#f1f5f9",t:"#64748b",b:"#e2e8f0"} }[status] || {bg:"#f1f5f9",t:"#475569",b:"#e2e8f0"};
+  return <span style={{display:"inline-flex",alignItems:"center",padding:small?"1px 6px":"2px 10px",borderRadius:20,fontSize:small?10:11,fontWeight:600,background:c.bg,color:c.t,border:`1px solid ${c.b}`}}>{status}</span>;
+};
+const BrandBadge = ({ code, brands }) => {
+  const b = (brands || DEFAULT_CONFIG.brands).find(x => x.code === code) || { code, name: code, color: "#64748b" };
+  return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:6,fontSize:11,fontWeight:700,background:`${b.color}18`,color:b.color,border:`1px solid ${b.color}40`}}>{code}</span>;
+};
+
+// ─── Form Field Components ────────────────────────────────
+const Field = ({ label, children, span }) => (
+  <div style={{ gridColumn: span ? `span ${span}` : undefined }}>
+    <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4, fontWeight: 500 }}>{label}</div>
+    {children}
+  </div>
+);
+const inp = { width: "100%", padding: "8px 10px", fontSize: 13 };
+
+// ─── Autocomplete Component ──────────────────────────────
+const AutoComplete = ({ value, onChange, options, placeholder, displayFn, style: extraStyle }) => {
+  const [text, setText] = useState(displayFn ? (displayFn(value) || "") : (value || ""));
+  const [open, setOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { setText(displayFn ? (displayFn(value) || "") : (value || "")); }, [value]);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+  const filtered = options.filter(o => {
+    const label = displayFn ? displayFn(o) : String(o);
+    return label.toLowerCase().includes(text.toLowerCase());
+  });
+  return (
+    <div ref={ref} style={{ position: "relative", ...extraStyle }}>
+      <input
+        value={text}
+        onChange={e => { setText(e.target.value); setOpen(true); }}
+        onFocus={() => { setOpen(true); setFocused(true); }}
+        onBlur={() => setFocused(false)}
+        placeholder={placeholder}
+        style={inp}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, maxHeight: 180, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
+          {filtered.map((o, i) => {
+            const label = displayFn ? displayFn(o) : String(o);
+            return (
+              <div key={i} onClick={() => { onChange(o); setText(label); setOpen(false); }}
+                style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", borderBottom: i < filtered.length - 1 ? "1px solid var(--brd)" : "none" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                {label}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = debtors.find(d => d.id === value);
+  useEffect(() => { if (selected) setText(`${selected.brandName} / ${selected.name} (${selected.id})`); }, [value]);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+  const filtered = debtors.filter(d => {
+    const q = text.toLowerCase();
+    return d.name.includes(q) || d.id.toLowerCase().includes(q) || d.hubName.includes(q) || d.brandName.includes(q);
+  }).slice(0, 20);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input value={text} onChange={e => { setText(e.target.value); setOpen(true); if (!e.target.value) onChange(""); }} onFocus={() => setOpen(true)} placeholder="채무자명, ID, 허브명으로 검색..." style={inp} />
+      {open && filtered.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, maxHeight: 220, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
+          {filtered.map(d => (
+            <div key={d.id} onClick={() => { onChange(d.id); setText(`${d.brandName} / ${d.name} (${d.id})`); setOpen(false); }}
+              style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--brd)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <BrandBadge code={d.brand} brands={brands} />
+              <span style={{ fontWeight: 500 }}>{d.name}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{d.id}</span>
+              <span style={{ fontSize: 11, color: "var(--ts)" }}>{d.hubName}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Modal Overlay ────────────────────────────────────────
+const Overlay = ({ children, onClose, wide }) => (
+  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1e3 }} onClick={onClose}>
+    <div className="anim" onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, width: wide ? 720 : 560, maxHeight: "85vh", overflow: "auto", padding: 24, border: "1px solid var(--brd)" }}>{children}</div>
+  </div>
+);
+const ModalHeader = ({ title, onClose }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+    <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
+    <button onClick={onClose} style={{ background: "none", color: "var(--tm)" }}><I name="close" size={18} /></button>
+  </div>
+);
+const ModalFooter = ({ onCancel, onSave, saveLabel }) => (
+  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+    <button onClick={onCancel} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
+    <button onClick={onSave} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "var(--acc)", color: "#fff" }}>{saveLabel || "저장"}</button>
+  </div>
+);
+
+// ─── Permissions ──────────────────────────────────────────
+const ROLES = [
+  { key: "admin",   label: "관리자", desc: "모든 데이터 삭제/추가/편집/읽기 + 사용자 관리" },
+  { key: "manager", label: "매니저", desc: "본인 데이터 삭제/편집, 전체 추가/읽기 가능" },
+  { key: "member",  label: "구성원", desc: "데이터 읽기만 가능" },
+];
+const PERM_MAP = {
+  admin:   { view: true, edit: true, delete: true,  admin: true },
+  manager: { view: true, edit: true, delete: false, admin: false },
+  member:  { view: true, edit: false, delete: false, admin: false },
+};
+
+// ─── User Store ────────────────────────────────────────────
+const APP_USERS_KEY = "app_users";
+const DEFAULT_USERS = [
+  { id: "U002", name: "배현진", email: "hjbae@barogo.com", avatar: "배", role: "admin", approved: true, registeredAt: "2026-06-10", password: "hj12345!" },
+  { id: "U003", name: "김준원", email: "kimjw@barogo.com", avatar: "김", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
+  { id: "U004", name: "조혜원", email: "chohw1997@barogo.com", avatar: "조", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
+  { id: "U005", name: "장덕진", email: "djjang_bu@barogo.com", avatar: "장", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
+  { id: "U006", name: "유재선", email: "jsyoo6708@barogo.com", avatar: "유", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
+];
+
+// ─── Default Alert Rules ──────────────────────────────────
+const DEFAULT_ALERT_RULES = [
+  { id: "rule1", name: "분할상환 미납", enabled: true, trigger: "installment_overdue", condition: "미납 1회 이상", target: "channel", channel: "#npl-알림", assignee: "" },
+  { id: "rule2", name: "회생 변제금 미납", enabled: true, trigger: "rehab_overdue", condition: "미납 상태", target: "channel", channel: "#npl-알림", assignee: "" },
+  { id: "rule3", name: "고액 잔액", enabled: true, trigger: "high_balance", condition: "잔액 1,000만원 초과", target: "dm", channel: "", assignee: "준원" },
+  { id: "rule4", name: "신규 입금", enabled: false, trigger: "new_payment", condition: "입금 등록 시", target: "channel", channel: "#npl-입금", assignee: "" },
+  { id: "rule5", name: "장기 미연락", enabled: false, trigger: "no_contact", condition: "30일 이상 활동 없음", target: "dm", channel: "", assignee: "" },
+];
+const TRIGGER_TYPES = [
+  { key: "installment_overdue", label: "분할상환 미납" },
+  { key: "rehab_overdue", label: "회생 변제금 미납" },
+  { key: "high_balance", label: "고액 잔액 (1,000만원 초과)" },
+  { key: "new_payment", label: "신규 입금 등록" },
+  { key: "no_contact", label: "장기 미연락 (30일)" },
+  { key: "status_change", label: "추심상태 변경" },
+  { key: "new_debtor", label: "신규 채권 등록" },
+  { key: "seizure_collected", label: "압류 회수 발생" },
+];
+
+// ─── Login Screen ─────────────────────────────────────────
+const LoginScreen = ({ onLogin, loginError }) => {
+  const [id, setId]       = useState("");
+  const [pw, setPw]       = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const doLogin = () => onLogin(id, pw);
+  const brd = loginError ? "var(--err)" : "var(--brd)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
+      <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 48, width: 400, border: "1px solid var(--brd)", boxShadow: "0 8px 40px rgba(0,0,0,.08)" }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}><span style={{ color: "var(--acc)" }}>BAROGO</span> DEBTFLOW</div>
+          <div style={{ fontSize: 12, color: "var(--tm)" }}>NPL 채권관리 시스템</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 5, fontWeight: 500 }}>이름 또는 이메일</div>
+            <input value={id} onChange={e => setId(e.target.value)} placeholder="이름 또는 이메일 주소"
+              style={{ width: "100%", padding: "11px 13px", borderRadius: 10, fontSize: 14, border: `1px solid ${brd}`, background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }}
+              onKeyDown={e => e.key === "Enter" && doLogin()} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 5, fontWeight: 500 }}>비밀번호</div>
+            <div style={{ position: "relative" }}>
+              <input value={pw} type={showPw ? "text" : "password"} onChange={e => setPw(e.target.value)} placeholder="비밀번호"
+                style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 10, fontSize: 14, border: `1px solid ${brd}`, background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }}
+                onKeyDown={e => e.key === "Enter" && doLogin()} />
+              <button onClick={() => setShowPw(p => !p)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}>
+                <I name={showPw ? "eyeOff" : "eye"} size={16} />
+              </button>
+            </div>
+          </div>
+          {loginError && <div style={{ fontSize: 12, color: "var(--err)", padding: "8px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>{loginError}</div>}
+          <button onClick={doLogin} style={{ width: "100%", padding: "13px 0", borderRadius: 10, fontSize: 15, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", marginTop: 4 }}>로그인</button>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 20, textAlign: "center" }}>접근 권한이 필요하면 관리자에게 문의하세요</div>
+      </div>
+    </div>
+  );
+};
+
+const PendingScreen = ({ user, onLogout }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
+    <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 48, width: 420, textAlign: "center", border: "1px solid var(--brd)" }}>
+      <div style={{ width: 60, height: 60, borderRadius: 30, background: "#f59e0b18", color: "#f59e0b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 700, margin: "0 auto 16px" }}>{user.avatar}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{user.name}</div>
+      <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 24 }}>{user.email}</div>
+      <div style={{ padding: "12px 20px", background: "#f59e0b18", borderRadius: 10, fontSize: 14, color: "#b45309", fontWeight: 500, marginBottom: 24 }}>관리자 승인 대기 중입니다</div>
+      <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 20 }}>관리자가 승인하면 시스템을 이용할 수 있습니다.</div>
+      <button onClick={onLogout} style={{ padding: "8px 24px", borderRadius: 8, fontSize: 13, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>로그아웃</button>
+    </div>
+  </div>
+);
+
+// ─── SlackIngestView (모듈 레벨 — App 내부 정의 시 매 렌더마다 리마운트되어 state 초기화되는 문제 방지)
+function SlackIngestView({ showToast, reloadFromBackend, currentUser }) {
+  const [text, setText] = useState("");
+  const [msgDate, setMsgDate] = useState(today());
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [botStatus, setBotStatus] = useState(null);
+  const [polling, setPolling] = useState(false);
+
+  const loadBotStatus = async () => {
+    try {
+      const res = await fetch("/api/slack/status");
+      setBotStatus(await res.json());
+    } catch (e) { /* 백엔드 다운 시 무시 */ }
+  };
+  useEffect(() => { loadBotStatus(); const t = setInterval(loadBotStatus, 15000); return () => clearInterval(t); }, []);
+
+  const doPollNow = async () => {
+    if (!confirm("지금 즉시 Slack 채널을 폴링해서 새 메시지를 가져올까요?")) return;
+    setPolling(true);
+    try {
+      const res = await fetch("/api/slack/poll-now", { method: "POST" });
+      const data = await res.json();
+      setBotStatus(data.status);
+      if (data.ok) {
+        showToast(`폴링 완료: ${data.fetched}개 메시지 / 입금 ${data.success}건 적재 / 대기 ${data.pending}건`);
+        if (data.success > 0 || data.pending > 0) await reloadFromBackend();
+      } else {
+        showToast(`폴링 실패: ${data.error}`);
+      }
+    } catch (e) { showToast(`오류: ${e.message}`); }
+    setPolling(false);
+  };
+
+  const doPreview = async () => {
+    if (!text.trim()) { showToast("Slack 텍스트를 붙여넣으세요"); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/slack/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, messageDate: msgDate }),
+      });
+      setPreview(await res.json());
+    } catch (e) { showToast(`미리보기 실패: ${e.message}`); }
+    setLoading(false);
+  };
+
+  const doIngest = async () => {
+    if (!preview || preview.entries.length === 0) return;
+    if (!confirm(`${preview.entries.length}건을 DB에 적재합니다. 잔액이 자동 차감됩니다. 계속할까요?`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/slack/ingest", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, messageDate: msgDate, createdByName: currentUser?.name }),
+      });
+      const data = await res.json();
+      const merged = { ...preview, entries: data.results, summary: data.summary, ingested: true };
+      setPreview(merged);
+      await reloadFromBackend();
+      showToast(`Slack 적재: 성공 ${data.summary.success}건 / 대기열 ${data.summary.pending}건 / 오류 ${data.summary.error}건`);
+      setText("");
+    } catch (e) { showToast(`적재 실패: ${e.message}`); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* ━━━━━ Slack 봇 상태 카드 ━━━━━ */}
+      <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>🤖 Slack 봇 상태</div>
+          <button onClick={doPollNow} disabled={polling || !botStatus?.enabled} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: botStatus?.enabled ? "var(--acc)" : "var(--bg)", color: botStatus?.enabled ? "#fff" : "var(--tm)", opacity: polling || !botStatus?.enabled ? 0.5 : 1 }}>
+            {polling ? "폴링중..." : "🔄 지금 폴링"}
+          </button>
+        </div>
+        {!botStatus ? (
+          <div style={{ fontSize: 12, color: "var(--tm)" }}>상태 조회 중...</div>
+        ) : !botStatus.enabled ? (
+          <div style={{ padding: 12, background: "#fef2f2", borderRadius: 8, fontSize: 12, color: "#b91c1c" }}>
+            ⚠️ <b>Slack 봇 비활성화</b> — backend/.env 파일에 SLACK_BOT_TOKEN과 SLACK_CHANNEL_ID를 설정한 후 백엔드를 재시작하세요.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, fontSize: 12 }}>
+            <div style={{ padding: 10, background: "var(--bg)", borderRadius: 8 }}>
+              <div style={{ color: "var(--tm)", fontSize: 11, marginBottom: 4 }}>연결 상태</div>
+              <div style={{ fontWeight: 600, color: botStatus.connected ? "var(--ok)" : "var(--err)" }}>
+                {botStatus.connected ? `✓ ${botStatus.botName ? "@" + botStatus.botName : ""}` : "✗ 인증 실패"}
+              </div>
+              {botStatus.team && <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{botStatus.team}</div>}
+            </div>
+            <div style={{ padding: 10, background: "var(--bg)", borderRadius: 8 }}>
+              <div style={{ color: "var(--tm)", fontSize: 11, marginBottom: 4 }}>마지막 폴링</div>
+              <div className="mono" style={{ fontWeight: 600, fontSize: 11 }}>
+                {botStatus.lastPollAt ? new Date(botStatus.lastPollAt).toLocaleString("ko-KR") : "아직 없음"}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{botStatus.pollIntervalMinutes}분 간격</div>
+            </div>
+            <div style={{ padding: 10, background: "var(--bg)", borderRadius: 8 }}>
+              <div style={{ color: "var(--tm)", fontSize: 11, marginBottom: 4 }}>누적 적재</div>
+              <div className="mono" style={{ fontWeight: 600, color: "var(--acc)" }}>{botStatus.totalPaymentsIngested || 0}건</div>
+              <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>대기열 {botStatus.totalPending || 0}건</div>
+            </div>
+            <div style={{ padding: 10, background: "var(--bg)", borderRadius: 8 }}>
+              <div style={{ color: "var(--tm)", fontSize: 11, marginBottom: 4 }}>마지막 결과</div>
+              <div style={{ fontWeight: 600, fontSize: 11 }}>
+                {botStatus.lastError ? <span style={{ color: "var(--err)" }}>오류: {botStatus.lastError}</span>
+                  : botStatus.lastPollResult ? <span>메시지 {botStatus.lastPollResult.fetched}/입금 {botStatus.lastPollResult.success}</span>
+                  : <span style={{ color: "var(--tm)" }}>—</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ━━━━━ 수동 텍스트 붙여넣기 (백업/데모용) ━━━━━ */}
+      <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Slack 메시지 텍스트 붙여넣기 (수동)</div>
+        <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 12, lineHeight: 1.5 }}>
+          📌 <b>#입금내역_공유방</b>의 메시지 한 건을 통째로 복사해서 아래에 붙여넣으세요.<br />
+          📌 메시지에 <b>국민#1812</b> 헤더가 포함된 경우에만 입금건으로 채택됩니다 (법무실 추심 계좌).<br />
+          📌 IT팀에서 Slack 봇 설치 완료되면 이 작업이 자동으로 수행됩니다 — 지금은 데모입니다.
+        </div>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          placeholder={"예시:\n국민#1812\n05/20\n서병택   500,000\n주식회사 슈퍼메이커   247,940"}
+          style={{ width: "100%", minHeight: 180, fontFamily: "'JetBrains Mono', monospace", fontSize: 13, padding: 12, resize: "vertical" }}
+        />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+          <label style={{ fontSize: 12, color: "var(--tm)" }}>메시지 발송일:</label>
+          <input type="date" value={msgDate} onChange={e => setMsgDate(e.target.value)} style={{ width: 160, fontSize: 12 }} />
+          <button onClick={doPreview} disabled={loading} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, opacity: loading ? 0.5 : 1 }}>
+            {loading ? "처리중..." : "① 미리보기"}
+          </button>
+          {preview && !preview.ingested && preview.entries.length > 0 && (
+            <button onClick={doIngest} disabled={loading} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600 }}>
+              ② DB에 적재 ({preview.entries.length}건)
+            </button>
+          )}
+        </div>
+      </div>
+
+      {preview && (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
+            {preview.ingested ? "✅ 적재 결과" : "🔍 미리보기 결과"}
+            {preview.summary && (
+              <span style={{ fontSize: 12, fontWeight: 400, color: "var(--tm)", marginLeft: 8 }}>
+                (총 {preview.summary.total}건
+                {preview.summary.matched !== undefined ? ` / 매칭 ${preview.summary.matched} / 미매칭 ${preview.summary.unmatched}` : ""}
+                {preview.summary.success !== undefined ? ` / 성공 ${preview.summary.success} / 대기열 ${preview.summary.pending}` : ""})
+              </span>
+            )}
+          </div>
+          {preview.meta && !preview.meta.hasKookminHeader && (
+            <div style={{ padding: 10, background: "#fef2f2", color: "#b91c1c", borderRadius: 6, fontSize: 12, marginBottom: 10 }}>
+              ⚠️ <b>국민#1812</b> 헤더가 텍스트 안에 없습니다. 모든 입금 라인이 무시됐어요. 헤더를 포함시켜 주세요.
+            </div>
+          )}
+          {preview.meta?.deactivatedByHeader && (
+            <div style={{ padding: 10, background: "#fffbeb", color: "#b45309", borderRadius: 6, fontSize: 12, marginBottom: 10 }}>
+              ℹ️ "{preview.meta.deactivatedByHeader}" 헤더 이후 입금은 다른 계좌로 간주되어 채택되지 않았습니다.
+            </div>
+          )}
+          {preview.entries.length > 0 ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg2)" }}>
+                    {["입금일", "입금자", "금액", "매칭 채무자", "결과"].map(h => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {preview.entries.map((e, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--brd)" }}>
+                      <td className="mono" style={{ padding: "8px 10px" }}>{e.paymentDate || "-"}</td>
+                      <td style={{ padding: "8px 10px", fontWeight: 500 }}>{e.payerName}</td>
+                      <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(e.totalAmount || e.total)}</td>
+                      <td style={{ padding: "8px 10px" }}>
+                        {e.ok === true ? <span style={{ color: "var(--ok)" }}><b>{e.debtorName}</b> <span style={{ fontSize: 10, color: "var(--tm)" }}>({e.debtorId})</span></span>
+                          : e.suggestedDebtor ? <span><b>{e.suggestedDebtor.name}</b> <span style={{ fontSize: 10, color: "var(--tm)" }}>({e.suggestedDebtor.id} · {e.suggestedDebtor.hubName})</span></span>
+                          : <span style={{ color: "var(--err)" }}>채무자 미발견</span>}
+                      </td>
+                      <td style={{ padding: "8px 10px", fontSize: 11 }}>
+                        {e.ok === true ? <span style={{ color: "var(--ok)", fontWeight: 600 }}>✓ 등록완료 — 잔액 {fmt(e.balanceAfter)} ({e.matchedBy})</span>
+                          : e.ok === false && e.pendingId ? <span style={{ color: "var(--warn)", fontWeight: 600 }}>⏳ 대기열 이동 (수동 연결 필요)</span>
+                          : e.ok === false ? <span style={{ color: "var(--err)" }}>오류: {e.error || e.reason}</span>
+                          : e.matchedBy ? <span style={{ color: "var(--ts)" }}>매칭: {e.matchedBy}</span>
+                          : <span style={{ color: "var(--tm)" }}>미매칭 — 적재 시 대기열로</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>채택된 입금건이 없습니다.</div>
+          )}
+          {preview.meta?.rejectedLines?.length > 0 && (
+            <details style={{ marginTop: 12 }}>
+              <summary style={{ fontSize: 12, color: "var(--tm)", cursor: "pointer" }}>무시된 라인 {preview.meta.rejectedLines.length}개 보기</summary>
+              <ul style={{ marginTop: 8, paddingLeft: 20, fontSize: 11, color: "var(--ts)" }}>
+                {preview.meta.rejectedLines.map((r, i) => <li key={i} className="mono">{r.line} <span style={{ color: "var(--tm)" }}>({r.reason})</span></li>)}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────
+export default function App() {
+  // ─── Auth & Users ─────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loginError, setLoginError]   = useState("");
+  const REMOVED_USER_EMAILS = ["junwon@barogo.com"]; // 삭제된 계정 목록
+  // DEFAULT_USERS 기준으로 이름/역할 등 강제 동기화할 필드 (이메일 키)
+  const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" } };
+  const [users, setUsers] = useState(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(APP_USERS_KEY));
+      const base = (stored && stored.length ? stored : DEFAULT_USERS)
+        .filter(u => !REMOVED_USER_EMAILS.includes(u.email))
+        .map(u => USER_OVERRIDES[u.email] ? { ...u, ...USER_OVERRIDES[u.email] } : u);
+      const extras = DEFAULT_USERS.filter(d => !base.find(s => s.email === d.email));
+      return extras.length ? [...base, ...extras] : base;
+    } catch { return DEFAULT_USERS; }
+  });
+  useEffect(() => { localStorage.setItem(APP_USERS_KEY, JSON.stringify(users)); }, [users]);
+  const [alertRules, setAlertRules] = useState(DEFAULT_ALERT_RULES);
+
+  const handleLogin = (nameOrEmail, password) => {
+    const user = users.find(u => u.name === nameOrEmail || u.email === nameOrEmail);
+    if (!user) { setLoginError("존재하지 않는 계정입니다."); return; }
+    if (user.password !== password) { setLoginError("비밀번호가 올바르지 않습니다."); return; }
+    setLoginError("");
+    setCurrentUser({ ...user });
+  };
+  const handleLogout = () => { setCurrentUser(null); setLoginError(""); };
+  const userPerms = currentUser ? (PERM_MAP[currentUser.role] || PERM_MAP.member) : PERM_MAP.member;
+  const canEdit = userPerms.edit;
+  const canDelete = userPerms.delete;
+  const isAdmin = userPerms.admin;
+  const canEditRecord   = (record) => isAdmin || (currentUser?.role === "manager" && record?.createdBy === currentUser?.id);
+  const canDeleteRecord = (record) => isAdmin || (currentUser?.role === "manager" && record?.createdBy === currentUser?.id);
+
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
+  const [tab, setTab] = useState("dashboard");
+  const [sel, setSel] = useState(null);
+  const [q, setQ] = useState("");
+  const [brandFilter, setBrandFilter] = useState("전체");
+  const [catFilter, setCatFilter] = useState("전체");
+  const [statusFilter, setStatusFilter] = useState("전체");
+  const [sort, setSort] = useState({ f: "finalBalanceLegal", d: "desc" });
+  const [page, setPage] = useState(1);
+  const [modal, setModal] = useState(null);
+  const [alerts, setAlerts] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [detailTab, setDetailTab] = useState("히스토리");
+  const [adminMainTab, setAdminMainTab] = useState("settings");
+  const [adminSettingTab, setAdminSettingTab] = useState("담당자");
+  const [adminNewItem, setAdminNewItem] = useState("");
+  const [adminEditingRule, setAdminEditingRule] = useState(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
+  const [legalSubTab, setLegalSubTab] = useState("지급명령");
+  const [rehabSubTab, setRehabSubTab] = useState("회생");
+  const [expandedNav, setExpandedNav] = useState(() => new Set());
+  const PP = 25;
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const [backendStatus, setBackendStatus] = useState("loading"); // loading / connected / failed
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const loadingRef = useRef(false);
+
+  // ─── 데이터 로드 (초기 / 새로고침 / SSE 재동기화) ──────────
+  const loadData = useCallback(async () => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setIsRefreshing(true);
+    try {
+      const [debtorsRes, paymentsRes, installmentsRes, complaintsRes, activitiesRes] = await Promise.all([
+        fetch("/api/debtors").then(r => { if (!r.ok) throw new Error(`debtors ${r.status}`); return r.json(); }),
+        fetch("/api/payments").then(r => { if (!r.ok) throw new Error(`payments ${r.status}`); return r.json(); }),
+        (() => { const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 5000); return fetch("/api/installments", { signal: ctrl.signal }).then(r => r.ok ? r.json() : []).catch(() => []).finally(() => clearTimeout(t)); })(),
+        fetch("/api/complaints").then(r => r.ok ? r.json() : []).catch(() => []),
+        fetch("/api/activities").then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
+      const excelByKey = {};
+      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
+      const debtors = debtorsRes.map(d => {
+        const ex = excelByKey[`${d.brand}||${d.name}`];
+        return {
+          ...d,
+          brandColor: brandColorMap[d.brand] || "#64748b",
+          execTitle: !!d.execTitle,
+          guarantors: ex?.guarantors || [],
+          history: ex?.history || [],
+          phoneHistory: [],
+          monthlyCollected: {},
+        };
+      });
+      const manualDebtors = getMR(MK.debtors);
+      const allDebtorsForMatch = [...debtors, ...manualDebtors];
+      const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
+      const legalCases      = applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]);
+      const minsaCases      = [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)];
+      const assetDisclosures  = [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)];
+      const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
+      const installmentSchedules = installmentsRes.flatMap(p =>
+        (p.schedules || []).map(s => ({ ...s, debtorId: p.debtorId, debtorName: p.debtorName, brand: p.brand, assignee: p.assignee, hubCode: p.hubCode, hubName: p.hubName }))
+      );
+      const complaints   = [...complaintsRes, ...getMR(MK.complaints)];
+      const activities   = [...activitiesRes, ...getMR(MK.activities)];
+      const allDebtors   = [...debtors, ...manualDebtors];
+      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders }));
+      setBackendStatus("connected");
+      setToast(`데이터 동기화 완료: 채무자 ${debtors.length}건, 입금 ${paymentsRes.length}건`);
+      setTimeout(() => setToast(null), 3000);
+    } catch (e) {
+      console.warn("백엔드 연결 실패:", e);
+      setBackendStatus("failed");
+    } finally {
+      loadingRef.current = false;
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  // 초기 로드
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
+  useEffect(() => {
+    if (backendStatus !== "connected") return;
+    let debounce;
+    const src = new EventSource("/api/events");
+    src.addEventListener("data-changed", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => loadData(), 800);
+    });
+    src.onerror = () => {};
+    return () => { src.close(); clearTimeout(debounce); };
+  }, [backendStatus, loadData]);
+
+  useEffect(() => {
+    fetch("/api/pending-payments")
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => setPendingCount(Array.isArray(rows) ? rows.length : 0))
+      .catch(() => {});
+  }, []);
+
+  // ─── Audit Log (with user) ──────────────────────────────
+  const [auditLogs, setAuditLogs] = useState([]);
+  const addLog = (action, target, detail, changes) => {
+    setAuditLogs(prev => [{ id: uid("LOG"), timestamp: new Date().toISOString(), user: currentUser?.name || "시스템", action, target, detail, changes: changes || [] }, ...prev].slice(0, 500));
+  };
+  const diffFields = (oldObj, newObj, fieldLabels) => {
+    const changes = [];
+    for (const [key, label] of Object.entries(fieldLabels)) {
+      const ov = oldObj[key], nv = newObj[key];
+      if (String(ov ?? "") !== String(nv ?? "")) {
+        changes.push({ field: label, from: ov ?? "(없음)", to: nv ?? "(없음)" });
+      }
+    }
+    return changes;
+  };
+  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항" };
+
+  // ─── Excel Download ─────────────────────────────────────
+  const downloadCSV = (filename, headers, rows) => {
+    const BOM = "\uFEFF";
+    const escape = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = BOM + [headers.join(","), ...rows.map(r => r.map(escape).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+    showToast(`${filename} 다운로드 완료`);
+  };
+  const exportDebtors = (list) => {
+    downloadCSV(`채권관리_${today()}.csv`,
+      ["ID","브랜드","분류","담당","채무자명","연락처","코드","허브/지점","채무발생원인","추심상태","원금잔액","조정액","회수액","최종잔액(재무)","최종잔액(법무)","집행권원","대여일자","주요사항"],
+      list.map(d => [d.id, d.brandName, d.category, d.assignee, d.name, d.phone, d.hubCode, d.hubName, d.debtCause, d.collectionStatus, d.principalBalance, d.adjustment, d.collectedAmount, d.finalBalanceFinance, d.finalBalanceLegal, d.execTitle ? "O" : "X", d.loanDate, d.keyNotes])
+    );
+  };
+  const exportPayments = (list) => {
+    downloadCSV(`입금내역_${today()}.csv`,
+      ["ID","입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고"],
+      list.map(p => [p.id, p.paymentDate, p.brand, p.assignee, p.hubName, p.hubCode, p.debtorName, p.payerName, p.totalAmount, p.companyAccount, p.cashCharge, p.welcomeDirect, p.note])
+    );
+  };
+  const exportInstallments = (list) => {
+    downloadCSV(`분할상환_${today()}.csv`,
+      ["ID","브랜드","채무자","납부시기","월분납액","채무액","채권액","상태","담당"],
+      list.map(p => [p.id, p.brand, p.debtorName, p.paymentTiming, p.monthlyAmount, p.totalDebt, p.totalClaim, p.status, p.assignee])
+    );
+  };
+  const exportLegal = (seizures, rehabs, complaints) => {
+    const rows = [];
+    seizures.forEach(s => rows.push(["압류", s.brand, s.debtorName, s.court, s.caseNumber, s.status, s.targets.length + "건", s.targets.reduce((a, t) => a + t.collected, 0)]));
+    rehabs.forEach(r => rows.push(["회생파산", r.brand, r.debtorName, r.court, r.caseNumber, r.type, r.currentRound, r.monthlyPayment]));
+    complaints.forEach(c => rows.push(["형사", c.brand, c.debtorName, c.policeStation, c.charge, c.statusNote, "", c.loanAmount]));
+    downloadCSV(`법적절차_${today()}.csv`, ["구분","브랜드","채무자","법원/경찰서","사건번호/죄명","상태","비고","금액"], rows);
+  };
+
+  // ─── Data Mutation Helpers ──────────────────────────────
+  // #2,#3 채무자 수정 — 이름/브랜드 변경 시 관련 데이터 연쇄 ���신
+  const updateDebtor = (id, changes) => {
+    setData(prev => {
+      const old = prev.debtors.find(d => d.id === id);
+      if (!old) return prev;
+      const nameChanged = changes.name && changes.name !== old.name;
+      const brandChanged = changes.brand && changes.brand !== old.brand;
+      const cascadeRelated = (arr) => {
+        if (!nameChanged && !brandChanged) return arr;
+        return arr.map(item => {
+          if (item.debtorId !== id) return item;
+          const upd = { ...item };
+          if (nameChanged) upd.debtorName = changes.name;
+          if (brandChanged) upd.brand = changes.brand;
+          return upd;
+        });
+      };
+      return {
+        ...prev,
+        debtors: prev.debtors.map(d => d.id === id ? { ...d, ...changes } : d),
+        payments: cascadeRelated(prev.payments),
+        activities: cascadeRelated(prev.activities),
+        seizureCases: cascadeRelated(prev.seizureCases),
+        rehabilitations: cascadeRelated(prev.rehabilitations),
+        installmentPlans: cascadeRelated(prev.installmentPlans).map(p => {
+          if (p.debtorId !== id) return p;
+          const upd = { ...p };
+          if (nameChanged) upd.debtorName = changes.name;
+          if (brandChanged) { upd.brand = changes.brand; upd.brandName = changes.brandName; }
+          return upd;
+        }),
+        complaints: cascadeRelated(prev.complaints),
+      };
+    });
+    if (sel && sel.id === id) setSel(prev => ({ ...prev, ...changes }));
+    // DB에 영구 저장
+    fetch(`/api/debtors/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) }).catch(() => {});
+  };
+  const addDebtor = async (debtor) => {
+    setData(prev => ({ ...prev, debtors: [debtor, ...prev.debtors] }));
+    // DB 저장 시도, 실패 시 localStorage 폴백
+    if (backendStatus === "connected") {
+      try {
+        const res = await fetch("/api/debtors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(debtor) });
+        const result = await res.json();
+        if (!result.ok) addMR(MK.debtors, debtor);
+      } catch { addMR(MK.debtors, debtor); }
+    } else {
+      addMR(MK.debtors, debtor);
+    }
+  };
+  // #2 채무자 삭제 — 관련 데이터 캐스케이드 삭제
+  const deleteDebtor = async (id) => {
+    setData(prev => ({
+      ...prev,
+      debtors: prev.debtors.filter(d => d.id !== id),
+      payments: prev.payments.filter(p => p.debtorId !== id),
+      activities: prev.activities.filter(a => a.debtorId !== id),
+      seizureCases: prev.seizureCases.filter(s => s.debtorId !== id),
+      rehabilitations: prev.rehabilitations.filter(r => r.debtorId !== id),
+      installmentPlans: prev.installmentPlans.filter(p => p.debtorId !== id),
+      complaints: prev.complaints.filter(c => c.debtorId !== id),
+    }));
+    if (sel && sel.id === id) setSel(null);
+    // DB 삭제 시도, localStorage에서도 제거
+    delMR(MK.debtors, id);
+    if (backendStatus === "connected") {
+      fetch(`/api/debtors/${id}`, { method: "DELETE" }).catch(() => {});
+    }
+  };
+  // 채무자 잔액 재계산 헬퍼
+  const recalcDebtor = (d, collectedDelta, paymentDate) => {
+    const newCollected = d.collectedAmount + collectedDelta;
+    const newFinFinance = d.principalBalance - newCollected;
+    const newFinLegal = newFinFinance + d.adjustment;
+    const month = paymentDate ? new Date(paymentDate).getMonth() + 1 : null;
+    const newMonthly = month ? { ...d.monthlyCollected, [month]: Math.max(0, (d.monthlyCollected[month] || 0) + collectedDelta) } : d.monthlyCollected;
+    // #6 잔액 0 이하 시 추심보류로 자동 변경
+    const newStatus = newFinLegal <= 0 ? "추심보류" : d.collectionStatus;
+    return { ...d, collectedAmount: newCollected, finalBalanceFinance: newFinFinance, finalBalanceLegal: newFinLegal, monthlyCollected: newMonthly, collectionStatus: newStatus };
+  };
+  // ─── 백엔드에서 채무자/입금 데이터 다시 가져오기 ─────────
+  const reloadFromBackend = async () => {
+    try {
+      const [debtorsRes, paymentsRes] = await Promise.all([
+        fetch("/api/debtors").then(r => r.json()),
+        fetch("/api/payments").then(r => r.json()),
+      ]);
+      const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
+      const debtors = debtorsRes.map(d => ({
+        ...d,
+        brandColor: brandColorMap[d.brand] || "#64748b",
+        execTitle: !!d.execTitle,
+        guarantors: [], phoneHistory: [], monthlyCollected: {},
+      }));
+      // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override 적용
+      const rehabilitations = applyRehabOverrides(matchRehabsToDebtors(EXCEL_REHABS, debtors));
+      setData(prev => ({ ...prev, debtors, payments: paymentsRes, rehabilitations }));
+      if (sel) {
+        const updated = debtors.find(d => d.id === sel.id);
+        if (updated) setSel(updated);
+      }
+      return true;
+    } catch (e) { console.warn("리로드 실패:", e); return false; }
+  };
+
+  const reloadInstallments = async () => {
+    try {
+      const plans = await fetch("/api/installments").then(r => r.json());
+      const schedules = plans.flatMap(p =>
+        (p.schedules || []).map(s => ({ ...s, debtorId: p.debtorId, debtorName: p.debtorName, brand: p.brand, assignee: p.assignee, hubCode: p.hubCode, hubName: p.hubName }))
+      );
+      setData(prev => ({ ...prev, installmentPlans: plans, installmentSchedules: schedules }));
+    } catch(e) { showToast("분할상환 로드 실패"); }
+  };
+
+  // 회생파산 회차 문자열 +1 증가: "33회차" → "34회차" (범위 형식은 변경 안 함)
+  const incrementRehabRound = (roundStr) => {
+    if (!roundStr) return roundStr;
+    const m = roundStr.match(/^(\d+)회차$/);
+    return m ? `${parseInt(m[1]) + 1}회차` : roundStr;
+  };
+
+  // 회생파산 입금 여부 판단: 입금자명 끝에 1~2자리 숫자가 붙어 있으면 법원 회생금
+  const isRehabPayerName = (payerName) => /\d{1,2}$/.test((payerName || "").trim());
+
+  // 입금 후 회생파산 회차 자동 증가 처리
+  const applyRehabRoundIncrement = (debtorId, payerName) => {
+    if (!debtorId || !isRehabPayerName(payerName)) return;
+    setData(prev => {
+      const hasRehab = prev.rehabilitations.some(r => r.debtorId === debtorId);
+      if (!hasRehab) return prev;
+      const updated = prev.rehabilitations.map(r =>
+        r.debtorId === debtorId
+          ? { ...r, currentRound: incrementRehabRound(r.currentRound) }
+          : r
+      );
+      return { ...prev, rehabilitations: updated };
+    });
+  };
+
+  // 입금 추가 — 백엔드 API 호출 (잔액·분할상환·추심상태 자동 처리)
+  // 백엔드 미연결 시 기존 프론트 전용 로직으로 폴백
+  const addPayment = async (payment, force = false) => {
+    if (backendStatus === "connected") {
+      try {
+        const res = await fetch("/api/payments", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            debtorId: payment.debtorId, paymentDate: payment.paymentDate,
+            payerName: payment.payerName, totalAmount: payment.totalAmount,
+            companyAccount: payment.companyAccount, cashCharge: payment.cashCharge,
+            welcomeDirect: payment.welcomeDirect, note: payment.note,
+            createdByName: currentUser?.name,
+            force,
+          }),
+        });
+        const result = await res.json();
+        if (result.isDuplicate) {
+          setDupConfirm({ payment, ...result });
+          return;
+        }
+        if (!result.ok) { showToast(`입금 등록 실패: ${result.error || result.reason}`); return; }
+        await reloadFromBackend();
+        applyRehabRoundIncrement(payment.debtorId, payment.payerName);
+        const rehabMsg = isRehabPayerName(payment.payerName) ? ` (회생금 — 회차 자동 증가)` : "";
+        showToast(`입금 등록 완료 — 잔액 자동 차감 (잔액 ${(result.balanceAfter || 0).toLocaleString()}원)${rehabMsg}`);
+        return;
+      } catch (e) { showToast(`백엔드 오류: ${e.message} — 프론트 임시 적용`); }
+    }
+    // 폴백: 프론트엔드 전용 갱신
+    const isRehab = isRehabPayerName(payment.payerName);
+    setData(prev => {
+      const newDebtors = prev.debtors.map(d => d.id === payment.debtorId ? recalcDebtor(d, payment.totalAmount, payment.paymentDate) : d);
+      const payMonth = new Date(payment.paymentDate).getMonth() + 1;
+      const payYear = new Date(payment.paymentDate).getFullYear();
+      const targetMonthStr = `${payYear}년 ${payMonth}월`;
+      const newInstallments = prev.installmentPlans.map(plan => {
+        if (plan.debtorId !== payment.debtorId) return plan;
+        return { ...plan, logs: (plan.logs || []).map(log => {
+          if (log.targetMonth === targetMonthStr && (log.status === "미납" || log.status === "지연")) {
+            return { ...log, status: "완납", paidAmount: payment.totalAmount, memo: `입금확인 ${fmtDate(payment.paymentDate)}` };
+          }
+          return log;
+        }) };
+      });
+      const newRehabs = isRehab
+        ? prev.rehabilitations.map(r => r.debtorId === payment.debtorId ? { ...r, currentRound: incrementRehabRound(r.currentRound) } : r)
+        : prev.rehabilitations;
+      return { ...prev, debtors: newDebtors, payments: [payment, ...prev.payments], installmentPlans: newInstallments, rehabilitations: newRehabs };
+    });
+    if (sel && sel.id === payment.debtorId) setSel(prev => recalcDebtor(prev, payment.totalAmount, payment.paymentDate));
+  };
+
+  // 입금 삭제 — 백엔드 API 호출 (잔액 자동 원복)
+  const deletePayment = async (paymentId) => {
+    if (backendStatus === "connected") {
+      try {
+        const res = await fetch(`/api/payments/${paymentId}`, {
+          method: "DELETE", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userName: currentUser?.name }),
+        });
+        const result = await res.json();
+        if (!result.ok) { showToast(`삭제 실패: ${result.error}`); return; }
+        await reloadFromBackend();
+        showToast(`입금 삭제 완료 — 잔액 원복`);
+        return;
+      } catch (e) { showToast(`백엔드 오류: ${e.message}`); }
+    }
+    // 폴백
+    setData(prev => {
+      const payment = prev.payments.find(p => p.id === paymentId);
+      if (!payment) return prev;
+      const newDebtors = prev.debtors.map(d => d.id === payment.debtorId ? recalcDebtor(d, -payment.totalAmount, payment.paymentDate) : d);
+      return { ...prev, debtors: newDebtors, payments: prev.payments.filter(p => p.id !== paymentId) };
+    });
+    if (sel) {
+      const payment = data.payments.find(p => p.id === paymentId);
+      if (payment && sel.id === payment.debtorId) setSel(prev => recalcDebtor(prev, -payment.totalAmount, payment.paymentDate));
+    }
+  };
+  const addActivity = async (activity) => {
+    setData(prev => ({ ...prev, activities: [activity, ...prev.activities] }));
+    if (backendStatus === "connected") {
+      try {
+        const res = await fetch("/api/activities", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(activity) });
+        const result = await res.json();
+        if (!result.ok) addMR(MK.activities, activity);
+      } catch { addMR(MK.activities, activity); }
+    } else {
+      addMR(MK.activities, activity);
+    }
+  };
+  const addSeizure = (sz) => {
+    setData(prev => ({ ...prev, seizureCases: [sz, ...prev.seizureCases] }));
+  };
+  const addRehab = (r) => {
+    setData(prev => ({ ...prev, rehabilitations: [r, ...prev.rehabilitations] }));
+    addMR(MK.rehabilitations, r);
+  };
+  const addInstallment = async (p) => {
+    setData(prev => ({ ...prev, installmentPlans: [p, ...prev.installmentPlans] }));
+    if (backendStatus === "connected") {
+      try {
+        await fetch("/api/installments", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: p.id, debtorId: p.debtorId, paymentTiming: p.paymentTiming, monthlyAmount: p.monthlyAmount, startDate: p.startDate, status: p.status, memo: p.memo }) });
+      } catch { addMR(MK.installmentPlans, p); }
+    } else {
+      addMR(MK.installmentPlans, p);
+    }
+  };
+  const addComplaint = async (c) => {
+    setData(prev => ({ ...prev, complaints: [c, ...prev.complaints] }));
+    if (backendStatus === "connected" && c.debtorId) {
+      try {
+        const res = await fetch("/api/complaints", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(c) });
+        const result = await res.json();
+        if (!result.ok) addMR(MK.complaints, c);
+      } catch { addMR(MK.complaints, c); }
+    } else {
+      addMR(MK.complaints, c);
+    }
+  };
+  // #4 브랜드 변경 시 채무자 연쇄 갱신
+  const updateBrandInDebtors = (oldCode, newBrand) => {
+    setData(prev => ({
+      ...prev,
+      debtors: prev.debtors.map(d => d.brand === oldCode ? { ...d, brandName: newBrand.name, brandColor: newBrand.color } : d),
+    }));
+  };
+  const removeBrandFromConfig = (idx) => {
+    const brand = config.brands[idx];
+    const count = data.debtors.filter(d => d.brand === brand.code).length;
+    if (count > 0) { showToast(`${brand.name} 브랜드에 ${count}건의 채권이 있어 삭제할 수 없습니다`); return false; }
+    setConfig(p => ({ ...p, brands: p.brands.filter((_, i) => i !== idx) }));
+    showToast("삭제 완료");
+    return true;
+  };
+  // #5 담당자 삭제 시 경고
+  const removeAssigneeFromConfig = (idx) => {
+    const assignee = config.assignees[idx];
+    const count = data.debtors.filter(d => d.assignee === assignee).length;
+    if (count > 0) { showToast(`${assignee} 담당자에 ${count}건의 채권이 배정되어 있어 삭제할 수 없습���다`); return false; }
+    setConfig(p => ({ ...p, assignees: p.assignees.filter((_, i) => i !== idx) }));
+    showToast("삭제 완료");
+    return true;
+  };
+
+  // ─── Stats ──────────────────────────────────────────────
+  const stats = useMemo(() => {
+    const d = data.debtors;
+    const totalDebtors = d.length, totalPrincipal = d.reduce((s, x) => s + x.principalBalance, 0);
+    const totalCollected = d.reduce((s, x) => s + x.collectedAmount, 0), totalRemaining = d.reduce((s, x) => s + x.finalBalanceLegal, 0);
+    const totalFinanceRemaining = d.reduce((s, x) => s + x.finalBalanceFinance, 0);
+    const collectionRate = totalPrincipal > 0 ? (totalCollected / totalPrincipal * 100) : 0;
+    const byBrand = {};
+    config.brands.forEach(b => { const bd = d.filter(x => x.brand === b.code); byBrand[b.code] = { count: bd.length, principal: bd.reduce((s, x) => s + x.principalBalance, 0), collected: bd.reduce((s, x) => s + x.collectedAmount, 0), remaining: bd.reduce((s, x) => s + x.finalBalanceLegal, 0) }; });
+    const byCat = {}; config.categories.forEach(c => { byCat[c] = d.filter(x => x.category === c).length; });
+    const byGroup = {}; DASHBOARD_GROUPS.forEach(g => { byGroup[g.label] = d.filter(x => g.cats.includes(x.category)).length; });
+    const byStatus = {}; config.collStatuses.forEach(s => { byStatus[s] = d.filter(x => x.collectionStatus === s).length; });
+    const byAssignee = {}; config.assignees.forEach(a => { byAssignee[a] = d.filter(x => x.assignee === a).length; });
+    const monthlyPayments = {};
+    for (let m = 1; m <= 12; m++) monthlyPayments[m] = data.payments.filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === 2026 && pd.getMonth() + 1 === m; }).reduce((s, p) => s + p.totalAmount, 0);
+    const lc = data.legalCases || [];
+    const ad = data.assetDisclosures || [];
+    const cmp = data.complaints || [];
+    const byLegalType = {
+      "압류":     lc.filter(c => c.type === "압류").length,
+      "지급명령": lc.filter(c => c.type === "지급명령").length,
+      "재산명시": ad.length,
+      "형사고소": cmp.length,
+    };
+    const totalLegal = lc.length + ad.length + cmp.length;
+    const totalSeizures = lc.filter(c => c.type === "압류").length;
+    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
+  }, [data, config]);
+
+  const alertList = useMemo(() => {
+    const l = [];
+    data.installmentPlans.forEach(p => { const un = (p.schedules || p.logs || []).filter(x => x.status === "미납"); if (un.length > 0) l.push({ type: "installment", msg: `${p.debtorName} 분할상환 미납 ${un.length}회`, p: "high", debtorId: p.debtorId }); });
+    data.rehabilitations.forEach(r => { if (r.overdueStatus === "미납") l.push({ type: "rehab", msg: `${r.debtorName} 회생 변제금 미납`, p: "high", debtorId: r.debtorId }); });
+    data.debtors.filter(d => d.collectionStatus === "추심진행" && d.finalBalanceLegal > 10000000).forEach(d => { l.push({ type: "highvalue", msg: `${d.name}(${d.brandName}) 잔액 ${fmt(d.finalBalanceLegal)}`, p: "med", debtorId: d.id }); });
+    return l.sort((a, b) => (a.p === "high" ? 0 : 1) - (b.p === "high" ? 0 : 1)).slice(0, 30);
+  }, [data]);
+
+  // ─── Filtered Debtors ───────────────────────────────────
+  const filtered = useMemo(() => {
+    let l = [...data.debtors];
+    if (q) {
+      const ql = q.toLowerCase();
+      l = l.filter(d => {
+        if ((d.name || "").toLowerCase().includes(ql)) return true;
+        if ((d.id || "").toLowerCase().includes(ql)) return true;
+        if ((d.assignee || "").toLowerCase().includes(ql)) return true;
+        if ((d.phone || "").toLowerCase().includes(ql)) return true;
+        if ((d.hubCode || "").toLowerCase().includes(ql)) return true;
+        if ((d.hubName || "").toLowerCase().includes(ql)) return true;
+        // 서브로우 코드/허브 검색
+        if (d.subRows && d.subRows.some(s =>
+          (s.code || "").toLowerCase().includes(ql) ||
+          (s.hubName || "").toLowerCase().includes(ql)
+        )) return true;
+        return false;
+      });
+    }
+    if (brandFilter !== "전체") l = l.filter(d => d.brand === brandFilter);
+    if (catFilter !== "전체") l = l.filter(d => d.category === catFilter);
+    if (statusFilter !== "전체") l = l.filter(d => d.collectionStatus === statusFilter);
+    l.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
+
+    // 같은 이름+브랜드 or 유사 코드(1234 / 1234-1)인 채무자를 그룹핑
+    const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
+    const grouped = [];
+    const seen = new Set();
+    for (const d of l) {
+      if (seen.has(d.id)) continue;
+      const bc = baseCode(d.hubCode);
+      const siblings = l.filter(x =>
+        x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && (
+          (x.name && d.name && x.name.trim() === d.name.trim()) ||
+          (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
+        )
+      );
+      if (siblings.length > 0) {
+        const grp = [d, ...siblings];
+        grp.forEach(g => seen.add(g.id));
+        grouped.push({
+          ...d,
+          principalBalance:    grp.reduce((s, g) => s + (g.principalBalance || 0), 0),
+          collectedAmount:     grp.reduce((s, g) => s + (g.collectedAmount || 0), 0),
+          adjustment:          grp.reduce((s, g) => s + (g.adjustment || 0), 0),
+          finalBalanceFinance: grp.reduce((s, g) => s + (g.finalBalanceFinance || 0), 0),
+          finalBalanceLegal:   grp.reduce((s, g) => s + (g.finalBalanceLegal || 0), 0),
+          subRows: grp,
+        });
+      } else {
+        seen.add(d.id);
+        grouped.push(d);
+      }
+    }
+    return grouped;
+  }, [data, q, brandFilter, catFilter, statusFilter, sort]);
+
+  const tp = Math.ceil(filtered.length / PP);
+  const paged = filtered.slice((page - 1) * PP, page * PP);
+  useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter]);
+  const doSort = (f) => { if (sort.f === f) setSort({ f, d: sort.d === "asc" ? "desc" : "asc" }); else setSort({ f, d: "desc" }); };
+
+  // ─── CSS ────────────────────────────────────────────────
+  const CSS = `@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f3f4f6;--bg2:#f9fafb;--card:#ffffff;--hover:#fff5ed;--inp:#f9fafb;--brd:#e5e7eb;--bf:#ff5f00;--tp:#111827;--ts:#475569;--tm:#94a3b8;--acc:#ff5f00;--ok:#10b981;--err:#ef4444;--warn:#f59e0b}
+body{background:#fff;color:var(--tp);font-family:'Noto Sans KR',sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+input,select,textarea{font-family:'Noto Sans KR',sans-serif;background:var(--inp);color:var(--tp);border:1px solid var(--brd);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;transition:border .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--bf)}
+button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:none;transition:all .15s}button:hover{opacity:.85}
+.mono{font-family:'JetBrains Mono',monospace}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.anim{animation:fadeIn .3s ease-out}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}.slide{animation:slideIn .3s ease-out}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spinning{animation:spin .8s linear infinite}`;
+
+  const KPI = ({ label, value, sub, color }) => (
+    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${color},${color}00)` }} />
+      <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 8, fontWeight: 500 }}>{label}</div>
+      <div className="mono" style={{ fontSize: 22, fontWeight: 700, color, marginBottom: 4 }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--ts)" }}>{sub}</div>
+    </div>
+  );
+
+  // ═══ MODALS ═════════════════════════════════════════════
+
+  // ─── Debtor Add/Edit Modal ──────────────────────────────
+  const DebtorFormModal = () => {
+    const isEdit = modal.data;
+    const [f, setF] = useState(isEdit ? { ...modal.data } : {
+      brand: config.brands[0]?.code || "B", category: config.categories[0], assignee: config.assignees[0],
+      name: "", phone: "", hubCode: "", hubName: config.hubNames[0] || "", debtCause: config.debtCauses[0] || "",
+      collectionStatus: config.collStatuses[0], execTitle: false, execTitleType: "", execTitleUrl: "",
+      loanDate: today(), principalBalance: 0, adjustment: 0, collectedAmount: 0,
+      birthDate: "", salesRep: "", residentNumber: "",
+      keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
+    });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const [phoneItems, setPhoneItems] = useState(() => {
+      const raw = (isEdit ? modal.data?.phone : "") || "";
+      const items = raw.split(/\s*\/\s*|\n/).map(p => p.trim()).filter(Boolean);
+      return items.length > 0 ? items : [""];
+    });
+    const save = () => {
+      if (!f.name.trim()) { showToast("채무자명을 입력하세요"); return; }
+      const brandObj = config.brands.find(b => b.code === f.brand) || config.brands[0];
+      const rec = {
+        ...f,
+        phone: phoneItems.filter(p => p.trim()).join("\n"),
+        brandName: brandObj.name, brandColor: brandObj.color,
+        finalBalanceFinance: (f.principalBalance || 0) - (f.collectedAmount || 0),
+        finalBalanceLegal: (f.principalBalance || 0) - (f.collectedAmount || 0) + (f.adjustment || 0),
+        monthlyCollected: f.monthlyCollected || {},
+        phoneHistory: f.phoneHistory || [], guarantors: f.guarantors || [],
+      };
+      if (isEdit) {
+        const changes = diffFields(modal.data, rec, DEBTOR_FIELD_LABELS);
+        updateDebtor(rec.id, rec);
+        addLog("수정", "채권", `${rec.name} (${rec.id})`, changes);
+        showToast(`${rec.name} 정보가 수정되었습니다`);
+      } else {
+        rec.id = uid("NPL");
+        addDebtor(rec);
+        addLog("등록", "채권", `${rec.name} (${rec.id}) 신규 등록 — ${rec.brandName}, ${fmt(rec.principalBalance)}`);
+        showToast(`${rec.name} 채권이 등록되었습니다`);
+      }
+      setModal(null);
+    };
+    return (
+      <Overlay onClose={() => setModal(null)} wide>
+        <ModalHeader title={isEdit ? "채권 정보 수정" : "신규 채권 등록"} onClose={() => setModal(null)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <Field label="브랜드"><select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>
+          <Field label="분류"><select value={f.category} onChange={e => set("category", e.target.value)} style={inp}>{config.categories.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
+          <Field label="채무자명"><input value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
+          <Field label="연락처" span={2}>
+            <div>
+              {phoneItems.map((p, i) => (
+                <div key={i} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
+                  <input value={p} onChange={e => setPhoneItems(prev => prev.map((x, xi) => xi === i ? e.target.value : x))} style={{ ...inp, flex: 1 }} placeholder={`연락처 ${i + 1} (예: 이름 010-0000-0000)`} />
+                  <button type="button" onClick={() => setPhoneItems(prev => prev.filter((_, xi) => xi !== i))} style={{ padding: "0 10px", borderRadius: 8, background: "#ef444418", color: "#ef4444", border: "1px solid #ef444430", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setPhoneItems(prev => [...prev, ""])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 7, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer", fontSize: 12, marginTop: 2 }}>+ 연락처 추가</button>
+            </div>
+          </Field>
+          <Field label="코드"><input value={f.hubCode} onChange={e => set("hubCode", e.target.value)} style={inp} placeholder="허브 코드" /></Field>
+          <Field label="허브/지점"><AutoComplete value={f.hubName} onChange={v => set("hubName", v)} options={config.hubNames} placeholder="허브/지점 검색..." /></Field>
+          <Field label="채무발생원인"><select value={f.debtCause} onChange={e => set("debtCause", e.target.value)} style={inp}>{config.debtCauses.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="추심상태"><select value={f.collectionStatus} onChange={e => set("collectionStatus", e.target.value)} style={inp}>{config.collStatuses.map(s => <option key={s}>{s}</option>)}</select></Field>
+          <Field label="원금 잔액"><input type="number" value={f.principalBalance} onChange={e => set("principalBalance", Number(e.target.value))} style={inp} /></Field>
+          <Field label="조정액(법무비용)"><input type="number" value={f.adjustment} onChange={e => set("adjustment", Number(e.target.value))} style={inp} /></Field>
+          <Field label="회수액"><input type="number" value={f.collectedAmount} onChange={e => set("collectedAmount", Number(e.target.value))} style={inp} /></Field>
+          <Field label="대여일자"><input type="date" value={f.loanDate} onChange={e => set("loanDate", e.target.value)} style={inp} /></Field>
+          <Field label="집행권원 종류"><select value={f.execTitleType || ""} onChange={e => { set("execTitleType", e.target.value); set("execTitle", !!e.target.value); }} style={inp}><option value="">없음</option><option value="공정증서+집행문">공정증서+집행문</option><option value="지급명령결정정본">지급명령결정정본</option><option value="판결정본+집행문+송달증명원+확정증명원">판결정본+집행문+송달증명원+확정증명원</option></select></Field>
+          <Field label="집행권원 PDF (OneDrive)"><input value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
+          <Field label="대위변제월"><input value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2024년 3월" /></Field>
+          <Field label="대위변제증명서 PDF (OneDrive)"><input value={f.subrogationDocUrl || ""} onChange={e => set("subrogationDocUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
+          <Field label="CB종합보고서 PDF (OneDrive)"><input value={f.creditReportUrl || ""} onChange={e => set("creditReportUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
+          <Field label="신용조회 일자"><input value={f.creditCheck || ""} onChange={e => set("creditCheck", e.target.value)} style={inp} placeholder="예: 2023.10.05" /></Field>
+          <Field label="신용점수"><input value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
+          <Field label="주민등록초본 (날짜)"><input value={f.residentCopy || ""} onChange={e => set("residentCopy", e.target.value)} style={inp} placeholder="예: 2023.10.04" /></Field>
+          <Field label="주민등록초본 PDF (OneDrive)"><input value={f.residentCopyUrl || ""} onChange={e => set("residentCopyUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
+          <Field label="생년월일"><input value={f.birthDate || ""} onChange={e => set("birthDate", e.target.value)} style={inp} placeholder="예: 1985-03-15" /></Field>
+          <Field label="영업담당자"><input value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
+          <Field label="연대보증인"><input value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
+          <Field label="주민등록번호" span={2}><input value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
+          <Field label="주요사항" span={3}><textarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel={isEdit ? "수정" : "등록"} />
+      </Overlay>
+    );
+  };
+
+  // ─── Payment Add Modal ──────────────────────────────────
+  const PaymentFormModal = () => {
+    const debtorId = modal.debtorId || "";
+    const debtor = data.debtors.find(d => d.id === debtorId);
+    const [f, setF] = useState({
+      debtorId, paymentDate: today(), payerName: debtor?.name || "",
+      totalAmount: 0, channel: config.paymentChannels[0], note: "",
+    });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const save = () => {
+      const d = data.debtors.find(x => x.id === f.debtorId);
+      if (!d) { showToast("채무자를 선택하세요"); return; }
+      if (!f.totalAmount) { showToast("금액을 입력하세요"); return; }
+      const amt = Number(f.totalAmount);
+      addPayment({
+        id: uid("PAY"), debtorId: d.id, debtorName: d.name, brand: d.brand, assignee: d.assignee,
+        hubName: d.hubName, hubCode: d.hubCode, paymentDate: f.paymentDate, payerName: f.payerName || d.name,
+        totalAmount: amt, companyAccount: f.channel === "본사계좌" ? amt : 0,
+        cashCharge: f.channel === "캐쉬충전" ? amt : 0, welcomeDirect: f.channel === "웰컴직접상환" ? amt : 0,
+        note: f.note,
+      });
+      addLog("등록", "입금", `${d.name} (${d.id}) — ${fmt(amt)} / ${f.channel}`);
+      showToast(`${d.name} 입금 ${fmt(amt)} 등록 완료`);
+      setModal(null);
+    };
+    return (
+      <Overlay onClose={() => setModal(null)}>
+        <ModalHeader title="입금 등록" onClose={() => setModal(null)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="채무자" span={2}>
+            {debtor ? <div style={{ padding: "8px 10px", background: "var(--bg)", borderRadius: 8, fontSize: 13 }}><BrandBadge code={debtor.brand} brands={config.brands} /> {debtor.name} ({debtor.id})</div>
+              : <DebtorAutoComplete value={f.debtorId} onChange={v => set("debtorId", v)} debtors={data.debtors} brands={config.brands} />}
+          </Field>
+          <Field label="입금일"><input type="date" value={f.paymentDate} onChange={e => set("paymentDate", e.target.value)} style={inp} /></Field>
+          <Field label="입금자명"><input value={f.payerName} onChange={e => set("payerName", e.target.value)} style={inp} /></Field>
+          <Field label="입금액"><input type="number" value={f.totalAmount} onChange={e => set("totalAmount", e.target.value)} style={inp} placeholder="금액 입력" /></Field>
+          <Field label="입금 채널"><select value={f.channel} onChange={e => set("channel", e.target.value)} style={inp}>{config.paymentChannels.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="비고" span={2}><input value={f.note} onChange={e => set("note", e.target.value)} style={inp} placeholder="비고 사항" /></Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="등록" />
+      </Overlay>
+    );
+  };
+
+  // ─── Rematch Modal ──────────────────────────────────────
+  const RematchModal = () => {
+    const pay = modal.payment;
+    const [newDebtorId, setNewDebtorId] = useState("");
+    const [saving, setSaving] = useState(false);
+    const currentDebtor = data.debtors.find(d => d.id === pay?.debtorId);
+    const doRematch = async () => {
+      if (!newDebtorId) { showToast("새 채무자를 선택하세요"); return; }
+      setSaving(true);
+      try {
+        const r = await fetch("/api/payments/" + pay.id + "/rematch", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newDebtorId, userName: "관리자" }),
+        });
+        const result = await r.json();
+        if (!result.ok) { showToast(result.error || "재매칭 실패"); setSaving(false); return; }
+        await reloadFromBackend();
+        showToast("재매칭 완료");
+        setModal(null);
+      } catch (e) { showToast("재매칭 실패"); setSaving(false); }
+    };
+    return (
+      <Overlay onClose={() => setModal(null)}>
+        <ModalHeader title="입금 재매칭" onClose={() => setModal(null)} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+            <div style={{ marginBottom: 6, color: "var(--tm)", fontWeight: 600, fontSize: 11 }}>현재 매칭 정보</div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              <span><span style={{ color: "var(--tm)" }}>입금일:</span> {fmtDate(pay?.paymentDate)}</span>
+              <span><span style={{ color: "var(--tm)" }}>금액:</span> <b>{fmt(pay?.totalAmount)}</b></span>
+              <span><span style={{ color: "var(--tm)" }}>입금자:</span> {pay?.payerName || "-"}</span>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <span style={{ color: "var(--tm)" }}>현재 채무자: </span>
+              <b style={{ color: "#ef4444" }}>{currentDebtor?.name || pay?.debtorName}</b>
+              <span style={{ color: "var(--tm)", marginLeft: 4, fontSize: 11 }}>({pay?.debtorId})</span>
+            </div>
+          </div>
+          <Field label="새 채무자 선택">
+            <DebtorAutoComplete value={newDebtorId} onChange={setNewDebtorId} debtors={data.debtors} brands={config.brands} />
+          </Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={doRematch} saveLabel={saving ? "처리중…" : "재매칭"} />
+      </Overlay>
+    );
+  };
+
+  // ─── Activity Add Modal ─────────────────────────────────
+  const ActivityFormModal = () => {
+    const debtorId = modal.debtorId || "";
+    const debtor = data.debtors.find(d => d.id === debtorId);
+    const [f, setF] = useState({
+      debtorId, activityDate: today(), activityType: config.activityTypes[0], content: "", assignee: config.assignees[0],
+    });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const save = () => {
+      const d = data.debtors.find(x => x.id === f.debtorId);
+      if (!d) { showToast("채무자를 선택하세요"); return; }
+      if (!f.content.trim()) { showToast("활동 내용을 입력하세요"); return; }
+      addActivity({ id: uid("ACT"), debtorId: d.id, debtorName: d.name, brand: d.brand, activityDate: f.activityDate, activityType: f.activityType, content: f.content, assignee: f.assignee });
+      addLog("등록", "추심활동", `${d.name} — ${f.activityType}: ${f.content.slice(0, 50)}`);
+      showToast(`추심 활동이 기록되었습니다`);
+      setModal(null);
+    };
+    return (
+      <Overlay onClose={() => setModal(null)}>
+        <ModalHeader title="추심 활동 기록" onClose={() => setModal(null)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="채무자" span={2}>
+            {debtor ? <div style={{ padding: "8px 10px", background: "var(--bg)", borderRadius: 8, fontSize: 13 }}><BrandBadge code={debtor.brand} brands={config.brands} /> {debtor.name} ({debtor.id})</div>
+              : <DebtorAutoComplete value={f.debtorId} onChange={v => set("debtorId", v)} debtors={data.debtors} brands={config.brands} />}
+          </Field>
+          <Field label="활동일"><input type="date" value={f.activityDate} onChange={e => set("activityDate", e.target.value)} style={inp} /></Field>
+          <Field label="활동 유형"><select value={f.activityType} onChange={e => set("activityType", e.target.value)} style={inp}>{config.activityTypes.map(t => <option key={t}>{t}</option>)}</select></Field>
+          <Field label="담당자"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
+          <Field label="활동 내용" span={2}><textarea value={f.content} onChange={e => set("content", e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="통화 내용, 결과, 약속 등" /></Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="기록" />
+      </Overlay>
+    );
+  };
+
+  // ═══ VIEWS ══════════════════════════════════════════════
+
+  // ─── Dashboard ──────────────────────────────────────────
+  const Dashboard = () => {
+    const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+          <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={`추심진행 ${stats.byStatus["추심진행"] || 0}건 / 보류 ${stats.byStatus["추심보류"] || 0}건`} color="#3b82f6" />
+          <KPI label="총 채권 원금" value={fmt(stats.totalRemaining)} sub={`법무 기준 · 재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
+          <KPI label="법적절차 진행" value={`${stats.totalLegal || 0}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0}`} color="#ef4444" />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드별 채권 현황</div>
+            {config.brands.map(b => { const bd = stats.byBrand[b.code] || {}; return (<div key={b.code} style={{ marginBottom: 14 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BrandBadge code={b.code} brands={config.brands} /><span style={{ fontSize: 13, fontWeight: 500 }}>{b.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{bd.count || 0}건</span></div><span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{fmt(bd.remaining)}</span></div><div style={{ height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}><div style={{ height: "100%", width: `${maxBrand > 0 ? ((bd.remaining || 0) / maxBrand) * 100 : 0}%`, background: `linear-gradient(90deg,${b.color},${b.color}88)`, borderRadius: 4 }} /></div></div>); })}
+          </div>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>분류별 현황</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 20 }}>
+              {DASHBOARD_GROUPS.map(g => (<div key={g.label} style={{ textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8 }}><div className="mono" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4, color: g.color }}>{stats.byGroup?.[g.label] || 0}</div><div style={{ fontSize: 11, color: "var(--tm)" }}>{g.label}</div></div>))}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              {config.assignees.map(a => (<div key={a} style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8 }}><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 4 }}>{stats.byAssignee[a] || 0}</div><div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div></div>))}
+            </div>
+          </div>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>2026년 월별 회수실적</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 120 }}>
+            {Array.from({ length: 12 }, (_, i) => { const m = i + 1, val = stats.monthlyPayments[m] || 0, maxVal = Math.max(...Object.values(stats.monthlyPayments)); const h = maxVal > 0 ? (val / maxVal) * 100 : 0; return (<div key={m} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}><div className="mono" style={{ fontSize: 9, color: "var(--tm)" }}>{val > 0 ? `${(val / 10000).toFixed(0)}만` : ""}</div><div style={{ width: "100%", height: `${Math.max(h, 4)}%`, background: m <= 4 ? "linear-gradient(180deg,var(--acc),#ff5f0088)" : "var(--bg)", borderRadius: 4, minHeight: 4 }} /><div style={{ fontSize: 10, color: "var(--tm)" }}>{m}월</div></div>); })}
+          </div>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", justifyContent: "space-around" }}>
+          {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (<div key={i} style={{ textAlign: "center" }}><div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{x.v}</div></div>))}
+        </div>
+      </div>
+    );
+  };
+
+  // ─── 공통: 채무자 검색 드롭다운 (폼 내부용) ──────────────
+  const DebtorSearchField = ({ value, onChange, label = "채무자 연결" }) => {
+    const [q, setQ] = useState(value ? (data.debtors.find(d => d.id === value)?.name || "") : "");
+    const [open, setOpen] = useState(false);
+    const candidates = useMemo(() => {
+      if (!q.trim()) return data.debtors.slice(0, 20);
+      const lq = q.toLowerCase();
+      return data.debtors.filter(d => d.name.toLowerCase().includes(lq) || (d.hubName||"").includes(lq)).slice(0, 30);
+    }, [q]);
+    return (
+      <div style={{ position: "relative" }}>
+        <input value={q} onChange={e => { setQ(e.target.value); setOpen(true); onChange(null); }}
+          onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)}
+          placeholder="채무자명 검색 (선택 시 연결)"
+          style={{ ...inp, borderColor: value ? "var(--ok)" : undefined }} />
+        {open && candidates.length > 0 && (
+          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, maxHeight: 180, overflowY: "auto", boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
+            {candidates.map(d => (
+              <div key={d.id} onMouseDown={() => { onChange(d.id); setQ(d.name); setOpen(false); }}
+                style={{ padding: "7px 12px", fontSize: 12, cursor: "pointer", display: "flex", gap: 8, alignItems: "center", borderBottom: "1px solid var(--brd)" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <BrandBadge code={d.brand} brands={config.brands} />
+                <span style={{ fontWeight: 600 }}>{d.name}</span>
+                <span style={{ color: "var(--ts)", fontSize: 11 }}>{d.hubName}</span>
+                <span style={{ flex: 1 }} />
+                <span className="mono" style={{ color: "var(--ok)", fontSize: 11 }}>{fmt(d.finalBalanceLegal)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {value && <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 3 }}>연결됨 ✓</div>}
+      </div>
+    );
+  };
+
+  // ─── 분할상환 추가 모달 ────────────────────────────────────
+  const InstallmentAddModal = () => {
+    const initDebtorId = modal?.debtorId || "";
+    const [f, setF] = useState({ debtorId: initDebtorId, paymentTiming: "월말", monthlyAmount: "", startDate: today(), status: "진행중", memo: "" });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const [saving, setSaving] = useState(false);
+    const handleSave = async () => {
+      if (!f.debtorId) return showToast("채무자를 선택하세요");
+      const existingPlan = data.installmentPlans.find(p => p.debtorId === f.debtorId);
+      if (existingPlan) return showToast("이미 분할상환 플랜이 있습니다. 일정을 직접 추가하세요.");
+      setSaving(true);
+      try {
+        const id = uid("INS");
+        const r = await fetch("/api/installments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, debtorId: f.debtorId, paymentTiming: f.paymentTiming, monthlyAmount: Number(f.monthlyAmount) || 0, startDate: f.startDate, status: f.status, memo: f.memo }),
+        });
+        const result = await r.json();
+        if (!result.ok) { showToast(result.error || "저장 실패"); setSaving(false); return; }
+        await reloadInstallments();
+        setModal(null);
+        showToast("분할상환 플랜 추가 완료");
+      } catch(e) { showToast("저장 실패"); setSaving(false); }
+    };
+    return (
+      <Overlay onClose={() => setModal(null)}>
+        <ModalHeader title="분할상환 플랜 추가" onClose={() => setModal(null)} />
+        <div style={{ display: "grid", gap: 12 }}>
+          <Field label="채무자 연결"><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
+          <Field label="납부시기">
+            <div style={{ display: "flex", gap: 6 }}>
+              {config.installmentTimings.map(t => <button key={t} onClick={() => set("paymentTiming", t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.paymentTiming === t ? "var(--acc)" : "var(--bg2)", color: f.paymentTiming === t ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t}</button>)}
+            </div>
+          </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label="기본 월 납부액(원)"><input type="number" value={f.monthlyAmount} onChange={e => set("monthlyAmount", e.target.value)} style={inp} placeholder="예: 300000" /></Field>
+            <Field label="시작일"><input type="date" value={f.startDate} onChange={e => set("startDate", e.target.value)} style={inp} /></Field>
+          </div>
+          {debtor && <div style={{ padding: "8px 12px", background: "var(--bg2)", borderRadius: 8, fontSize: 12, color: "var(--ts)" }}>총 채권액: <b style={{ color: "var(--tp)" }}>{fmt(debtor.finalBalanceLegal)}</b> (채무자 데이터 기준)</div>}
+          <Field label="상태"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{["진행중", "완료", "중단"].map(s => <option key={s}>{s}</option>)}</select></Field>
+          <Field label="메모"><textarea value={f.memo} onChange={e => set("memo", e.target.value)} style={{ ...inp, height: 60, resize: "vertical" }} /></Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : "저장"} />
+      </Overlay>
+    );
+  };
+
+  // ─── 회생/파산 추가 모달 ──────────────────────────────────
+  const RehabAddModal = () => {
+    const [f, setF] = useState({ debtorId: "", type: "회생", court: "", caseNumber: "", creditorNumber: "", debtAmount: "", approvedAmount: "", monthlyPayment: "", currentRound: "", repaymentNote: "" });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const handleSave = () => {
+      if (!f.caseNumber.trim()) return showToast("사건번호를 입력하세요");
+      const rec = {
+        id:              uid("MRH"),
+        debtorId:        f.debtorId || null,
+        debtorName:      debtor?.name || "미연결",
+        brand:           debtor?.brand || "",
+        court:           f.court,
+        caseNumber:      f.caseNumber,
+        type:            f.type,
+        creditorNumber:  f.creditorNumber,
+        planApproved:    false,
+        dismissed:       false,
+        debtAmount:      Number(f.debtAmount) || 0,
+        approvedAmount:  Number(f.approvedAmount) || 0,
+        currentRound:    f.currentRound,
+        monthlyPayment:  Number(f.monthlyPayment) || 0,
+        repaymentNote:   f.repaymentNote,
+        overdueStatus:   "",
+      };
+      addMR(MK.rehabilitations, rec);
+      setData(prev => ({ ...prev, rehabilitations: [rec, ...prev.rehabilitations] }));
+      setModal(null);
+      showToast("회생/파산 추가 완료");
+    };
+    return (
+      <Overlay onClose={() => setModal(null)} wide>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>회생/파산 추가</span>
+          <button onClick={() => setModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
+          <Field label="유형">
+            <div style={{ display: "flex", gap: 6 }}>
+              {["회생", "파산/면책"].map(t => <button key={t} onClick={() => set("type", t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.type === t ? "var(--acc)" : "var(--bg2)", color: f.type === t ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t}</button>)}
+            </div>
+          </Field>
+          <Field label="채권자번호"><input value={f.creditorNumber} onChange={e => set("creditorNumber", e.target.value)} style={inp} placeholder="예: 18" /></Field>
+          <Field label="법원"><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 수원회생법원" /></Field>
+          <Field label="사건번호"><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2024개회12345" /></Field>
+          <Field label="채무액(원)"><input type="number" value={f.debtAmount} onChange={e => set("debtAmount", e.target.value)} style={inp} /></Field>
+          <Field label="인가액(원)"><input type="number" value={f.approvedAmount} onChange={e => set("approvedAmount", e.target.value)} style={inp} /></Field>
+          <Field label="월 납부액(원)"><input type="number" value={f.monthlyPayment} onChange={e => set("monthlyPayment", e.target.value)} style={inp} /></Field>
+          <Field label="현재 회차"><input value={f.currentRound} onChange={e => set("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></Field>
+          <Field label="비고" span={2}><textarea value={f.repaymentNote} onChange={e => set("repaymentNote", e.target.value)} style={{ ...inp, height: 64, resize: "vertical" }} /></Field>
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+          <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          <button onClick={handleSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+        </div>
+      </Overlay>
+    );
+  };
+
+  // ─── 법적절차 추가 모달 ────────────────────────────────────
+  const LegalAddModal = () => {
+    const initType = modal?.legalType || "압류";
+    const [f, setF] = useState({ type: initType, brand: config.brands[0]?.code || "B", defendant: "", debtorId: "", court: "", caseNumber: "", caseStatus: "채권자", filingDate: today(), progressStatus: "진행", applicationDate: today(), decisionDate: "", status: "", hasInquiryOrder: false });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const isAD = f.type === "재산명시";
+    const handleSave = () => {
+      if (!f.caseNumber.trim()) return showToast("사건번호를 입력하세요");
+      if (!isAD && !f.defendant.trim() && !f.debtorId) return showToast("채무자명 또는 채무자 연결이 필요합니다");
+      if (isAD && !f.defendant.trim() && !f.debtorId) return showToast("채무자명 또는 채무자 연결이 필요합니다");
+
+      let rec;
+      if (isAD) {
+        rec = {
+          id: uid("MAD"), type: "재산명시", brand: f.brand, debtorName: debtor?.name || f.defendant,
+          court: f.court, caseNumber: f.caseNumber, applicationDate: f.applicationDate,
+          decisionDate: f.decisionDate, result: "", status: f.status, withdrawReason: "",
+          detentionDecision: "", propertyList: "", propertyListDesc: "", executionExpiration: "",
+          inquiryResult: "", inquiryApplicationDate: "", inquiryOrderDate: f.hasInquiryOrder ? today() : "",
+          hasInquiryOrder: f.hasInquiryOrder, inquiryResponse: "", debtorId: f.debtorId || null,
+        };
+        addMR(MK.assetDisclosures, rec);
+        setData(prev => ({ ...prev, assetDisclosures: [rec, ...prev.assetDisclosures] }));
+      } else {
+        rec = {
+          id: uid("MLC"), type: f.type, brand: f.brand, court: f.court, caseNumber: f.caseNumber,
+          caseStatus: f.caseStatus, filingDate: f.filingDate, plaintiff: config.brands.find(b => b.code === f.brand)?.name || "",
+          defendant: debtor?.name || f.defendant, hearingTime: "", hearingLocation: "",
+          progressStatus: f.progressStatus, debtorId: f.debtorId || null,
+        };
+        addMR(MK.legalCases, rec);
+        setData(prev => ({ ...prev, legalCases: [rec, ...prev.legalCases] }));
+      }
+      setModal(null);
+      showToast(`${f.type} 추가 완료`);
+    };
+    return (
+      <Overlay onClose={() => setModal(null)} wide>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>법적절차 추가</span>
+          <button onClick={() => setModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="절차 유형" span={2}>
+            <div style={{ display: "flex", gap: 6 }}>
+              {["지급명령","압류","재산명시","형사고소"].map(t => <button key={t} onClick={() => set("type", t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.type === t ? "var(--acc)" : "var(--bg2)", color: f.type === t ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t}</button>)}
+            </div>
+          </Field>
+          <Field label="브랜드">
+            <select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>
+              {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+            </select>
+          </Field>
+          {!isAD && <Field label="사건지위">
+            <select value={f.caseStatus} onChange={e => set("caseStatus", e.target.value)} style={inp}>
+              {["채권자","원고","피고"].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>}
+          <Field label="법원" span={isAD ? 2 : 1}><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
+          <Field label="사건번호" span={2}><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026타채125019" /></Field>
+          <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
+          {!f.debtorId && <Field label={isAD ? "대상자명" : "피고/채무자명"} span={2}><input value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
+          {!isAD && <>
+            <Field label="접수일"><input type="date" value={f.filingDate} onChange={e => set("filingDate", e.target.value)} style={inp} /></Field>
+            <Field label="진행상황"><input value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} /></Field>
+          </>}
+          {isAD && <>
+            <Field label="신청일"><input type="date" value={f.applicationDate} onChange={e => set("applicationDate", e.target.value)} style={inp} /></Field>
+            <Field label="결정일"><input type="date" value={f.decisionDate} onChange={e => set("decisionDate", e.target.value)} style={inp} /></Field>
+            <Field label="결과 상태"><input value={f.status} onChange={e => set("status", e.target.value)} style={inp} placeholder="예: 취하, 각하" /></Field>
+            <Field label="재산조회 명령">
+              <div style={{ display: "flex", gap: 6 }}>
+                {[true, false].map(v => <button key={String(v)} onClick={() => set("hasInquiryOrder", v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.hasInquiryOrder === v ? (v ? "#10b981" : "#64748b") : "var(--bg2)", color: f.hasInquiryOrder === v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{v ? "O (조회명령 있음)" : "X (없음)"}</button>)}
+              </div>
+            </Field>
+          </>}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+          <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          <button onClick={handleSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+        </div>
+      </Overlay>
+    );
+  };
+
+  // ─── 민사소송 추가 모달 ────────────────────────────────────
+  const MinsaAddModal = () => {
+    const [f, setF] = useState({ brand: config.brands[0]?.code || "B", defendant: "", debtorId: "", court: "", caseNumber: "", caseStatus: "원고", filingDate: today(), progressStatus: "진행", plaintiff: "" });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const handleSave = () => {
+      if (!f.caseNumber.trim()) return showToast("사건번호를 입력하세요");
+      const rec = {
+        id: uid("MMS"), type: "민사소송", brand: f.brand, court: f.court, caseNumber: f.caseNumber,
+        caseStatus: f.caseStatus, filingDate: f.filingDate,
+        plaintiff: f.plaintiff || (config.brands.find(b => b.code === f.brand)?.name || ""),
+        defendant: debtor?.name || f.defendant, hearingTime: "", hearingLocation: "",
+        progressStatus: f.progressStatus, debtorId: f.debtorId || null,
+      };
+      addMR(MK.minsaCases, rec);
+      setData(prev => ({ ...prev, minsaCases: [rec, ...prev.minsaCases] }));
+      setModal(null);
+      showToast("민사소송 추가 완료");
+    };
+    return (
+      <Overlay onClose={() => setModal(null)} wide>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>민사소송 추가</span>
+          <button onClick={() => setModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="브랜드">
+            <select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>
+              {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+            </select>
+          </Field>
+          <Field label="사건지위">
+            <select value={f.caseStatus} onChange={e => set("caseStatus", e.target.value)} style={inp}>
+              {["원고","피고","채권자"].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="법원"><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
+          <Field label="사건번호"><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026가단51603" /></Field>
+          <Field label="원고(채권자)"><input value={f.plaintiff} onChange={e => set("plaintiff", e.target.value)} style={inp} placeholder="자동 입력 (브랜드명)" /></Field>
+          <Field label="접수일"><input type="date" value={f.filingDate} onChange={e => set("filingDate", e.target.value)} style={inp} /></Field>
+          <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
+          {!f.debtorId && <Field label="피고(채무자명)" span={2}><input value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
+          <Field label="진행상황" span={2}><input value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} placeholder="예: 진행, 확정, 취하" /></Field>
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+          <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          <button onClick={handleSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+        </div>
+      </Overlay>
+    );
+  };
+
+  // ─── 형사고소 추가 모달 ────────────────────────────────────
+  const ComplaintAddModal = () => {
+    const [f, setF] = useState({ brand: config.brands[0]?.code || "B", debtorId: "", debtorName: "", complainant: "", charge: "사기", goodsAmount: "", loanAmount: "", complaintDate: today(), policeStation: "", statusNote: "수사중" });
+    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const handleSave = () => {
+      if (!f.policeStation.trim() && !f.debtorId && !f.debtorName.trim()) return showToast("채무자 또는 경찰서 정보를 입력하세요");
+      const rec = {
+        id: uid("MCO"), brand: f.brand, debtorId: f.debtorId || null,
+        debtorName: debtor?.name || f.debtorName,
+        complainant: f.complainant, charge: f.charge,
+        goodsAmount: Number(f.goodsAmount) || 0, loanAmount: Number(f.loanAmount) || 0,
+        complaintDate: f.complaintDate, policeStation: f.policeStation, statusNote: f.statusNote,
+      };
+      addMR(MK.complaints, rec);
+      setData(prev => ({ ...prev, complaints: [rec, ...prev.complaints] }));
+      setModal(null);
+      showToast("형사고소 추가 완료");
+    };
+    return (
+      <Overlay onClose={() => setModal(null)} wide>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>형사고소 추가</span>
+          <button onClick={() => setModal(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="브랜드">
+            <select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>
+              {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+            </select>
+          </Field>
+          <Field label="죄명">
+            <input value={f.charge || ""} onChange={e => set("charge", e.target.value)} style={inp} placeholder="예: 사기, 횡령, 배임 등" />
+          </Field>
+          <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
+          {!f.debtorId && <Field label="채무자명" span={2}><input value={f.debtorName} onChange={e => set("debtorName", e.target.value)} style={inp} /></Field>}
+          <Field label="고소인"><input value={f.complainant} onChange={e => set("complainant", e.target.value)} style={inp} placeholder="예: 주식회사 바로고" /></Field>
+          <Field label="경찰서"><input value={f.policeStation} onChange={e => set("policeStation", e.target.value)} style={inp} placeholder="예: 광진경찰서" /></Field>
+          <Field label="고소일"><input type="date" value={f.complaintDate} onChange={e => set("complaintDate", e.target.value)} style={inp} /></Field>
+          <Field label="진행상황"><input value={f.statusNote} onChange={e => set("statusNote", e.target.value)} style={inp} placeholder="수사중, 기소, 불기소 등" /></Field>
+          <Field label="물품대(원)"><input type="number" value={f.goodsAmount} onChange={e => set("goodsAmount", e.target.value)} style={inp} /></Field>
+          <Field label="대여금(원)"><input type="number" value={f.loanAmount} onChange={e => set("loanAmount", e.target.value)} style={inp} /></Field>
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+          <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          <button onClick={handleSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+        </div>
+      </Overlay>
+    );
+  };
+
+  // ─── Debtor List ────────────────────────────────────────
+  const debtorListView = (
+    <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+        <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
+        {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />신규 등록</button>}
+        <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
+        <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
+      </div>
+      <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ background: "var(--bg2)" }}>
+              {[
+                { k: "brand", l: "브랜드", w: 60 },
+                { k: "category", l: "분류", w: 80 },
+                { k: "assignee", l: "담당", w: 50 },
+                { k: "name", l: "채무자명", w: 110 },
+                { k: "guarantors", l: "연대보증인", w: 100 },
+                { k: "hubCode", l: "코드", w: 70 },
+                { k: "hubName", l: "허브/지점", w: 130 },
+                { k: "debtCause", l: "채무발생원인", w: 90 },
+                { k: "collectionStatus", l: "추심상태", w: 80 },
+                { k: "principalBalance", l: "채무잔액", w: 120 },
+                { k: "finalBalanceLegal", l: "법무잔액", w: 120 },
+                { k: "execTitle", l: "집행권원", w: 65 },
+              ].map(c => (
+                <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>{c.l}{sort.f === c.k && <I name={sort.d === "asc" ? "arrowUp" : "arrowDown"} size={12} />}</div>
+                </th>
+              ))}
+            </tr></thead>
+            <tbody>{paged.map(d => {
+              const subs = d.subRows && d.subRows.length > 1 ? d.subRows : null;
+              const span = subs ? subs.length : 1;
+
+              const ExecCell = ({ rec, rs }) => (
+                <td rowSpan={rs} style={{ padding: "8px 10px", textAlign: "center", fontSize: 12 }} onClick={e => e.stopPropagation()}>
+                  {rec.execTitle
+                    ? (rec.execTitleUrl
+                      ? <a href={rec.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 700, textDecoration: "none" }} title={rec.execTitleType || "집행권원"}>O</a>
+                      : <span style={{ color: "var(--ok)", fontWeight: 700 }}>O</span>)
+                    : <span style={{ color: "var(--tm)" }}>-</span>}
+                </td>
+              );
+
+              if (!subs) {
+                return (
+                  <tr key={d.id} onClick={() => { setSel(d); setDetailTab("히스토리"); }} style={{ cursor: "pointer", borderBottom: "1px solid var(--brd)" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <td style={{ padding: "10px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                    <td style={{ padding: "10px 10px" }}><Badge status={d.category} small /></td>
+                    <td style={{ padding: "10px 10px", fontSize: 12 }}>{d.assignee}</td>
+                    <td style={{ padding: "10px 10px", fontWeight: 500 }}>{d.name}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)" }}>{d.guarantors?.join(", ") || "-"}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)" }}>{d.hubCode}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.hubName}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.debtCause || "-"}</td>
+                    <td style={{ padding: "10px 10px" }}><Badge status={d.collectionStatus} small /></td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12 }}>{fmt(d.principalBalance)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                    <ExecCell rec={d} rs={1} />
+                  </tr>
+                );
+              }
+
+              // ── 그룹 행 (같은 이름+브랜드의 다중 항목) ──────────────
+              const sharedBg = { background: "transparent", verticalAlign: "middle" };
+              return subs.map((sub, si) => {
+                const isFirst = si === 0;
+                const subLegal = sub.finalBalanceLegal ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0) + (sub.adjustment || 0));
+                return (
+                  <tr key={`${d.id}-${si}`} style={{ cursor: "pointer", borderBottom: "1px solid var(--brd)" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    onClick={() => { setSel(sub); setDetailTab("히스토리"); }}>
+                    {isFirst && (
+                      <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", ...sharedBg }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
+                          <BrandBadge code={d.brand} brands={config.brands} />
+                          {canEdit && (
+                            <button onClick={e => { e.stopPropagation(); setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName } }); }}
+                              style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "1px solid var(--acc)55", cursor: "pointer" }}>
+                              +항목
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", ...sharedBg }}><Badge status={d.category} small /></td>}
+                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", fontSize: 12, borderBottom: "1px solid var(--brd)", ...sharedBg }}>{d.assignee}</td>}
+                    {isFirst && (
+                      <td rowSpan={span} style={{ padding: "10px 10px", fontWeight: 600, borderBottom: "1px solid var(--brd)", borderRight: "1px solid var(--brd)", ...sharedBg }}
+                        onClick={e => { e.stopPropagation(); setSel(subs[0]); setDetailTab("히스토리"); }}>
+                        {d.name}
+                        <div style={{ fontSize: 10, color: "var(--tm)", fontWeight: 400, marginTop: 2 }}>{span}건</div>
+                      </td>
+                    )}
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)" }}>{sub.guarantors?.join(", ") || "-"}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)" }}>{sub.hubCode}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.hubName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.debtCause || "-"}</td>
+                    <td style={{ padding: "8px 10px" }}><Badge status={sub.collectionStatus} small /></td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12 }}>{fmt(sub.principalBalance || 0)}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, fontWeight: 600 }}>{fmt(subLegal)}</td>
+                    <ExecCell rec={sub} rs={1} />
+                  </tr>
+                );
+              });
+            })}</tbody>
+          </table>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
+          <span style={{ fontSize: 12, color: "var(--tm)" }}>{(page - 1) * PP + 1}-{Math.min(page * PP, filtered.length)} / {filtered.length}</span>
+          <div style={{ display: "flex", gap: 4 }}>
+            {page > 1 && <button onClick={() => setPage(page - 1)} style={{ width: 32, height: 32, borderRadius: 6, fontSize: 12, background: "transparent", color: "var(--tm)" }}>&lt;</button>}
+            {Array.from({ length: Math.min(tp, 10) }, (_, i) => { let p; if (tp <= 10) p = i + 1; else if (page <= 5) p = i + 1; else if (page >= tp - 4) p = tp - 9 + i; else p = page - 5 + i; return <button key={i} onClick={() => setPage(p)} style={{ width: 32, height: 32, borderRadius: 6, fontSize: 12, fontWeight: 500, background: page === p ? "var(--acc)" : "transparent", color: page === p ? "#fff" : "var(--tm)" }}>{p}</button>; })}
+            {page < tp && <button onClick={() => setPage(page + 1)} style={{ width: 32, height: 32, borderRadius: 6, fontSize: 12, background: "transparent", color: "var(--tm)" }}>&gt;</button>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Debtor Detail ──────────────────────────────────────
+  const DebtorDetail = ({ d }) => {
+    // ── 히스토리 로컬 state (hooks must be first) ──
+    const [histManual, setHistManual_] = useState(() => getHistM(d.id));
+    const [histEdits,  setHistEdits_]  = useState(() => getHistE(d.id));
+    const [histDeleted,setHistDeleted_]= useState(() => getHistD(d.id));
+    const [histForm,   setHistForm]    = useState(null);
+
+    const updHistM = (arr) => { saveHistM(d.id, arr); setHistManual_(arr); };
+    const updHistE = (obj) => { saveHistE(d.id, obj); setHistEdits_(obj); };
+    const updHistD = (arr) => { saveHistD(d.id, arr); setHistDeleted_(arr); };
+
+    const debtorHistory = d.history || [];
+    const deletedSet = new Set(histDeleted);
+    const allHistory = [
+      ...debtorHistory
+        .map((h, i) => {
+          if (deletedSet.has(i)) return null;
+          const ed = histEdits[`e_${i}`];
+          return { key: `e_${i}`, date: ed?.date ?? h.date, content: ed?.content ?? h.content, isExcel: true, origIdx: i };
+        })
+        .filter(Boolean),
+      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, isManual: true, manualId: h.id })),
+    ].sort((a, b) => b.date.localeCompare(a.date));
+
+    const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+    const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "" });
+    const openEdit = (h) => setHistForm({ mode: "edit", key: h.key, date: h.date, content: h.content });
+    const handleHistSave = () => {
+      const date = histDateFromInput(histForm.date);
+      const content = histForm.content.trim();
+      if (!date || !content) return;
+      if (histForm.mode === "add") {
+        updHistM([{ id: uid("HIST"), date, content }, ...histManual]);
+      } else {
+        if (histForm.key.startsWith("e_")) {
+          updHistE({ ...histEdits, [histForm.key]: { date, content } });
+        } else {
+          const mid = histForm.key.replace("m_", "");
+          updHistM(histManual.map(h => h.id === mid ? { ...h, date, content } : h));
+        }
+      }
+      setHistForm(null);
+    };
+    const handleHistDelete = (h) => {
+      if (!confirm("이 히스토리 항목을 삭제하시겠습니까?")) return;
+      if (h.isExcel) updHistD([...histDeleted, h.origIdx]);
+      else updHistM(histManual.filter(m => m.id !== h.manualId));
+    };
+
+    const debtorPayments = data.payments.filter(p => p.debtorId === d.id);
+    const _normD = normNameForMatch(d.name);
+    const debtorRehabs = data.rehabilitations.filter(r =>
+      r.debtorId === d.id || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand)
+    );
+    const debtorLegalAll = [
+      ...data.legalCases.filter(c => c.debtorId === d.id),
+      ...data.assetDisclosures.filter(c => c.debtorId === d.id),
+      ...(data.minsaCases || []).filter(c => c.debtorId === d.id),
+      ...(data.complaints || []).filter(c => c.debtorId === d.id).map(c => ({
+        ...c, type: "형사고소", caseNumber: c.charge, court: c.policeStation,
+        progressStatus: c.status || "수사중",
+      })),
+    ];
+    const debtorInstPlan = (data.installmentPlans || []).find(p => p.debtorId === d.id);
+    const debtorInstScheds = debtorInstPlan ? (debtorInstPlan.schedules || []) : [];
+    const dtabs = [
+      { k: "히스토리", count: allHistory.length },
+      { k: "입금내역", count: debtorPayments.length },
+      { k: "분할상환", count: debtorInstScheds.length },
+      { k: "법적절차내역", count: debtorLegalAll.length },
+      { k: "회생파산", count: debtorRehabs.length },
+    ];
+
+    return (
+      <div className="slide" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Header with edit/delete */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span>{(d.hubName || d.hubCode) && <span style={{ fontSize: 12, color: "var(--tm)" }}>{d.hubName}{d.hubCode ? ` (${d.hubCode})` : ""}</span>}<Badge status={d.category} /><Badge status={d.collectionStatus} /></div>
+              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}><span>{d.brandName}</span><span>{d.hubName} ({d.hubCode})</span><span>담당: {d.assignee}</span>{d.execTitle && (d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>)}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {canEdit && <button onClick={() => setModal({ type: "debtor", data: d })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
+            {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
+            <button onClick={() => setSel(null)} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
+          </div>
+        </div>
+
+        {/* Financial */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
+          {[{ l: "원금 잔액(재무)", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "조정액(법무비용)", v: fmt(d.adjustment), c: "var(--warn)" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "최종잔액(재무)", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "최종잔액(법무)", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
+        </div>
+
+        {/* Info cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {/* 왼쪽: 기본 정보 */}
+          <div style={{ background: "var(--card)", borderRadius: 10, padding: 16, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>기본 정보</div>
+            {/* 허브지점명 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>허브/지점명</span>
+              <span style={{ fontSize: 12, fontWeight: 500, textAlign: "right" }}>{d.hubName || "-"}</span>
+            </div>
+            {/* 코드번호 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>코드번호</span>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{d.hubCode || "-"}</span>
+            </div>
+            {/* 연대보증인 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0, paddingTop: 1 }}>연대보증인</span>
+              <span style={{ fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: "65%" }}>
+                {d.guarantors?.length > 0 ? d.guarantors.join(", ") : "-"}
+              </span>
+            </div>
+            {/* 주민등록번호 + 초본 버튼 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>주민등록번호</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.residentNumber || "-"}</span>
+                {d.residentCopyUrl
+                  ? <a href={d.residentCopyUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>초본 열기</a>
+                  : <span style={{ padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>초본 미연동</span>}
+              </div>
+            </div>
+            {/* 생년월일 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>생년월일</span>
+              <span style={{ fontSize: 12, fontWeight: 500 }}>{d.birthDate || "-"}</span>
+            </div>
+            {/* 신용조회 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>신용조회</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.creditCheck ? `${d.creditCheck}${d.creditGrade ? ` (${d.creditGrade})` : ""}` : "-"}</span>
+                {d.creditReportUrl
+                  ? <a href={d.creditReportUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none" }}>CB 열기</a>
+                  : <span style={{ padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0" }}>미연동</span>}
+              </div>
+            </div>
+            {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
+            <div style={{ padding: "7px 0" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>전화번호</div>
+              {(() => {
+                const phones = (d.phone || "").split(/\s*\/\s*|\n/).map(p => p.trim()).filter(Boolean);
+                if (!phones.length) return <span style={{ fontSize: 12, color: "var(--tm)" }}>-</span>;
+                if (phones.length <= 3) return (
+                  <div>{phones.map((p, i) => <div key={i} style={{ fontSize: 12, fontWeight: 500, lineHeight: 1.8 }}>{p}</div>)}</div>
+                );
+                const half = Math.ceil(phones.length / 2);
+                return (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 8px" }}>
+                    <div>{phones.slice(0, half).map((p, i) => <div key={i} style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.8 }}>{p}</div>)}</div>
+                    <div>{phones.slice(half).map((p, i) => <div key={i} style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.8 }}>{p}</div>)}</div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* 오른쪽: 추가 정보 */}
+          <div style={{ background: "var(--card)", borderRadius: 10, padding: 16, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>추가 정보</div>
+            {/* 채무발생원인 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>채무발생원인</span>
+              <span style={{ fontSize: 12, fontWeight: 500 }}>{d.debtCause || "-"}</span>
+            </div>
+            {/* 대여일자 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대여일자</span>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{fmtDate(d.loanDate)}</span>
+            </div>
+            {/* 대위변제일 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대위변제일</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.subrogationMonth || "-"}</span>
+                {d.subrogationDocUrl && <a href={d.subrogationDocUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none" }}>열기</a>}
+              </div>
+            </div>
+            {/* 영업담당자 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0, paddingTop: 1 }}>영업담당자</span>
+              <span style={{ fontSize: 12, fontWeight: 500, textAlign: "right", maxWidth: "65%" }}>{d.salesRep || "-"}</span>
+            </div>
+            {/* 기타사항 */}
+            <div style={{ padding: "7px 0" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 4 }}>기타사항</div>
+              {d.keyNotes
+                ? <div style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 8px", background: "var(--bg)", borderRadius: 6, whiteSpace: "pre-wrap", maxHeight: 80, overflow: "auto" }}>{d.keyNotes}</div>
+                : <span style={{ fontSize: 12, color: "var(--tm)" }}>-</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs with quick-add buttons */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 2, flex: 1, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
+            {dtabs.map(t => (<button key={t.k} onClick={() => setDetailTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 500, background: detailTab === t.k ? "var(--bg)" : "transparent", color: detailTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.k} {t.count > 0 && <span className="mono" style={{ fontSize: 10 }}>({t.count})</span>}</button>))}
+          </div>
+          {detailTab === "히스토리" && (
+            <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />히스토리 추가</button>
+          )}
+          {detailTab === "입금내역" && (
+            <button onClick={() => setModal({ type: "payment", debtorId: d.id })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />입금 등록</button>
+          )}
+          {detailTab === "분할상환" && !debtorInstPlan && (
+            <button onClick={() => setModal({ type: "addInstallment", debtorId: d.id })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />플랜 추가</button>
+          )}
+        </div>
+
+        {/* Tab content */}
+        {detailTab === "히스토리" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* 추가/수정 폼 */}
+          {histForm && (
+            <div style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "2px solid var(--acc)" }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap" }}>날짜</span>
+                <input type="date" value={histDateToInput(histForm.date)} onChange={e => setHistForm(f => ({ ...f, date: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
+                <span style={{ fontSize: 11, color: "var(--tm)", marginLeft: 8 }}>{histForm.mode === "add" ? "새 항목 추가" : "항목 수정"}</span>
+              </div>
+              <textarea
+                value={histForm.content}
+                onChange={e => setHistForm(f => ({ ...f, content: e.target.value }))}
+                rows={4}
+                placeholder="추심 내용을 입력하세요..."
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, lineHeight: 1.7, resize: "vertical", boxSizing: "border-box" }}
+              />
+              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 8 }}>
+                <button onClick={() => setHistForm(null)} style={{ padding: "6px 14px", borderRadius: 7, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer" }}>취소</button>
+                <button onClick={handleHistSave} style={{ padding: "6px 14px", borderRadius: 7, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>저장</button>
+              </div>
+            </div>
+          )}
+          {/* 히스토리 목록 */}
+          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            {allHistory.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>추심 히스토리 없음 — 위 버튼으로 추가하세요</div>}
+            {allHistory.map((h, i) => (
+              <div key={h.key} style={{ display: "flex", gap: 0, borderBottom: i < allHistory.length - 1 ? "1px solid var(--brd)" : "none" }}>
+                <div style={{ width: 110, flexShrink: 0, padding: "12px 14px", background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, lineHeight: 1.4 }}>{h.date}</span>
+                  {h.isManual && <span style={{ fontSize: 9, color: "var(--ok)", fontWeight: 600, background: "#10b98115", borderRadius: 4, padding: "1px 4px" }}>수동</span>}
+                </div>
+                <div style={{ flex: 1, padding: "12px 16px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
+                <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, padding: "8px 10px", borderLeft: "1px solid var(--brd)" }}>
+                  <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>
+                  <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>}
+
+        {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button></td></tr>))}
+              {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
+        </div>}
+
+        <div style={{ display: detailTab === "분할상환" ? "flex" : "none", flexDirection: "column", gap: 10 }}>
+          {!debtorInstPlan && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>분할상환 플랜 없음 — 위 버튼으로 추가하세요</div>}
+          {debtorInstPlan && <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 14px", border: "1px solid var(--brd)", display: "flex", gap: 20, fontSize: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: "var(--tm)" }}>납부시기:</span><b>{debtorInstPlan.paymentTiming}</b>
+            <span style={{ color: "var(--tm)" }}>총 채권액:</span><b className="mono" style={{ color: "var(--acc)" }}>{fmt(d.finalBalanceLegal)}</b>
+            <span style={{ color: "var(--tm)" }}>상태:</span><Badge status={debtorInstPlan.status} small />
+            {debtorInstPlan.memo && <span style={{ color: "var(--ts)" }}>{debtorInstPlan.memo}</span>}
+          </div>}
+          {debtorInstScheds.length > 0 && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "var(--bg2)" }}>{["채무원", "기관", "상환일", "금액", "상태"].map(h => <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
+              <tbody>{debtorInstScheds.map(s => {
+                const sc = s.status === "완납" ? { bg: "#10b98110", t: "#047857" } : s.status === "지연" ? { bg: "#f59e0b10", t: "#b45309" } : { bg: "#ef444410", t: "#b91c1c" };
+                return (<tr key={s.id} style={{ borderBottom: "1px solid var(--brd)", background: s.status === "완납" ? "#10b98106" : "transparent" }}>
+                  <td style={{ padding: "7px 10px" }}>{s.debtSource || "-"}</td>
+                  <td style={{ padding: "7px 10px", fontSize: 11, color: "var(--ts)" }}>{s.institution || "-"}</td>
+                  <td className="mono" style={{ padding: "7px 10px", fontSize: 12 }}>{s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b" }}>{s.dueMonth || "?"}(미정)</span>}</td>
+                  <td className="mono" style={{ padding: "7px 10px", fontWeight: 600 }}>{fmt(s.scheduledAmount)}</td>
+                  <td style={{ padding: "7px 10px" }}><span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span></td>
+                </tr>);
+              })}</tbody>
+            </table>
+          </div>}
+        </div>
+
+        {detailTab === "법적절차내역" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {debtorLegalAll.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>법적절차 내역 없음</div>}
+          {debtorLegalAll.map((c, i) => (
+            <div key={c.id || i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Badge status={c.type} />
+                  <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{c.caseNumber}</span>
+                  <span style={{ fontSize: 12, color: "var(--ts)" }}>{c.court}</span>
+                </div>
+                <Badge status={c.progressStatus || c.status || "진행"} small />
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 11, color: "var(--ts)" }}>
+                {c.filingDate && <span>접수일: {c.filingDate}</span>}
+                {c.applicationDate && <span>신청일: {c.applicationDate}</span>}
+                {c.defendant && <span>피고: {c.defendant}</span>}
+                {c.debtorName && <span>대상자: {c.debtorName}</span>}
+                {c.hasInquiryOrder !== undefined && <span>재산조회: {c.hasInquiryOrder ? <span style={{ color: "var(--ok)", fontWeight: 600 }}>O</span> : <span style={{ color: "var(--tm)" }}>X</span>}</span>}
+                {c.caseStatus && <span>지위: {c.caseStatus}</span>}
+              </div>
+            </div>
+          ))}
+        </div>}
+
+        {detailTab === "회생파산" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
+          {debtorRehabs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>회생/파산 내역 없음</div>}
+        </div>}
+      </div>
+    );
+  };
+
+  // ─── Payments View ──────────────────────────────────────
+  const PaymentsView = () => {
+    const [subTab, setSubTab] = useState("목록");
+    const [pq, setPq] = useState(""); const [pBrand, setPBrand] = useState("전체"); const [pPage, setPPage] = useState(1);
+    const [pFrom, setPFrom] = useState(""); const [pTo, setPTo] = useState("");
+    const pFiltered = useMemo(() => {
+      let l = [...data.payments];
+      if (pq) { const ql = pq.toLowerCase(); l = l.filter(p => (p.debtorName || "").toLowerCase().includes(ql) || (p.payerName || "").toLowerCase().includes(ql) || (p.hubName || "").toLowerCase().includes(ql) || (p.hubCode || "").toLowerCase().includes(ql)); }
+      if (pBrand !== "전체") l = l.filter(p => p.brand === pBrand);
+      if (pFrom) l = l.filter(p => p.paymentDate >= pFrom);
+      if (pTo) l = l.filter(p => p.paymentDate <= pTo);
+      return l;
+    }, [data.payments, pq, pBrand, pFrom, pTo]);
+    const pTP = Math.ceil(pFiltered.length / PP); const pPaged = pFiltered.slice((pPage - 1) * PP, pPage * PP);
+    const totalAmt = pFiltered.reduce((s, p) => s + p.totalAmount, 0);
+    // 페이지 윈도우 (현재 페이지 기준 앞뒤 최대 7개)
+    const WIN = 7;
+    let winStart = Math.max(1, pPage - 3);
+    let winEnd = Math.min(pTP, winStart + WIN - 1);
+    if (winEnd - winStart + 1 < WIN) winStart = Math.max(1, winEnd - WIN + 1);
+    const pageNums = []; for (let p = winStart; p <= winEnd; p++) pageNums.push(p);
+    const setQuickRange = (days) => {
+      const t = new Date(); const f = new Date(); f.setDate(f.getDate() - days);
+      setPFrom(f.toISOString().slice(0, 10)); setPTo(t.toISOString().slice(0, 10)); setPPage(1);
+    };
+    const clearRange = () => { setPFrom(""); setPTo(""); setPPage(1); };
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
+          {[{ k: "목록", l: "입금 목록" }, { k: "미매칭", l: pendingCount > 0 ? "미매칭 관리 (" + pendingCount + ")" : "미매칭 관리" }].map(t => (
+            <button key={t.k} onClick={() => setSubTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: subTab === t.k ? "var(--bg)" : "transparent", color: subTab === t.k ? (t.k === "미매칭" && pendingCount > 0 ? "#ef4444" : "var(--tp)") : "var(--tm)" }}>{t.l}</button>
+          ))}
+        </div>
+        {subTab === "미매칭" && <PendingPaymentsView />}
+        <div style={{ display: subTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          <KPI label="총 입금건수" value={`${pFiltered.length}건`} sub={`전체 ${data.payments.length}건`} color="#3b82f6" />
+          <KPI label="총 입금액" value={fmt(totalAmt)} sub="필터 적용 합계" color="#10b981" />
+          <KPI label="본사계좌" value={fmt(pFiltered.reduce((s, p) => s + p.companyAccount, 0))} sub="입금 채널별" color="#8b5cf6" />
+          <KPI label="캐쉬충전+웰컴" value={fmt(pFiltered.reduce((s, p) => s + p.cashCharge + p.welcomeDirect, 0))} sub="기타 채널 합계" color="#f59e0b" />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={pq} onChange={e => { setPq(e.target.value); setPPage(1); }} placeholder="채무자명, 입금자명, 허브명 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+            <select value={pBrand} onChange={e => { setPBrand(e.target.value); setPPage(1); }} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
+            <button onClick={() => setModal({ type: "payment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />입금 등록</button>
+            <button onClick={() => exportPayments(pFiltered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: "1px dashed var(--brd)", paddingTop: 10 }}>
+            <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 600, marginRight: 4 }}>입금일 :</span>
+            <input type="date" value={pFrom} onChange={e => { setPFrom(e.target.value); setPPage(1); }} style={{ width: 150, fontSize: 12 }} />
+            <span style={{ color: "var(--tm)" }}>~</span>
+            <input type="date" value={pTo} onChange={e => { setPTo(e.target.value); setPPage(1); }} style={{ width: 150, fontSize: 12 }} />
+            <button onClick={() => setQuickRange(7)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 7일</button>
+            <button onClick={() => setQuickRange(30)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 30일</button>
+            <button onClick={() => setQuickRange(90)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 90일</button>
+            {(pFrom || pTo) && <button onClick={clearRange} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444440" }}>날짜 해제</button>}
+            <span className="mono" style={{ marginLeft: "auto", fontSize: 12, color: "var(--tm)" }}>총 <b style={{ color: "var(--acc)" }}>{pFiltered.length}건</b> / 합계 <b style={{ color: "var(--acc)" }}>{fmt(totalAmt)}</b></span>
+          </div>
+        </div>
+        <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}><button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button><button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button></div></td></tr>))}</tbody></table></div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
+            <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <button onClick={() => setPPage(1)} disabled={pPage <= 1} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "transparent", color: pPage <= 1 ? "var(--tm)" : "var(--ts)", border: "1px solid var(--brd)", opacity: pPage <= 1 ? 0.5 : 1 }}>« 처음</button>
+              <button onClick={() => setPPage(Math.max(1, pPage - 1))} disabled={pPage <= 1} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "transparent", color: pPage <= 1 ? "var(--tm)" : "var(--ts)", border: "1px solid var(--brd)", opacity: pPage <= 1 ? 0.5 : 1 }}>‹ 이전</button>
+              {pageNums.map(p => (<button key={p} onClick={() => setPPage(p)} style={{ width: 32, height: 32, borderRadius: 6, fontSize: 12, fontWeight: 500, background: pPage === p ? "var(--acc)" : "transparent", color: pPage === p ? "#fff" : "var(--tm)" }}>{p}</button>))}
+              <button onClick={() => setPPage(Math.min(pTP, pPage + 1))} disabled={pPage >= pTP} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "transparent", color: pPage >= pTP ? "var(--tm)" : "var(--ts)", border: "1px solid var(--brd)", opacity: pPage >= pTP ? 0.5 : 1 }}>다음 ›</button>
+              <button onClick={() => setPPage(pTP)} disabled={pPage >= pTP} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "transparent", color: pPage >= pTP ? "var(--tm)" : "var(--ts)", border: "1px solid var(--brd)", opacity: pPage >= pTP ? 0.5 : 1 }}>끝 »</button>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    );
+  };
+
+
+  // ─── Installments View ──────────────────────────────────
+  const InstallmentsView = () => {
+    const [instTab, setInstTab] = useState("이번달");
+    const now = new Date();
+    const [viewMonth, setViewMonth] = useState(now.toISOString().slice(0, 7));
+    const [stFilter, setStFilter] = useState("전체");
+    const [instSearch, setInstSearch] = useState("");
+    const [importing, setImporting] = useState(false);
+    const [editDateId, setEditDateId] = useState(null);
+    const [editDateVal, setEditDateVal] = useState("");
+
+    const thisMonthScheds = useMemo(() => {
+      let list = (data.installmentSchedules || []).filter(s =>
+        s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))
+      );
+      if (stFilter !== "전체") list = list.filter(s => s.status === stFilter);
+      return list;
+    }, [data.installmentSchedules, viewMonth, stFilter]);
+
+    const allScheds = useMemo(() => {
+      let list = data.installmentSchedules || [];
+      if (stFilter !== "전체") list = list.filter(s => s.status === stFilter);
+      if (instSearch) {
+        const q = instSearch.toLowerCase();
+        list = list.filter(s => (s.debtorName || "").toLowerCase().includes(q) || (s.debtSource || "").toLowerCase().includes(q) || (s.institution || "").toLowerCase().includes(q));
+      }
+      return list;
+    }, [data.installmentSchedules, stFilter, instSearch]);
+
+    const monthStats = useMemo(() => ({
+      total: thisMonthScheds.length,
+      done: thisMonthScheds.filter(s => s.status === "완납").length,
+      unpaid: thisMonthScheds.filter(s => s.status === "미납").length,
+      overdue: thisMonthScheds.filter(s => s.status === "지연").length,
+      totalAmt: thisMonthScheds.reduce((a, s) => a + (s.scheduledAmount || 0), 0),
+      doneAmt: thisMonthScheds.filter(s => s.status === "완납").reduce((a, s) => a + (s.scheduledAmount || 0), 0),
+    }), [thisMonthScheds]);
+
+    const monthLabel = (ym) => {
+      const [y, m] = ym.split("-");
+      return `${y}년 ${parseInt(m)}월`;
+    };
+    const prevMonth = (ym) => { const d = new Date(ym + "-01"); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); };
+    const nextMonth = (ym) => { const d = new Date(ym + "-01"); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 7); };
+
+    const markComplete = async (schedId) => {
+      await fetch(`/api/installments/schedules/${schedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완납" }) });
+      await reloadInstallments();
+    };
+    const markUnpaid = async (schedId) => {
+      await fetch(`/api/installments/schedules/${schedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "미납" }) });
+      await reloadInstallments();
+    };
+    const saveDate = async (schedId) => {
+      if (!editDateVal) return setEditDateId(null);
+      await fetch(`/api/installments/schedules/${schedId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueDate: editDateVal, dueMonth: editDateVal.slice(0, 7) }) });
+      setEditDateId(null);
+      await reloadInstallments();
+      showToast("날짜 지정 완료");
+    };
+    const deleteSchedule = async (schedId) => {
+      if (!confirm("이 일정을 삭제하시겠습니까?")) return;
+      await fetch(`/api/installments/schedules/${schedId}`, { method: "DELETE" });
+      await reloadInstallments();
+      showToast("삭제 완료");
+    };
+    const doImport = async () => {
+      if (!confirm("엑셀 파일의 분할상환 데이터를 DB로 이관합니다.\n중복 항목은 자동으로 건너뜁니다.\n계속할까요?")) return;
+      setImporting(true);
+      try {
+        const r = await fetch("/api/installments/import-excel", { method: "POST", headers: { "Content-Type": "application/json" } });
+        const result = await r.json();
+        if (result.ok) {
+          await reloadInstallments();
+          showToast(`이관 완료: 등록 ${result.imported}건 / 건너뜀 ${result.skipped}건 / 플랜 생성 ${result.planCreated}건`);
+        } else { showToast("이관 실패: " + result.error); }
+      } catch(e) { showToast("이관 실패"); }
+      setImporting(false);
+    };
+    const checkOverdue = async () => {
+      const r = await fetch("/api/installments/auto-overdue", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const result = await r.json();
+      if (result.updated > 0) { await reloadInstallments(); showToast(`지연 ${result.updated}건 자동 처리됨`); }
+      else showToast("지연 건 없음");
+    };
+    const sendMonthlyNotify = async () => {
+      const r = await fetch("/api/installments/monthly-notify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: true }) });
+      const result = await r.json();
+      showToast(result.sent ? "Slack 알림 전송 완료" : (result.reason || "알림 없음"));
+    };
+
+    const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
+
+    const SchedRow = ({ s }) => {
+      const c = scColor(s.status);
+      const isEditingDate = editDateId === s.id;
+      return (
+        <tr style={{ borderBottom: "1px solid var(--brd)", background: s.status === "완납" ? "#10b98106" : s.status === "지연" ? "#f59e0b06" : "transparent" }}>
+          <td style={{ padding: "8px 10px" }}><BrandBadge code={s.brand} brands={config.brands} /></td>
+          <td style={{ padding: "8px 10px", fontWeight: 600, cursor: "pointer", color: "var(--acc)" }} onClick={() => { const d = data.debtors.find(x => x.id === s.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("분할상환"); } }}>{s.debtorName}</td>
+          <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)" }}>{s.assignee}</td>
+          <td style={{ padding: "8px 10px", fontSize: 11 }}>{s.debtSource || "-"}<br /><span style={{ color: "var(--tm)", fontSize: 10 }}>{s.institution || ""}</span></td>
+          <td style={{ padding: "8px 10px" }}>
+            {isEditingDate ? (
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <input type="date" value={editDateVal} onChange={e => setEditDateVal(e.target.value)} style={{ ...inp, padding: "3px 6px", fontSize: 11, width: 120 }} />
+                <button onClick={() => saveDate(s.id)} style={{ padding: "2px 8px", background: "var(--acc)", color: "#fff", borderRadius: 5, fontSize: 11, border: "none", cursor: "pointer" }}>확인</button>
+                <button onClick={() => setEditDateId(null)} style={{ padding: "2px 6px", background: "var(--bg2)", color: "var(--tm)", borderRadius: 5, fontSize: 11, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+              </div>
+            ) : (
+              <span className="mono" style={{ fontSize: 12 }}>
+                {s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b", fontSize: 11 }}>{s.dueMonth} (날짜미정)</span>}
+                {!s.dueDate && s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ marginLeft: 4, padding: "1px 6px", background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>지정</button>}
+              </span>
+            )}
+          </td>
+          <td className="mono" style={{ padding: "8px 10px", fontWeight: 700 }}>{fmt(s.scheduledAmount)}</td>
+          <td style={{ padding: "8px 10px" }}>
+            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
+          </td>
+          <td style={{ padding: "8px 10px" }}>
+            <div style={{ display: "flex", gap: 3 }}>
+              {s.status !== "완납" && <button onClick={() => markComplete(s.id)} title="완납처리" style={{ padding: "3px 8px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>완납</button>}
+              {s.status === "완납" && <button onClick={() => markUnpaid(s.id)} title="미납으로 되돌리기" style={{ padding: "3px 8px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>취소</button>}
+              <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>
+            </div>
+          </td>
+        </tr>
+      );
+    };
+
+    const tableHead = ["브랜드", "채무자", "담당", "채무원/기관", "상환일", "금액", "상태", ""];
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* 탭 바 */}
+        <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
+          {[{ k: "이번달", l: "이번달 예정" }, { k: "전체", l: "전체 일정" }, { k: "플랜관리", l: "플랜 관리" }].map(t => (
+            <button key={t.k} onClick={() => setInstTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: instTab === t.k ? "var(--bg)" : "transparent", color: instTab === t.k ? "var(--tp)" : "var(--tm)", border: "none", cursor: "pointer" }}>{t.l}</button>
+          ))}
+        </div>
+
+        {/* ── 이번달 예정 탭 ── */}
+        <div style={{ display: instTab === "이번달" ? "flex" : "none", flexDirection: "column", gap: 14 }}>
+          {/* 월 이동 + KPI */}
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => setViewMonth(prevMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="back" size={14} /></button>
+              <span style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{monthLabel(viewMonth)}</span>
+              <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} ><I name="arrowDown" size={14} /></button>
+              {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
+            </div>
+            {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
+              <div key={x.l} style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", textAlign: "center" }}>
+                <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
+                <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
+              </div>
+            ))}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
+                {["전체", "미납", "완납", "지연"].map(s => <option key={s}>{s}</option>)}
+              </select>
+              <button onClick={checkOverdue} style={{ padding: "6px 10px", borderRadius: 8, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b30", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>지연확인</button>
+              <button onClick={sendMonthlyNotify} style={{ padding: "6px 10px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Slack</button>
+            </div>
+          </div>
+          {/* 이번달 금액 요약 */}
+          <div style={{ display: "flex", gap: 12, padding: "10px 14px", background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", fontSize: 12 }}>
+            <span style={{ color: "var(--tm)" }}>이번달 예정 총액:</span><b className="mono">{fmt(monthStats.totalAmt)}</b>
+            <span style={{ color: "var(--tm)", marginLeft: 16 }}>완납 합계:</span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b>
+            <span style={{ color: "var(--tm)", marginLeft: 16 }}>미완납:</span><b className="mono" style={{ color: "#b91c1c" }}>{fmt(monthStats.totalAmt - monthStats.doneAmt)}</b>
+          </div>
+          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "var(--bg2)" }}>{tableHead.map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {thisMonthScheds.length === 0 && <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>이번달 예정 없음</td></tr>}
+                  {thisMonthScheds.map(s => <SchedRow key={s.id} s={s} />)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* ── 전체 일정 탭 ── */}
+        <div style={{ display: instTab === "전체" ? "flex" : "none", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input value={instSearch} onChange={e => setInstSearch(e.target.value)} placeholder="채무자 / 채무원 / 기관 검색" style={{ ...inp, flex: 1 }} />
+            <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
+              {["전체", "미납", "완납", "지연"].map(s => <option key={s}>{s}</option>)}
+            </select>
+            <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap" }}>총 {allScheds.length}건</span>
+          </div>
+          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "var(--bg2)" }}>{tableHead.map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {allScheds.length === 0 && <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>일정 없음</td></tr>}
+                  {allScheds.slice(0, 200).map(s => <SchedRow key={s.id} s={s} />)}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* ── 플랜 관리 탭 ── */}
+        <div style={{ display: instTab === "플랜관리" ? "flex" : "none", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={14} />플랜 추가</button>
+              <button onClick={doImport} disabled={importing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: importing ? "var(--bg2)" : "#f59e0b18", color: importing ? "var(--tm)" : "#b45309", fontSize: 12, fontWeight: 600, border: "1px solid #f59e0b40", cursor: importing ? "not-allowed" : "pointer" }}><I name="upload" size={14} />{importing ? "이관중…" : "엑셀 이관"}</button>
+              <button onClick={() => exportInstallments(data.installmentPlans)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}><I name="arrowDown" size={14} />CSV</button>
+            </div>
+            <span style={{ fontSize: 12, color: "var(--tm)" }}>플랜 {data.installmentPlans.length}건</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {data.installmentPlans.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>플랜 없음 — 플랜 추가 또는 엑셀 이관으로 시작하세요</div>}
+            {data.installmentPlans.map(plan => {
+              const d = data.debtors.find(x => x.id === plan.debtorId);
+              const scheds = plan.schedules || [];
+              const done = scheds.filter(s => s.status === "완납").length;
+              const overdue = scheds.filter(s => s.status === "지연").length;
+              return (
+                <div key={plan.id} style={{ background: "var(--card)", borderRadius: 10, border: overdue > 0 ? "1px solid #f59e0b80" : "1px solid var(--brd)", overflow: "hidden" }}>
+                  <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
+                    onClick={() => { if (d) { setSel(d); setTab("debtors"); setDetailTab("분할상환"); } }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <BrandBadge code={plan.brand} brands={config.brands} />
+                      <span style={{ fontWeight: 600 }}>{plan.debtorName}</span>
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>{plan.paymentTiming}</span>
+                      <span style={{ fontSize: 11, color: "var(--ts)" }}>{plan.hubName}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>
+                        총 {scheds.length}건 / 완납 <span style={{ color: "#047857", fontWeight: 600 }}>{done}</span> / 지연 <span style={{ color: "#b45309", fontWeight: 600 }}>{overdue}</span>
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--ts)" }}>총채권: <b className="mono">{fmt(plan.totalClaim || (d?.finalBalanceLegal ?? 0))}</b></span>
+                      <Badge status={plan.status} small />
+                      <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>
+                    </div>
+                  </div>
+                  {overdue > 0 && <div style={{ padding: "4px 14px", background: "#f59e0b10", fontSize: 11, color: "#b45309", fontWeight: 600 }}>⚠ 지연 {overdue}건</div>}
+                  <div style={{ padding: "6px 14px 10px", display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {scheds.slice(0, 18).map((s, i) => {
+                      const c = scColor(s.status);
+                      return <span key={i} style={{ padding: "2px 7px", borderRadius: 4, fontSize: 10, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.dueDate ? s.dueDate.slice(5) : (s.dueMonth ? s.dueMonth.slice(5) + "(미정)" : "?")}</span>;
+                    })}
+                    {scheds.length > 18 && <span style={{ fontSize: 10, color: "var(--tm)" }}>+{scheds.length - 18}건</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ─── Legal View ─────────────────────────────────────────
+  const LegalView = () => {
+    const legalTab = legalSubTab;
+    const setLegalTab = setLegalSubTab;
+    const [brandF,            setBrandF]            = useState("전체");
+    const [searchQ,           setSearchQ]           = useState("");
+    const [selCase,           setSelCase]            = useState(null);
+    const [editThirds,        setEditThirds]         = useState(null); // null=보기, array=편집모드
+    const [matchingCase,      setMatchingCase]       = useState(null);
+    const [matchQ,            setMatchQ]             = useState("");
+    const [selComplaint,      setSelComplaint]       = useState(null);  // 형사고소 팝업
+    const [cmpMatchQ,         setCmpMatchQ]          = useState("");
+    const [cmpMatchMode,      setCmpMatchMode]       = useState(false); // 재매칭 패널 열림
+    const [cmpEdit,           setCmpEdit]            = useState({});    // 팝업 편집 중 값
+    const [cmpHistory,        setCmpHistory]         = useState([]);    // 진행 히스토리
+    const [cmpHistForm,       setCmpHistForm]        = useState(null);  // 추가/수정 폼
+    const [statusSort,        setStatusSort]         = useState(null);  // null | "asc" | "desc"
+    const toggleSort = () => setStatusSort(s => s === null ? "asc" : s === "asc" ? "desc" : null);
+
+    const lc  = data.legalCases       || [];
+    const ad  = data.assetDisclosures  || [];
+    const cmp = data.complaints        || [];
+
+    const payOrders = lc.filter(c => c.type === "지급명령");
+    const seizures  = lc.filter(c => c.type === "압류");
+
+    const applyFilter = (arr, nameKey = "defendant") => {
+      let r = arr;
+      if (brandF !== "전체") r = r.filter(c => c.brand === brandF);
+      if (searchQ) {
+        const q = searchQ.toLowerCase();
+        r = r.filter(c =>
+          (c[nameKey] || "").toLowerCase().includes(q) ||
+          (c.caseNumber || "").toLowerCase().includes(q) ||
+          (c.court || "").toLowerCase().includes(q)
+        );
+      }
+      return r;
+    };
+
+    const filteredPO  = applyFilter(payOrders);
+    const filteredSz  = applyFilter(seizures);
+    const filteredAD  = applyFilter(ad, "debtorName");
+    const filteredCmp = applyFilter(cmp, "debtorName");
+
+    const sortByStatus = (arr, getStatus) => {
+      if (!statusSort) return arr;
+      return [...arr].sort((a, b) => {
+        const sa = getStatus(a) || ""; const sb = getStatus(b) || "";
+        return statusSort === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
+      });
+    };
+    const sortedPO  = sortByStatus(filteredPO,  c => c.progressStatus || "");
+    const sortedSz  = sortByStatus(filteredSz,  c => c.progressStatus || "");
+    const sortedAD  = sortByStatus(filteredAD,  c => c.status || "진행");
+    const sortedCmp = sortByStatus(filteredCmp, c => c.status || "준비중");
+
+    // 연동 채무자 찾기
+    const getDebtor = (id) => data.debtors.find(d => d.id === id);
+
+    // 수동 매칭 후보 목록
+    const matchCandidates = useMemo(() => {
+      if (!matchingCase) return [];
+      const q = matchQ.toLowerCase().trim();
+      return (q
+        ? data.debtors.filter(d => d.name.toLowerCase().includes(q) || (d.phone || "").includes(q) || (d.hubName || "").includes(q))
+        : data.debtors
+      ).slice(0, 30);
+    }, [matchQ, matchingCase, data.debtors]);
+
+    // ─── 형사고소 팝업 ─────────────────────────────────────
+    const cmpMatchCandidates = useMemo(() => {
+      if (!cmpMatchMode) return [];
+      const q = cmpMatchQ.toLowerCase().trim();
+      return (q
+        ? data.debtors.filter(d => d.name.toLowerCase().includes(q) || (d.hubName || "").includes(q))
+        : data.debtors
+      ).slice(0, 30);
+    }, [cmpMatchQ, cmpMatchMode, data.debtors]);
+
+    const openComplaint = (c) => {
+      setSelComplaint(c);
+      setCmpEdit({ status: c.status || "수사중", complaintUrl: c.complaintUrl || "", investigator: c.investigator || "", investigatorContact: c.investigatorContact || "", policeStation: c.policeStation || "", charge: c.charge || "" });
+      setCmpMatchMode(false); setCmpMatchQ("");
+      setCmpHistory([]); setCmpHistForm(null);
+      fetch(`/api/complaints/${c.id}/history`).then(r => r.ok ? r.json() : []).then(setCmpHistory).catch(() => {});
+    };
+
+    const saveComplaintEdit = async () => {
+      if (!selComplaint) return;
+      try {
+        await fetch(`/api/complaints/${selComplaint.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(cmpEdit),
+        });
+        setData(prev => ({ ...prev, complaints: prev.complaints.map(c => c.id === selComplaint.id ? { ...c, ...cmpEdit } : c) }));
+        setSelComplaint(prev => ({ ...prev, ...cmpEdit }));
+        showToast("저장 완료");
+      } catch { showToast("저장 실패"); }
+    };
+
+    const saveCmpHist = async () => {
+      if (!cmpHistForm || !selComplaint) return;
+      const { id, date, content, assignee, mode } = cmpHistForm;
+      if (!date || !content.trim()) { showToast("날짜와 내용을 입력하세요"); return; }
+      try {
+        if (mode === "add") {
+          const r = await fetch(`/api/complaints/${selComplaint.id}/history`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date, content, assignee }),
+          }).then(r => r.json());
+          setCmpHistory(prev => [{ id: r.id, complaint_id: selComplaint.id, date, content, assignee }, ...prev]);
+        } else {
+          await fetch(`/api/complaint-history/${id}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date, content, assignee }),
+          });
+          setCmpHistory(prev => prev.map(h => h.id === id ? { ...h, date, content, assignee } : h));
+        }
+        setCmpHistForm(null);
+      } catch { showToast("저장 실패"); }
+    };
+
+    const deleteCmpHist = async (h) => {
+      if (!confirm("이 항목을 삭제하시겠습니까?")) return;
+      try {
+        await fetch(`/api/complaint-history/${h.id}`, { method: "DELETE" });
+        setCmpHistory(prev => prev.filter(x => x.id !== h.id));
+      } catch { showToast("삭제 실패"); }
+    };
+
+    const saveComplaintMatch = async (debtorId) => {
+      if (!selComplaint) return;
+      try {
+        await fetch(`/api/complaints/${selComplaint.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ debtorId }),
+        });
+        const debtor = data.debtors.find(d => d.id === debtorId);
+        setData(prev => ({ ...prev, complaints: prev.complaints.map(c => c.id === selComplaint.id ? { ...c, debtorId, debtorName: debtor?.name || c.debtorName, brand: debtor?.brand || c.brand } : c) }));
+        setSelComplaint(prev => ({ ...prev, debtorId, debtorName: debtor?.name || prev.debtorName, brand: debtor?.brand || prev.brand }));
+        setCmpMatchMode(false); setCmpMatchQ("");
+        showToast(debtorId ? "채무자 연결 완료" : "연결 해제됨");
+      } catch { showToast("저장 실패"); }
+    };
+
+    const ComplaintDetailModal = () => {
+      if (!selComplaint) return null;
+      const c = selComplaint;
+      const debtor = getDebtor(c.debtorId);
+      const total = (c.loanAmount || 0) + (c.goodsAmount || 0);
+      const statusOptions = ["준비중", "수사중", "기소", "불송치", "취하"];
+      const today2 = () => new Date().toISOString().slice(0, 10);
+      return (
+        <div onClick={() => setSelComplaint(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: 580, maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}>
+            {/* 헤더 */}
+            <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10, background: "var(--bg2)", flexShrink: 0 }}>
+              <BrandBadge code={c.brand} brands={config.brands} />
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{c.debtorName}</div>
+                <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>고소인: {c.complainant || "-"}</div>
+              </div>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+                <Badge status={c.charge} />
+                <button onClick={() => setSelComplaint(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
+              </div>
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+              {/* 기본 정보 */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
+                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>고소일</div><div style={{ fontSize: 12, fontWeight: 500 }}>{fmtDate(c.complaintDate) || "-"}</div></div>
+                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>피해금액</div><div className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(total)}</div></div>
+                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>물품대</div><div className="mono" style={{ fontSize: 12 }}>{fmt(c.goodsAmount || 0)}</div></div>
+                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>대여금</div><div className="mono" style={{ fontSize: 12 }}>{fmt(c.loanAmount || 0)}</div></div>
+              </div>
+
+              {/* 수사 정보 + 상태 */}
+              <div style={{ background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ts)", marginBottom: 10 }}>수사 정보</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>경찰서</div>
+                    <input value={cmpEdit.policeStation} onChange={e => setCmpEdit(p => ({ ...p, policeStation: e.target.value }))} placeholder="예: 광진경찰서" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>죄명</div>
+                    <input value={cmpEdit.charge} onChange={e => setCmpEdit(p => ({ ...p, charge: e.target.value }))} placeholder="예: 사기, 횡령, 배임 등" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>결과/상태</div>
+                    <select value={cmpEdit.status} onChange={e => setCmpEdit(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }}>
+                      {statusOptions.map(s => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>수사관</div>
+                    <input value={cmpEdit.investigator} onChange={e => setCmpEdit(p => ({ ...p, investigator: e.target.value }))} placeholder="수사관 이름" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>연락처</div>
+                    <input value={cmpEdit.investigatorContact} onChange={e => setCmpEdit(p => ({ ...p, investigatorContact: e.target.value }))} placeholder="전화번호" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  </div>
+                </div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+                  <button onClick={saveComplaintEdit} style={{ padding: "5px 14px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
+                </div>
+              </div>
+
+              {/* 고소장 PDF */}
+              <div style={{ background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ts)", marginBottom: 8 }}>고소장 PDF</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input value={cmpEdit.complaintUrl} onChange={e => setCmpEdit(p => ({ ...p, complaintUrl: e.target.value }))} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  {cmpEdit.complaintUrl
+                    ? <a href={cmpEdit.complaintUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
+                    : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
+                  <button onClick={saveComplaintEdit} style={{ padding: "7px 12px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
+                </div>
+              </div>
+
+              {/* 진행 히스토리 */}
+              <div style={{ background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ts)" }}>진행 히스토리</div>
+                  <button onClick={() => setCmpHistForm({ mode: "add", date: today2(), content: "", assignee: "" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={12} />추가</button>
+                </div>
+                {/* 추가/수정 폼 */}
+                {cmpHistForm && (
+                  <div style={{ background: "var(--card)", borderRadius: 8, padding: 12, border: "2px solid var(--acc)", marginBottom: 10 }}>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <input type="date" value={cmpHistForm.date} onChange={e => setCmpHistForm(f => ({ ...f, date: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12 }} />
+                      <input value={cmpHistForm.assignee} onChange={e => setCmpHistForm(f => ({ ...f, assignee: e.target.value }))} placeholder="담당자" style={{ width: 90, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12 }} />
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>{cmpHistForm.mode === "add" ? "새 항목" : "수정"}</span>
+                    </div>
+                    <textarea value={cmpHistForm.content} onChange={e => setCmpHistForm(f => ({ ...f, content: e.target.value }))} rows={3} placeholder="진행사항을 입력하세요..." style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }} />
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 8 }}>
+                      <button onClick={() => setCmpHistForm(null)} style={{ padding: "5px 12px", borderRadius: 6, background: "var(--bg)", color: "var(--tp)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer" }}>취소</button>
+                      <button onClick={saveCmpHist} style={{ padding: "5px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>저장</button>
+                    </div>
+                  </div>
+                )}
+                {/* 히스토리 목록 */}
+                <div style={{ background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", overflow: "hidden" }}>
+                  {cmpHistory.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>진행사항 없음 — 위 버튼으로 추가하세요</div>}
+                  {cmpHistory.map((h, i) => (
+                    <div key={h.id} style={{ display: "flex", gap: 0, borderBottom: i < cmpHistory.length - 1 ? "1px solid var(--brd)" : "none" }}>
+                      <div style={{ width: 100, flexShrink: 0, padding: "10px 12px", background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 3 }}>
+                        <span className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600 }}>{h.date}</span>
+                        {h.assignee && <span style={{ fontSize: 10, color: "var(--tm)" }}>{h.assignee}</span>}
+                      </div>
+                      <div style={{ flex: 1, padding: "10px 14px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
+                      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "6px 8px", borderLeft: "1px solid var(--brd)" }}>
+                        <button onClick={() => setCmpHistForm({ mode: "edit", id: h.id, date: h.date, content: h.content, assignee: h.assignee || "" })} style={{ width: 24, height: 24, borderRadius: 5, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={11} /></button>
+                        <button onClick={() => deleteCmpHist(h)} style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 채무자 매칭 */}
+              <div style={{ background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ts)", marginBottom: 10 }}>채무자 연결</div>
+                {debtor ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: "var(--card)", border: "1px solid var(--brd)" }}>
+                    <BrandBadge code={debtor.brand} brands={config.brands} />
+                    <span style={{ fontWeight: 600, flex: 1 }}>{debtor.name}</span>
+                    <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>{fmt(debtor.finalBalanceLegal)}</span>
+                    <button onClick={() => { setCmpMatchMode(v => !v); setCmpMatchQ(""); }} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, color: "var(--tm)", flex: 1 }}>연결된 채무자 없음</span>
+                    <button onClick={() => { setCmpMatchMode(true); setCmpMatchQ(""); }} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>연결</button>
+                  </div>
+                )}
+                {cmpMatchMode && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ position: "relative", marginBottom: 8 }}>
+                      <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
+                      <input autoFocus value={cmpMatchQ} onChange={e => setCmpMatchQ(e.target.value)} placeholder="채무자명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    </div>
+                    <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+                      {c.debtorId && <div onClick={() => saveComplaintMatch(null)} style={{ display: "flex", alignItems: "center", padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 12, background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", marginBottom: 4 }}>연결 해제</div>}
+                      {cmpMatchCandidates.map(d => (
+                        <div key={d.id} onClick={() => saveComplaintMatch(d.id)}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 12, background: "var(--card)", border: "1px solid var(--brd)" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+                        >
+                          <BrandBadge code={d.brand} brands={config.brands} />
+                          <span style={{ fontWeight: 600, flex: 1 }}>{d.name}</span>
+                          <span className="mono" style={{ color: "var(--ok)", fontSize: 11 }}>{fmt(d.finalBalanceLegal)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 하단 버튼 */}
+            <div style={{ padding: "10px 20px", borderTop: "1px solid var(--brd)", display: "flex", gap: 8, justifyContent: "flex-end", background: "var(--bg2)", flexShrink: 0 }}>
+              {debtor && (
+                <button onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차내역"); setSelComplaint(null); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
+                  <I name="users" size={14} /> 채무자 페이지로 가기
+                </button>
+              )}
+              <button onClick={() => setSelComplaint(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg)", color: "var(--tp)", fontSize: 13, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // 수동 매칭 저장 + state 갱신
+    const handleManualMatch = (caseId, debtorId, ovKey, dataKey) => {
+      saveLegalOv(ovKey, caseId, debtorId);
+      setData(prev => ({
+        ...prev,
+        [dataKey]: prev[dataKey].map(c => c.id === caseId ? { ...c, debtorId } : c),
+      }));
+      setMatchingCase(null);
+      setMatchQ("");
+      showToast(debtorId ? "수동 매칭 완료 — 저장됨" : "연결 해제됨");
+    };
+
+    // 수동 매칭 패널 (인라인, 행 아래에 표시)
+    const ManualMatchPanel = ({ caseId, ovKey, dataKey, onClose }) => (
+      <div style={{ background: "var(--bg2)", borderRadius: 10, border: "1px solid var(--acc)", padding: 14, marginTop: -4 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--acc)", flex: 1 }}>채무자 수동 연결</div>
+          <button onClick={() => handleManualMatch(caseId, null, ovKey, dataKey)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", cursor: "pointer" }}>연결 해제</button>
+          <button onClick={onClose} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+        </div>
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
+          <input value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+        </div>
+        <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+          {matchCandidates.length === 0 && <div style={{ fontSize: 12, color: "var(--tm)", padding: 8 }}>검색 결과 없음</div>}
+          {matchCandidates.map(d => (
+            <div key={d.id} onClick={() => handleManualMatch(caseId, d.id, ovKey, dataKey)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 12, background: "var(--card)", border: "1px solid var(--brd)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+              onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+            >
+              <BrandBadge code={d.brand} brands={config.brands} />
+              <span style={{ fontWeight: 600, minWidth: 70 }}>{d.name}</span>
+              <span style={{ color: "var(--ts)", fontSize: 11 }}>{d.hubName}</span>
+              <span style={{ flex: 1 }} />
+              <span className="mono" style={{ color: "var(--ok)", fontSize: 11 }}>{fmt(d.finalBalanceLegal)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+    // 단일 사건 행 (지급명령/압류)
+    const LegalRow = ({ c, ovKey, dataKey }) => {
+      const debtor = getDebtor(c.debtorId);
+      const isMatching = matchingCase?.id === c.id;
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          <div
+            onClick={() => !isMatching && setSelCase({ ...c, _kind: "legal" })}
+            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+            onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
+            onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
+          >
+            {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
+            <span style={{ fontWeight: 600, minWidth: 80 }}>{c.defendant || "-"}</span>
+            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
+            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.filingDate || "-"}</span>
+            {c.progressStatus ? <Badge status={c.progressStatus} /> : null}
+            {c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
+            <span style={{ flex: 1 }} />
+            {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
+            {debtor
+              ? <>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
+                  <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                    style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                </>
+              : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
+            }
+          </div>
+          {isMatching && <ManualMatchPanel caseId={c.id} ovKey={ovKey} dataKey={dataKey} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+        </div>
+      );
+    };
+
+    // 재산명시·재산조회 행
+    const ADRow = ({ c }) => {
+      const debtor    = getDebtor(c.debtorId);
+      const isMatching = matchingCase?.id === c.id;
+      const inquiryBadge = (
+        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, fontSize: 12, fontWeight: 700, background: c.hasInquiryOrder ? "#10b98118" : "#f1f5f9", color: c.hasInquiryOrder ? "#047857" : "#94a3b8", border: `1px solid ${c.hasInquiryOrder ? "#10b98140" : "#e2e8f0"}` }}>
+          {c.hasInquiryOrder ? "O" : "X"}
+        </span>
+      );
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+          <div
+            onClick={() => !isMatching && setSelCase({ ...c, _kind: "ad" })}
+            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+            onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
+            onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
+          >
+            {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
+            <span style={{ fontWeight: 600, minWidth: 80 }}>{c.debtorName || "-"}</span>
+            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
+            <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
+            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.applicationDate || "-"}</span>
+            {c.status ? <Badge status={c.status} /> : <Badge status="진행" />}
+            {inquiryBadge}
+            <span style={{ flex: 1 }} />
+            {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
+            {debtor
+              ? <>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
+                  <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                    style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                </>
+              : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
+            }
+          </div>
+          {isMatching && <ManualMatchPanel caseId={c.id} ovKey={AD_OVERRIDES_KEY} dataKey="assetDisclosures" onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+        </div>
+      );
+    };
+
+    // 상세 모달 내용
+    const DetailModal = () => {
+      if (!selCase) return null;
+      const debtor = getDebtor(selCase.debtorId);
+      const isAD   = selCase._kind === "ad";
+      const title  = isAD ? selCase.debtorName : selCase.defendant;
+      const [docUrl, setDocUrl] = useState(() => getCaseUrl(selCase.id));
+      const saveDocUrl = () => { saveCaseUrl(selCase.id, docUrl); showToast("문서 링크 저장됨"); };
+      const DL = ({ label, val }) => val ? (
+        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
+          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
+        </div>
+      ) : null;
+      return (
+        <Overlay onClose={() => setSelCase(null)} wide>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {selCase.brand && <BrandBadge code={selCase.brand} brands={config.brands} />}
+              <span style={{ fontSize: 17, fontWeight: 700 }}>{title}</span>
+              <Badge status={isAD ? "재산명시" : selCase.type} />
+              {!isAD && selCase.caseStatus && <Badge status={selCase.caseStatus} small />}
+            </div>
+            <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
+          </div>
+
+          {/* 사건 정보 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
+            <DL label="법원"       val={selCase.court} />
+            <DL label="사건번호"   val={selCase.caseNumber} />
+            {!isAD && <DL label="원고(채권자)"  val={selCase.plaintiff} />}
+            {!isAD && <DL label="피고(채무자)"  val={selCase.defendant} />}
+            {!isAD && <DL label="접수일자"      val={selCase.filingDate} />}
+            {!isAD && <DL label="기일시간"      val={selCase.hearingTime} />}
+            {!isAD && <DL label="기일장소"      val={selCase.hearingLocation} />}
+            {!isAD && <DL label="진행상황"      val={selCase.progressStatus} />}
+            {isAD  && <DL label="대상자"        val={selCase.debtorName} />}
+            {isAD  && <DL label="신청일"        val={selCase.applicationDate} />}
+            {isAD  && <DL label="결정일"        val={selCase.decisionDate} />}
+            {isAD  && <DL label="결과"          val={selCase.result} />}
+            {isAD  && <DL label="결과 상태"     val={selCase.status} />}
+            {isAD  && <DL label="취하/각하 사유" val={selCase.withdrawReason} />}
+            {isAD  && <DL label="감치결정"      val={selCase.detentionDecision} />}
+            {isAD  && <DL label="재산목록 제출"  val={selCase.propertyList && `${selCase.propertyList}${selCase.propertyListDesc ? ` (${selCase.propertyListDesc})` : ""}`} />}
+            {isAD  && <DL label="집행장 만료/취하" val={selCase.executionExpiration} />}
+          </div>
+
+          {/* 재산조회 섹션 (재산명시인 경우) */}
+          {isAD && (
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>재산조회</div>
+                <span style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 22, height: 22, borderRadius: 6, fontSize: 12, fontWeight: 700,
+                  background: selCase.hasInquiryOrder ? "#10b98118" : "#f1f5f9",
+                  color:      selCase.hasInquiryOrder ? "#047857"   : "#94a3b8",
+                  border:     `1px solid ${selCase.hasInquiryOrder ? "#10b98140" : "#e2e8f0"}`
+                }}>{selCase.hasInquiryOrder ? "O" : "X"}</span>
+              </div>
+              <DL label="조회명령일"  val={selCase.inquiryOrderDate} />
+              <DL label="조회 신청일" val={selCase.inquiryApplicationDate} />
+              <DL label="회신 결과"   val={selCase.inquiryResponse} />
+            </div>
+          )}
+
+          {/* 제3채무자 (압류인 경우) */}
+          {!isAD && selCase.thirdParties != null && (
+            (() => {
+              const thirds = selCase.thirdParties;
+              const isEditing = editThirds !== null;
+              const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
+              const numInpS = { ...inpS, textAlign: "right", width: 90 };
+              const setRow = (i, k, v) => setEditThirds(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
+              const saveEdit = () => {
+                const cleaned = editThirds.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
+                saveThirdsOv(selCase.id, cleaned);
+                setSelCase(prev => ({ ...prev, thirdParties: cleaned }));
+                setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, thirdParties: cleaned } : c) }));
+                setEditThirds(null);
+              };
+              return (
+                <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 (압류 은행)</div>
+                    <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>
+                      {isEditing ? editThirds.length : thirds.length}건
+                    </span>
+                    {!isEditing && (
+                      <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
+                        잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
+                      </span>
+                    )}
+                    <span style={{ flex: 1 }} />
+                    {!isEditing ? (
+                      <button onClick={() => setEditThirds(thirds.map(t => ({ ...t })))}
+                        style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>
+                        수정
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button onClick={() => setEditThirds(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }])}
+                          style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>
+                          + 행 추가
+                        </button>
+                        <button onClick={saveEdit}
+                          style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>
+                          저장
+                        </button>
+                        <button onClick={() => setEditThirds(null)}
+                          style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>
+                          취소
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ borderBottom: "2px solid var(--brd)" }}>
+                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
+                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
+                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
+                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>잔액</th>
+                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
+                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
+                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
+                          {isEditing && <th style={{ padding: "4px 8px" }} />}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(isEditing ? editThirds : thirds).map((t, i) => isEditing ? (
+                          <tr key={i} style={{ borderBottom: "1px solid var(--brd)" }}>
+                            <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
+                            <td style={{ padding: "4px 6px" }}><input value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
+                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.claimAmount || ""} onChange={e => setRow(i, "claimAmount", Number(e.target.value) || 0)} style={numInpS} /></td>
+                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.balance || ""} onChange={e => setRow(i, "balance", Number(e.target.value) || 0)} style={numInpS} /></td>
+                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.collected || ""} onChange={e => setRow(i, "collected", Number(e.target.value) || 0)} style={numInpS} /></td>
+                            <td style={{ padding: "4px 6px" }}><input value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
+                            <td style={{ padding: "4px 6px" }}><input value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
+                            <td style={{ padding: "4px 6px" }}>
+                              <button onClick={() => setEditThirds(prev => prev.filter((_, ri) => ri !== i))}
+                                style={{ padding: "2px 7px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
+                            </td>
+                          </tr>
+                        ) : (
+                          <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
+                            <td style={{ padding: "5px 8px", color: "var(--ts)" }}>{t.seqNo}</td>
+                            <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.bankName}</td>
+                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: "var(--tm)" }}>{t.claimAmount > 0 ? fmt(t.claimAmount) : "-"}</td>
+                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: t.balance > 0 ? "var(--ok)" : "var(--tp)" }}>{t.balance > 0 ? fmt(t.balance) : "-"}</td>
+                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: t.collected > 0 ? "#3b82f6" : "var(--tm)" }}>{t.collected > 0 ? fmt(t.collected) : "-"}</td>
+                            <td style={{ padding: "5px 8px", color: "var(--ts)", whiteSpace: "nowrap" }}>{t.responseDate || "-"}</td>
+                            <td style={{ padding: "5px 8px", color: "var(--ts)", fontSize: 11, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.remarks || ""}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()
+          )}
+
+          {/* OneDrive 문서 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>문서 (OneDrive)</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+              {docUrl
+                ? <a href={docUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
+                : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
+              <button onClick={saveDocUrl} style={{ padding: "7px 12px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
+            </div>
+          </div>
+
+          {/* 연동 채무자 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
+            {debtor ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <DL label="이름"     val={debtor.name} />
+                <DL label="브랜드"   val={debtor.brandName || debtor.brand} />
+                <DL label="분류"     val={debtor.category} />
+                <DL label="담당자"   val={debtor.assignee} />
+                <DL label="연락처"   val={debtor.phone} />
+                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
+                <DL label="잔액(재무)" val={fmt(debtor.finalBalanceFinance)} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            {debtor && (
+              <button
+                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차"); setSelCase(null); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+              >
+                <I name="users" size={14} /> 채무자 페이지로 가기
+              </button>
+            )}
+            <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          </div>
+        </Overlay>
+      );
+    };
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {selCase && <DetailModal />}
+
+        {/* KPI 카드 */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          <KPI label="지급명령" value={`${payOrders.length}건`}
+            sub={`브랜드 B:${payOrders.filter(c=>c.brand==="B").length} / M:${payOrders.filter(c=>c.brand==="M").length} / D:${payOrders.filter(c=>c.brand==="D").length}`}
+            color="#3b82f6" />
+          <KPI label="압류" value={`${seizures.length}건`}
+            sub={`브랜드 B:${seizures.filter(c=>c.brand==="B").length} / M:${seizures.filter(c=>c.brand==="M").length} / D:${seizures.filter(c=>c.brand==="D").length}`}
+            color="#8b5cf6" />
+          <KPI label="재산명시·재산조회" value={`${ad.length}건`}
+            sub={`재산조회 명령 ${ad.filter(c=>c.hasInquiryOrder).length}건`}
+            color="#f59e0b" />
+          <KPI label="형사고소" value={`${cmp.length}건`}
+            sub={`수사중 ${cmp.filter(c=>c.statusNote==="수사중").length}건`}
+            color="#ef4444" />
+        </div>
+
+        {/* 필터 + 다운로드 */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={brandF} onChange={e => setBrandF(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
+            <option value="전체">전체 브랜드</option>
+            {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+          </select>
+          <div style={{ position: "relative", flex: 1 }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+            <input
+              value={searchQ} onChange={e => setSearchQ(e.target.value)}
+              placeholder="채무자명·사건번호·법원 검색"
+              style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}
+            />
+          </div>
+          <button onClick={() => setModal(legalTab === "형사고소" ? { type: "addComplaint" } : { type: "addLegal", legalType: legalTab === "재산명시·재산조회" ? "재산명시" : legalTab })}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <I name="plus" size={14} />데이터 추가
+          </button>
+          <button onClick={() => {
+            const rows = [];
+            filteredPO.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["지급명령", c.brand||"", c.defendant||"", c.court, c.caseNumber, c.filingDate||"", c.progressStatus||"", d ? (d.finalBalanceLegal||0) : ""]); });
+            filteredSz.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["압류",   c.brand||"", c.defendant||"", c.court, c.caseNumber, c.filingDate||"", c.progressStatus||"", d ? (d.finalBalanceLegal||0) : ""]); });
+            filteredAD.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["재산명시", c.brand||"", c.debtorName||"", c.court, c.caseNumber, c.applicationDate||"", c.status||"", d ? (d.finalBalanceLegal||0) : ""]); });
+            downloadCSV(`법적절차_${today()}.csv`, ["유형","브랜드","채무자","법원","사건번호","접수일","상태","잔액"], rows);
+          }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", whiteSpace: "nowrap" }}>
+            <I name="arrowDown" size={14} />엑셀
+          </button>
+        </div>
+
+        {/* 리스트 헤더 */}
+        {legalTab !== "형사고소" && (
+          <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
+            <span style={{ width: 22 }} /><span style={{ minWidth: 80 }}>채무자명</span>
+            <span style={{ minWidth: 100 }}>법원</span><span style={{ minWidth: 130 }}>사건번호</span>
+            <span style={{ minWidth: 90 }}>{legalTab === "재산명시·재산조회" ? "신청일" : "접수일"}</span>
+            <span style={{ minWidth: 58, cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
+            {legalTab === "재산명시·재산조회" && <span style={{ minWidth: 50 }}>재산조회</span>}
+            <span style={{ flex: 1 }} /><span>잔액</span>
+          </div>
+        )}
+        {legalTab === "형사고소" && (
+          <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
+            <span style={{ width: 22 }} /><span style={{ minWidth: 70 }}>채무자명</span>
+            <span style={{ flex: 1 }}>죄명</span>
+            <span style={{ minWidth: 120 }}>경찰서</span>
+            <span style={{ cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
+          </div>
+        )}
+
+        {/* 지급명령 리스트 */}
+        {legalTab === "지급명령" && (
+          filteredPO.length === 0
+            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>지급명령 사건이 없습니다.</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedPO.map(c => <LegalRow key={c.id} c={c} ovKey={LEGAL_OVERRIDES_KEY} dataKey="legalCases" />)}</div>
+        )}
+
+        {/* 압류 리스트 */}
+        {legalTab === "압류" && (
+          filteredSz.length === 0
+            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>압류 사건이 없습니다.</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedSz.map(c => <LegalRow key={c.id} c={c} ovKey={LEGAL_OVERRIDES_KEY} dataKey="legalCases" />)}</div>
+        )}
+
+        {/* 재산명시·재산조회 리스트 */}
+        {legalTab === "재산명시·재산조회" && (
+          filteredAD.length === 0
+            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>재산명시 사건이 없습니다.</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedAD.map(c => <ADRow key={c.id} c={c} />)}</div>
+        )}
+
+        {/* 형사고소 리스트 */}
+        {legalTab === "형사고소" && (
+          cmp.length === 0
+            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>형사고소 사건이 없습니다.</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {sortedCmp.map(c => (
+                  <div key={c.id}
+                    onClick={() => openComplaint(c)}
+                    style={{ background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", cursor: "pointer", transition: "background 0.1s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px" }}>
+                      <BrandBadge code={c.brand} brands={config.brands} />
+                      <span style={{ fontWeight: 700, fontSize: 14, minWidth: 70 }}>{c.debtorName}</span>
+                      <Badge status={c.charge} />
+                      <span style={{ fontSize: 12, color: "var(--ts)", flex: 1 }}>{c.policeStation}</span>
+                      <Badge status={c.status || "준비중"} small />
+                      <span style={{ color: "var(--tm)", fontSize: 14 }}>›</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+        )}
+        <ComplaintDetailModal />
+      </div>
+    );
+  };
+
+  // ─── Rehab/Bankruptcy View ───────────────────────────────
+  const RehabBankruptcyView = () => {
+    const rehabTab = rehabSubTab;
+    const [rBrand, setRBrand] = useState("전체");
+    const [rq, setRq] = useState("");
+    const [matchingRehab, setMatchingRehab] = useState(null); // 수동 매칭 중인 rehab
+    const [matchQ, setMatchQ] = useState("");
+    const [selRehab, setSelRehab] = useState(null);
+
+    const matchCandidates = useMemo(() => {
+      if (!matchingRehab) return [];
+      const q = matchQ.toLowerCase().trim();
+      const list = q
+        ? data.debtors.filter(d => d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q))
+        : data.debtors.filter(d => d.category === "회생/파산");
+      return list.slice(0, 30);
+    }, [matchQ, matchingRehab, data.debtors]);
+
+    const handleManualMatch = (rehabId, debtorId) => {
+      saveRehabOverride(rehabId, debtorId);
+      setData(prev => ({
+        ...prev,
+        rehabilitations: prev.rehabilitations.map(r => r.id === rehabId ? { ...r, debtorId } : r),
+      }));
+      setMatchingRehab(null);
+      setMatchQ("");
+      showToast(debtorId ? "수동 매칭 완료 — 저장됨" : "연결 해제됨");
+    };
+    const filtered = useMemo(() => {
+      let l = data.rehabilitations.filter(r => r.type === rehabTab);
+      if (rBrand !== "전체") l = l.filter(r => r.brand === rBrand);
+      if (rq) { const q = rq.toLowerCase(); l = l.filter(r => r.debtorName.toLowerCase().includes(q) || r.caseNumber.includes(q) || (r.repaymentNote || "").includes(q)); }
+      return l;
+    }, [data.rehabilitations, rehabTab, rBrand, rq]);
+    const RehabDetailModal = () => {
+      if (!selRehab) return null;
+      const r = selRehab;
+      const debtor = r.debtorId ? data.debtors.find(d => d.id === r.debtorId) : null;
+      const [docUrl, setDocUrl] = useState(() => getCaseUrl(r.id));
+      const saveDocUrl = () => { saveCaseUrl(r.id, docUrl); showToast("문서 링크 저장됨"); };
+      const DL = ({ label, val }) => val ? (
+        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
+        </div>
+      ) : null;
+      return (
+        <Overlay onClose={() => setSelRehab(null)} wide>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {r.brand && <BrandBadge code={r.brand} brands={config.brands} />}
+              <span style={{ fontSize: 17, fontWeight: 700 }}>{r.debtorName}</span>
+              <Badge status={r.type} />
+              {r.overdueStatus === "미납" && <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>}
+              {r.dismissed && <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>폐지</span>}
+              {r.planApproved && <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>}
+            </div>
+            <button onClick={() => setSelRehab(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
+          </div>
+
+          {/* 사건 정보 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
+            <DL label="법원" val={r.court} />
+            <DL label="사건번호" val={r.caseNumber} />
+            <DL label="채권번호" val={r.creditorNumber} />
+            <DL label="채무액" val={r.debtAmount > 0 ? fmt(r.debtAmount) : null} />
+            <DL label="승인액" val={r.approvedAmount > 0 ? fmt(r.approvedAmount) : null} />
+            <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
+            <DL label="현재 회차" val={r.currentRound} />
+            <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
+            <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
+            <DL label="미납 현황" val={r.overdueStatus} />
+            <DL label="비고" val={r.repaymentNote} />
+          </div>
+
+          {/* 연동 채무자 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
+            {debtor ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <DL label="이름" val={debtor.name} />
+                <DL label="브랜드" val={debtor.brandName || debtor.brand} />
+                <DL label="분류" val={debtor.category} />
+                <DL label="담당자" val={debtor.assignee} />
+                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
+                <DL label="잔액(재무)" val={fmt(debtor.finalBalanceFinance)} />
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
+            )}
+          </div>
+
+          {/* OneDrive 문서 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>문서 (OneDrive)</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+              {docUrl
+                ? <a href={docUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
+                : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
+              <button onClick={saveDocUrl} style={{ padding: "7px 12px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            {debtor && (
+              <button
+                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("회생파산"); setSelRehab(null); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+              >
+                <I name="users" size={14} /> 채무자 페이지로 가기
+              </button>
+            )}
+            <button onClick={() => setSelRehab(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          </div>
+        </Overlay>
+      );
+    };
+
+    return (
+      <>
+      {selRehab && <RehabDetailModal />}
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+          <KPI label="회생/파산 전체" value={`${data.rehabilitations.length}건`} sub={`회생 ${data.rehabilitations.filter(r => r.type === "회생").length} / 파산 ${data.rehabilitations.filter(r => r.type === "파산/면책").length}`} color="#8b5cf6" />
+          <KPI label="미납" value={`${data.rehabilitations.filter(r => r.overdueStatus === "미납").length}건`} sub="변제 연체 중" color="#ef4444" />
+          <KPI label="폐지" value={`${data.rehabilitations.filter(r => r.dismissed).length}건`} sub="인가 취소/기각" color="#f59e0b" />
+        </div>
+        {/* 브랜드 필터 */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["전체", ...config.brands.map(b => b.code)].map(code => {
+            const brand = config.brands.find(b => b.code === code);
+            const cnt = code === "전체" ? data.rehabilitations.length : data.rehabilitations.filter(r => r.brand === code).length;
+            const isActive = rBrand === code;
+            return (
+              <button key={code} onClick={() => setRBrand(code)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: isActive ? 700 : 500, background: isActive ? (brand ? brand.color + "22" : "var(--bg)") : "var(--card)", color: isActive ? (brand ? brand.color : "var(--tp)") : "var(--ts)", border: `1px solid ${isActive ? (brand ? brand.color + "60" : "var(--brd)") : "var(--brd)"}`, cursor: "pointer" }}>
+                {code === "전체" ? "전체" : brand?.name || code}
+                <span className="mono" style={{ fontSize: 11 }}>{cnt}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
+          <div style={{ position: "relative", flex: 1 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={rq} onChange={e => setRq(e.target.value)} placeholder="채무자명, 사건번호, 비고 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+          <button onClick={() => setModal({ type: "addRehab" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}><I name="plus" size={14} />데이터 추가</button>
+          <button onClick={() => exportLegal([], filtered, [])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
+          <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map(r => { const _norm = normNameForMatch(r.debtorName); const _findDebtor = () => { let d = r.debtorId ? data.debtors.find(x => x.id === r.debtorId) : null; if (!d && _norm) { const cs = data.debtors.filter(x => normNameForMatch(x.name) === _norm && x.brand === r.brand); d = cs.find(x => x.category === "회생/파산") || cs[0] || null; } return d; }; return (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, border: `1px solid ${r.overdueStatus === "미납" ? "#ef444430" : "var(--brd)"}`, overflow: "hidden", cursor: "pointer" }} onClick={() => setSelRehab(r)} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}><div style={{ padding: "12px 16px", background: r.overdueStatus === "미납" ? "#ef44440a" : "var(--bg2)", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><BrandBadge code={r.brand} brands={config.brands} /><span style={{ fontWeight: 700, fontSize: 14, color: r.debtorId ? "var(--tp)" : "#c0c4cc" }}>{r.debtorName}</span><Badge status={r.type} />{r.creditorNumber && <span style={{ fontSize: 11, color: "var(--tm)" }}>채권번호 {r.creditorNumber}</span>}<span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{r.court}</span><span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{r.caseNumber}</span></div><div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>{r.overdueStatus === "미납" && <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>}{r.dismissed && <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>폐지</span>}{r.planApproved && <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>}{getCaseUrl(r.id) && <a href={getCaseUrl(r.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>문서</a>}<button onClick={e => { e.stopPropagation(); setMatchingRehab(r); setMatchQ(""); }} style={{ fontSize: 11, fontWeight: 600, padding: "2px 10px", borderRadius: 20, border: r.debtorId ? "1px solid var(--brd)" : "1px solid #3b82f660", background: r.debtorId ? "var(--bg)" : "#3b82f618", color: r.debtorId ? "var(--ts)" : "#1d4ed8", cursor: "pointer" }}>{r.debtorId ? "재매칭" : "연결"}</button></div></div><div style={{ padding: "10px 16px", display: "flex", gap: 20, fontSize: 12, flexWrap: "wrap", alignItems: "center" }}>{r.debtAmount > 0 && <span style={{ color: "var(--tm)" }}>채무액 <span className="mono" style={{ fontWeight: 600, color: "var(--tp)" }}>{fmt(r.debtAmount)}</span></span>}{r.approvedAmount > 0 && <span style={{ color: "var(--tm)" }}>승인액 <span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(r.approvedAmount)}</span></span>}{r.monthlyPayment > 0 && <span style={{ color: "var(--tm)" }}>월상환 <span className="mono" style={{ fontWeight: 600 }}>{fmt(r.monthlyPayment)}</span></span>}{r.currentRound && <span style={{ color: "var(--tm)" }}>회차 <span style={{ fontWeight: 600, color: "var(--tp)" }}>{r.currentRound}</span></span>}{r.repaymentNote && <span style={{ fontSize: 11, color: "var(--ts)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.repaymentNote}</span>}</div></div>); })}
+        </div>
+      </div>
+
+      {/* 수동 매칭 모달 */}
+      {matchingRehab && (
+        <div onClick={() => { setMatchingRehab(null); setMatchQ(""); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 24, width: 520, maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>채무자 수동 연결</div>
+              <div style={{ fontSize: 12, color: "var(--tm)" }}>
+                <span style={{ fontWeight: 600, color: "var(--tp)" }}>{matchingRehab.debtorName}</span>
+                {" "}({matchingRehab.caseNumber}) 를 연결할 채무자를 선택하세요
+              </div>
+              {matchingRehab.debtorId && (
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--ts)" }}>
+                  현재 연결: {data.debtors.find(d => d.id === matchingRehab.debtorId)?.name || matchingRehab.debtorId}
+                </div>
+              )}
+            </div>
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+              <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 또는 ID 검색 (비워두면 회생/파산 목록 표시)..." style={{ width: "100%", paddingLeft: 32 }} />
+            </div>
+            <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+              {matchCandidates.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>검색 결과 없음</div>}
+              {matchCandidates.map(d => (
+                <div key={d.id} onClick={() => handleManualMatch(matchingRehab.id, d.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--brd)", cursor: "pointer", background: d.id === matchingRehab.debtorId ? "#3b82f610" : "transparent" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = d.id === matchingRehab.debtorId ? "#3b82f610" : "transparent"}>
+                  <BrandBadge code={d.brand} brands={config.brands} />
+                  <span style={{ fontWeight: 600, flex: 1 }}>{d.name}</span>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{d.id}</span>
+                  <Badge status={d.category} small />
+                  {d.id === matchingRehab.debtorId && <span style={{ fontSize: 11, color: "#3b82f6", fontWeight: 700 }}>현재</span>}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              {matchingRehab.debtorId && (
+                <button onClick={() => handleManualMatch(matchingRehab.id, null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>연결 해제</button>
+              )}
+              <button onClick={() => { setMatchingRehab(null); setMatchQ(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+    );
+  };
+
+  // ─── 추심의뢰 View ──────────────────────────────────────
+  const CollectionView = () => {
+    const orders = data.collectionOrders || [];
+    const [brandF,  setBrandF]  = useState("전체");
+    const [agencyF, setAgencyF] = useState("전체");
+    const [searchQ, setSearchQ] = useState("");
+    const [selOrder,      setSelOrder]      = useState(null);
+    const [editMode,      setEditMode]      = useState(false);
+    const [editFields,    setEditFields]    = useState({});
+    const [matchingOrder, setMatchingOrder] = useState(null);
+    const [matchQ,        setMatchQ]        = useState("");
+    const [collSort,      setCollSort]      = useState({ f: "requestDate", d: "desc" });
+    const [showAddForm,   setShowAddForm]   = useState(false);
+    const [addFields,     setAddFields]     = useState({ agencyName:"", brandRaw:"B", debtorName:"", requestAmount:"", amountDetail:"", requestDate:"", condition:"", agencyPerson:"", agencyPhone:"", cost:"", activities:"", monthlyUpdates:[], recoveredAmount:"" });
+
+    const agencies = useMemo(() => [...new Set(orders.map(o => o.agencyName).filter(Boolean))], [orders]);
+
+    const filtered = useMemo(() => {
+      let l = orders;
+      if (brandF  !== "전체") l = l.filter(o => o.brand === brandF);
+      if (agencyF !== "전체") l = l.filter(o => o.agencyName === agencyF);
+      if (searchQ) {
+        const q = searchQ.toLowerCase();
+        l = l.filter(o => o.debtorName.toLowerCase().includes(q) || (o.agencyName || "").toLowerCase().includes(q));
+      }
+      return l;
+    }, [orders, brandF, agencyF, searchQ]);
+
+    const sortedOrders = useMemo(() => {
+      const { f, d } = collSort;
+      return [...filtered].sort((a, b) => {
+        let va = a[f], vb = b[f];
+        if (typeof va === "number" || typeof vb === "number") {
+          return d === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        va = String(va || ""); vb = String(vb || "");
+        return d === "asc" ? va.localeCompare(vb, "ko") : vb.localeCompare(va, "ko");
+      });
+    }, [filtered, collSort]);
+
+    const toggleSort = (field) => setCollSort(prev => ({ f: field, d: prev.f === field && prev.d === "asc" ? "desc" : "asc" }));
+    const SortBtn = ({ field, label }) => (
+      <span onClick={() => toggleSort(field)} style={{ cursor: "pointer", userSelect: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
+        {label}
+        <span style={{ fontSize: 10, color: collSort.f === field ? "var(--acc)" : "var(--tm)", lineHeight: 1 }}>
+          {collSort.f === field ? (collSort.d === "asc" ? "↑" : "↓") : "↕"}
+        </span>
+      </span>
+    );
+
+    const matchCandidates = useMemo(() => {
+      if (!matchingOrder) return [];
+      const q = matchQ.toLowerCase().trim();
+      const list = q
+        ? data.debtors.filter(d => d.name.toLowerCase().includes(q) || d.hubCode?.toLowerCase().includes(q))
+        : data.debtors.filter(d => d.category === "추심의뢰").slice(0, 30);
+      return list.slice(0, 30);
+    }, [matchQ, matchingOrder, data.debtors]);
+
+    const getDebtor = (id) => id ? data.debtors.find(d => d.id === id) : null;
+
+    const handleManualMatch = (orderId, debtorId) => {
+      saveCollectionOv(orderId, debtorId);
+      setData(prev => ({ ...prev, collectionOrders: prev.collectionOrders.map(o => o.id === orderId ? { ...o, debtorId } : o) }));
+      if (selOrder?.id === orderId) setSelOrder(prev => ({ ...prev, debtorId }));
+      setMatchingOrder(null); setMatchQ("");
+      showToast(debtorId ? "수동 매칭 완료" : "연결 해제됨");
+    };
+
+    const handleSaveEdit = () => {
+      saveCollectionEdit(selOrder.id, editFields);
+      const updated = { ...selOrder, ...editFields };
+      setData(prev => ({ ...prev, collectionOrders: prev.collectionOrders.map(o => o.id === selOrder.id ? updated : o) }));
+      setSelOrder(updated);
+      setEditMode(false); setEditFields({});
+      showToast("저장 완료");
+    };
+
+    const handleAddOrder = () => {
+      if (!addFields.debtorName.trim()) { showToast("채무자명을 입력하세요"); return; }
+      const BRAND_RAW_TO_CODE = { "바로고":"B","딜버":"D","모아라인":"M","바다코리아":"M","그라이더":"G","에이퍼스":"E","A2":"A2" };
+      const newOrder = {
+        ...addFields,
+        id: uid("CO_M_"),
+        brand: BRAND_RAW_TO_CODE[addFields.brandRaw] || addFields.brandRaw,
+        requestAmount:  Number(addFields.requestAmount)  || 0,
+        recoveredAmount: Number(addFields.recoveredAmount) || 0,
+        debtorId: null,
+        createdBy: currentUser?.id,
+        createdAt: today(),
+      };
+      const manual = getCollectionManual();
+      saveCollectionManual([...manual, newOrder]);
+      setData(prev => ({ ...prev, collectionOrders: [...prev.collectionOrders, newOrder] }));
+      setShowAddForm(false);
+      setAddFields({ agencyName:"", brandRaw:"B", debtorName:"", requestAmount:"", amountDetail:"", requestDate:"", condition:"", agencyPerson:"", agencyPhone:"", cost:"", activities:"", monthlyUpdates:[], recoveredAmount:"" });
+      showToast("추심의뢰 추가 완료");
+    };
+
+    const handleDeleteOrder = (order) => {
+      if (!confirm(`"${order.debtorName}" 추심의뢰를 삭제하시겠습니까?`)) return;
+      addCollectionDeleted(order.id);
+      const manual = getCollectionManual();
+      saveCollectionManual(manual.filter(o => o.id !== order.id));
+      setData(prev => ({ ...prev, collectionOrders: prev.collectionOrders.filter(o => o.id !== order.id) }));
+      setSelOrder(null);
+      showToast("삭제 완료");
+    };
+
+    const totalReq  = orders.reduce((s, o) => s + (o.requestAmount || 0), 0);
+    const totalRec  = orders.reduce((s, o) => s + (o.recoveredAmount || 0), 0);
+    const matched   = orders.filter(o => o.debtorId).length;
+
+    // 팝업에서 현재 값 (편집 중이면 editFields 우선)
+    const cur = (key) => editMode ? (editFields[key] !== undefined ? editFields[key] : selOrder?.[key]) : selOrder?.[key];
+    const setF = (k, v) => setEditFields(prev => ({ ...prev, [k]: v }));
+
+    const inpS = { padding: "5px 8px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
+    const DL = ({ label, val, children }) => (val || children) ? (
+      <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--brd)" }}>
+        <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+        <span style={{ color: "var(--tp)", fontWeight: 500, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{children || val}</span>
+      </div>
+    ) : null;
+
+    return (
+      <>
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* KPI */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          <KPI label="총 추심의뢰" value={`${orders.length}건`} sub={`추심업체 ${agencies.length}곳`} color="#3b82f6" />
+          <KPI label="채무자 연동" value={`${matched}건`} sub={`미연동 ${orders.length - matched}건`} color={matched < orders.length ? "#ef4444" : "#10b981"} />
+          <KPI label="총 추심요청 금액" value={fmt(totalReq)} sub="원금 기준" color="#8b5cf6" />
+          <KPI label="총 회수현황" value={fmt(totalRec)} sub={`회수율 ${totalReq > 0 ? ((totalRec/totalReq)*100).toFixed(1) : 0}%`} color="#10b981" />
+        </div>
+
+        {/* 필터 */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={brandF} onChange={e => setBrandF(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
+            <option value="전체">전체 브랜드</option>
+            {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+            <option value="E">에이퍼스</option>
+            <option value="A2">A2</option>
+          </select>
+          <select value={agencyF} onChange={e => setAgencyF(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
+            <option value="전체">전체 업체</option>
+            {agencies.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+            <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·업체명 검색" style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+          </div>
+          <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
+          {canEdit && (
+            <button onClick={() => setShowAddForm(true)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", flexShrink: 0 }}>
+              <I name="plus" size={14} /> 데이터 추가
+            </button>
+          )}
+        </div>
+
+        {/* 정렬 헤더 */}
+        <div style={{ display: "flex", gap: 12, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
+          <span style={{ minWidth: 22 }}></span>
+          <span style={{ minWidth: 100 }}><SortBtn field="debtorName" label="채무자" /></span>
+          <span style={{ minWidth: 90 }}><SortBtn field="agencyName" label="추심업체" /></span>
+          <span style={{ minWidth: 90 }}><SortBtn field="requestDate" label="요청일" /></span>
+          <span style={{ minWidth: 110 }}><SortBtn field="requestAmount" label="요청금액" /></span>
+          <span style={{ flex: 1 }}>최근 현황</span>
+          <span style={{ minWidth: 50 }}>연동</span>
+        </div>
+
+        {/* 리스트 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {sortedOrders.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>조건에 맞는 추심의뢰 없음</div>}
+          {sortedOrders.map(o => {
+            const debtor = getDebtor(o.debtorId);
+            const lastUpdate = o.monthlyUpdates?.slice(-1)[0];
+            return (
+              <div key={o.id}
+                onClick={() => { setSelOrder(o); setEditMode(false); setEditFields({}); }}
+                style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: "12px 16px", cursor: "pointer", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+              >
+                <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
+                <div style={{ minWidth: 100 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}</div>
+                  <div style={{ fontSize: 11, color: "var(--ts)" }}>{o.brandRaw}</div>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
+                <div style={{ fontSize: 11, color: "var(--ts)", minWidth: 90 }}>{o.requestDate}</div>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", minWidth: 110 }}>{fmt(o.requestAmount)}</span>
+                {o.recoveredAmount > 0 && <span className="mono" style={{ fontSize: 11, color: "#3b82f6" }}>회수 {fmt(o.recoveredAmount)}</span>}
+                <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                  {lastUpdate && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</>}
+                </div>
+                <span style={{ minWidth: 50, flexShrink: 0, textAlign: "right" }}>
+                  {debtor
+                    ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#10b98118", color: "#047857", border: "1px solid #10b98130" }}>연동됨</span>
+                    : <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>미연동</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 상세 팝업 */}
+      {selOrder && (
+        <Overlay onClose={() => { setSelOrder(null); setEditMode(false); setEditFields({}); }} wide>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <BrandBadge code={selOrder.brand || selOrder.brandRaw?.slice(0,2)} brands={config.brands} />
+              <span style={{ fontSize: 17, fontWeight: 700 }}>{selOrder.debtorName}</span>
+              <span style={{ fontSize: 12, color: "var(--tm)" }}>{selOrder.agencyName}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {!editMode
+                ? <button onClick={() => { setEditMode(true); setEditFields({}); }} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+                : <>
+                    <button onClick={handleSaveEdit} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+                    <button onClick={() => { setEditMode(false); setEditFields({}); }} style={{ fontSize: 11, padding: "4px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                  </>
+              }
+              <button onClick={() => { setSelOrder(null); setEditMode(false); setEditFields({}); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
+            </div>
+          </div>
+
+          {/* 기본 정보 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>기본 정보</div>
+            <DL label="추심업체"   val={selOrder.agencyName} />
+            <DL label="브랜드"     val={selOrder.brandRaw} />
+            <DL label="채무자"     val={selOrder.debtorName} />
+            <DL label="추심요청 금액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>
+            {selOrder.amountDetail && <DL label="금액 상세" val={selOrder.amountDetail} />}
+            <DL label="추심요청일" val={selOrder.requestDate} />
+            <DL label="조건"       val={selOrder.condition} />
+            <DL label="담당자"     val={selOrder.agencyPerson} />
+            <DL label="연락처"     val={selOrder.agencyPhone} />
+            {editMode
+              ? <div style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
+                  <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>소요비용</span>
+                  <textarea value={cur("cost") || ""} onChange={e => setF("cost", e.target.value)} rows={2} style={{ ...inpS, resize: "vertical" }} />
+                </div>
+              : <DL label="소요비용" val={selOrder.cost} />
+            }
+          </div>
+
+          {/* 활동사항 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>활동사항</div>
+            {editMode
+              ? <textarea value={cur("activities") || ""} onChange={e => setF("activities", e.target.value)} rows={4} style={{ ...inpS, resize: "vertical" }} />
+              : <div style={{ fontSize: 13, color: "var(--tp)", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{selOrder.activities || "-"}</div>
+            }
+          </div>
+
+          {/* 월별 추심현황 */}
+          {((editMode ? cur("monthlyUpdates") : selOrder.monthlyUpdates) || []).length > 0 || editMode ? (
+            <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>월별 추심현황</div>
+                {editMode && (
+                  <button onClick={() => {
+                    const prev = cur("monthlyUpdates") || selOrder.monthlyUpdates || [];
+                    setF("monthlyUpdates", [...prev, { month: "", content: "" }]);
+                  }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 5, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 추가</button>
+                )}
+              </div>
+              {editMode
+                ? (cur("monthlyUpdates") || selOrder.monthlyUpdates || []).map((mu, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-start" }}>
+                      <input value={mu.month} onChange={e => {
+                        const arr = [...(cur("monthlyUpdates") || selOrder.monthlyUpdates)];
+                        arr[i] = { ...arr[i], month: e.target.value };
+                        setF("monthlyUpdates", arr);
+                      }} placeholder="YYYY.MM" style={{ ...inpS, width: 90, flexShrink: 0 }} />
+                      <textarea value={mu.content} onChange={e => {
+                        const arr = [...(cur("monthlyUpdates") || selOrder.monthlyUpdates)];
+                        arr[i] = { ...arr[i], content: e.target.value };
+                        setF("monthlyUpdates", arr);
+                      }} rows={2} style={{ ...inpS, flex: 1, resize: "vertical" }} />
+                      <button onClick={() => {
+                        const arr = (cur("monthlyUpdates") || selOrder.monthlyUpdates).filter((_, ri) => ri !== i);
+                        setF("monthlyUpdates", arr);
+                      }} style={{ padding: "4px 8px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", flexShrink: 0 }}>×</button>
+                    </div>
+                  ))
+                : selOrder.monthlyUpdates?.map((mu, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
+                      <span style={{ color: "var(--acc)", fontWeight: 700, flexShrink: 0, minWidth: 70 }}>{mu.month}</span>
+                      <span style={{ color: "var(--tp)", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{mu.content}</span>
+                    </div>
+                  ))
+              }
+            </div>
+          ) : null}
+
+          {/* 회수현황 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>회수현황</div>
+            {editMode
+              ? <input type="number" value={cur("recoveredAmount") ?? selOrder.recoveredAmount ?? 0} onChange={e => setF("recoveredAmount", Number(e.target.value) || 0)} style={{ ...inpS, maxWidth: 200 }} />
+              : <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: selOrder.recoveredAmount > 0 ? "#3b82f6" : "var(--tm)" }}>
+                  {selOrder.recoveredAmount > 0 ? fmt(selOrder.recoveredAmount) : "미회수"}
+                </span>
+            }
+          </div>
+
+          {/* 채무자 연동 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>채무자 연동</div>
+              <button onClick={() => { setMatchingOrder(selOrder); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: "pointer" }}>
+                {selOrder.debtorId ? "재매칭" : "연결"}
+              </button>
+            </div>
+            {(() => {
+              const debtor = getDebtor(selOrder.debtorId);
+              return debtor ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <DL label="이름"     val={debtor.name} />
+                  <DL label="브랜드"   val={debtor.brandName || debtor.brand} />
+                  <DL label="분류"     val={debtor.category} />
+                  <DL label="담당자"   val={debtor.assignee} />
+                  <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--tm)", padding: "4px 0" }}>채무자 관리와 연결되지 않음</div>
+              );
+            })()}
+          </div>
+
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {canDeleteRecord(selOrder) && (
+                <button onClick={() => handleDeleteOrder(selOrder)}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, background: "#fef2f2", color: "#b91c1c", fontSize: 13, fontWeight: 600, border: "1px solid #fecaca", cursor: "pointer" }}>
+                  <I name="trash" size={13} /> 삭제
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {getDebtor(selOrder.debtorId) && (
+                <button onClick={() => { setSel(getDebtor(selOrder.debtorId)); setTab("debtors"); setSelOrder(null); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
+                  <I name="users" size={14} /> 채무자 페이지로 가기
+                </button>
+              )}
+              <button onClick={() => { setSelOrder(null); setEditMode(false); setEditFields({}); }}
+                style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+            </div>
+          </div>
+        </Overlay>
+      )}
+
+      {/* 수동 매칭 모달 */}
+      {matchingOrder && (
+        <div onClick={() => { setMatchingOrder(null); setMatchQ(""); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, padding: 24, width: 520, maxHeight: "80vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>채무자 수동 연결</div>
+              <div style={{ fontSize: 12, color: "var(--tm)" }}>
+                <span style={{ fontWeight: 600, color: "var(--tp)" }}>{matchingOrder.debtorName}</span> ({matchingOrder.agencyName})를 연결할 채무자를 선택하세요
+              </div>
+              {matchingOrder.debtorId && (
+                <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 4 }}>
+                  현재 연결: {data.debtors.find(d => d.id === matchingOrder.debtorId)?.name || matchingOrder.debtorId}
+                </div>
+              )}
+            </div>
+            <div style={{ position: "relative", marginBottom: 10 }}>
+              <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+              <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 검색…" style={{ width: "100%", paddingLeft: 32, padding: "8px 10px 8px 32px", borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+              {matchCandidates.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>검색 결과 없음</div>}
+              {matchCandidates.map(d => (
+                <div key={d.id} onClick={() => handleManualMatch(matchingOrder.id, d.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid var(--brd)", cursor: "pointer", background: d.id === matchingOrder.debtorId ? "#3b82f610" : "transparent" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = d.id === matchingOrder.debtorId ? "#3b82f610" : "transparent"}>
+                  <BrandBadge code={d.brand} brands={config.brands} />
+                  <span style={{ fontWeight: 600, flex: 1 }}>{d.name}</span>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{d.hubCode}</span>
+                  <Badge status={d.category} small />
+                  {d.id === matchingOrder.debtorId && <span style={{ fontSize: 11, color: "#3b82f6", fontWeight: 700 }}>현재</span>}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              {matchingOrder.debtorId && <button onClick={() => handleManualMatch(matchingOrder.id, null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", cursor: "pointer" }}>연결 해제</button>}
+              <button onClick={() => { setMatchingOrder(null); setMatchQ(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 데이터 추가 폼 */}
+      {showAddForm && (
+        <div onClick={() => setShowAddForm(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, padding: 28, width: 600, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>추심의뢰 추가</div>
+              <button onClick={() => setShowAddForm(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+            </div>
+            {(() => {
+              const fS = { padding: "8px 10px", fontSize: 13, borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", width: "100%", boxSizing: "border-box" };
+              const AF = addFields;
+              const setAF = (k, v) => setAddFields(p => ({ ...p, [k]: v }));
+              const LI = ({ label, children }) => (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600 }}>{label}</span>
+                  {children}
+                </div>
+              );
+              const BRAND_OPTS = [
+                { code: "B", name: "바로고" }, { code: "D", name: "딜버" },
+                { code: "M", name: "모아라인/바다코리아" }, { code: "G", name: "그라이더" },
+                { code: "E", name: "에이퍼스" }, { code: "A2", name: "A2" },
+              ];
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <LI label="추심업체 *"><input value={AF.agencyName} onChange={e => setAF("agencyName", e.target.value)} placeholder="추심업체명" style={fS} /></LI>
+                    <LI label="브랜드">
+                      <select value={AF.brandRaw} onChange={e => setAF("brandRaw", e.target.value)} style={fS}>
+                        {BRAND_OPTS.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                      </select>
+                    </LI>
+                    <LI label="채무자명 *"><input value={AF.debtorName} onChange={e => setAF("debtorName", e.target.value)} placeholder="채무자 이름" style={fS} /></LI>
+                    <LI label="추심요청일"><input type="text" value={AF.requestDate} onChange={e => setAF("requestDate", e.target.value)} placeholder="YYYY.MM.DD" style={fS} /></LI>
+                    <LI label="추심요청금액 (원)"><input type="number" value={AF.requestAmount} onChange={e => setAF("requestAmount", e.target.value)} placeholder="0" style={fS} /></LI>
+                    <LI label="회수금액 (원)"><input type="number" value={AF.recoveredAmount} onChange={e => setAF("recoveredAmount", e.target.value)} placeholder="0" style={fS} /></LI>
+                    <LI label="담당자"><input value={AF.agencyPerson} onChange={e => setAF("agencyPerson", e.target.value)} placeholder="담당자명" style={fS} /></LI>
+                    <LI label="연락처"><input value={AF.agencyPhone} onChange={e => setAF("agencyPhone", e.target.value)} placeholder="전화번호" style={fS} /></LI>
+                  </div>
+                  <LI label="조건"><input value={AF.condition} onChange={e => setAF("condition", e.target.value)} placeholder="추심 조건" style={fS} /></LI>
+                  <LI label="금액 상세"><textarea value={AF.amountDetail} onChange={e => setAF("amountDetail", e.target.value)} rows={2} placeholder="원금, 이자 등 구성 내역" style={{ ...fS, resize: "vertical" }} /></LI>
+                  <LI label="소요비용"><input value={AF.cost} onChange={e => setAF("cost", e.target.value)} placeholder="비용 내역" style={fS} /></LI>
+                  <LI label="활동사항"><textarea value={AF.activities} onChange={e => setAF("activities", e.target.value)} rows={3} placeholder="주요 활동 내역" style={{ ...fS, resize: "vertical" }} /></LI>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600 }}>월별 추심현황</span>
+                      <button onClick={() => setAF("monthlyUpdates", [...(AF.monthlyUpdates || []), { month: "", content: "" }])}
+                        style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 행 추가</button>
+                    </div>
+                    {(AF.monthlyUpdates || []).map((mu, i) => (
+                      <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-start" }}>
+                        <input value={mu.month} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], month: e.target.value }; setAF("monthlyUpdates", arr); }} placeholder="YYYY.MM" style={{ ...fS, width: 90, flexShrink: 0 }} />
+                        <textarea value={mu.content} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], content: e.target.value }; setAF("monthlyUpdates", arr); }} rows={2} style={{ ...fS, flex: 1, resize: "vertical" }} />
+                        <button onClick={() => setAF("monthlyUpdates", AF.monthlyUpdates.filter((_, ri) => ri !== i))} style={{ padding: "4px 8px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", flexShrink: 0 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
+                    <button onClick={() => setShowAddForm(false)} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                    <button onClick={handleAddOrder} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>추가</button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+      </>
+    );
+  };
+
+  // ─── 미매칭 대기열 View ──────────────────────────────────
+  const PendingPaymentsView = () => {
+    const [items, setItems] = useState([]);
+    const [loadingList, setLoadingList] = useState(true);
+    const [resolving, setResolving] = useState(null);
+    const [selectedDebtor, setSelectedDebtor] = useState({});
+    const [debtorSearch, setDebtorSearch] = useState({});
+    const [learnedMap, setLearnedMap] = useState({}); // { payerName → { debtor_id, debtor_name, resolved_count } }
+    const [showMappings, setShowMappings] = useState(false);
+
+    const loadPending = async () => {
+      try {
+        const [r1, r2] = await Promise.all([
+          fetch("/api/pending-payments"),
+          fetch("/api/payer-mappings"),
+        ]);
+        const pendingData = await r1.json();
+        const mappingData = await r2.json();
+
+        // 학습 매핑을 Map으로 변환
+        const lm = {};
+        for (const m of mappingData) lm[m.payer_name] = m;
+        setLearnedMap(lm);
+
+        setItems(pendingData);
+        setPendingCount(pendingData.length);
+
+        // 학습된 매핑이 있는 항목은 채무자 미리 선택
+        const preSelected = {};
+        for (const item of pendingData) {
+          if (lm[item.payer_name]) preSelected[item.id] = lm[item.payer_name].debtor_id;
+        }
+        setSelectedDebtor(preSelected);
+      } catch (e) {}
+      setLoadingList(false);
+    };
+    useEffect(() => { loadPending(); }, []);
+
+    const getFiltered = (srch) => {
+      if (!srch) return [];
+      const q = srch.toLowerCase();
+      return data.debtors
+        .filter(d => (d.name || "").toLowerCase().includes(q) || (d.hubName || "").toLowerCase().includes(q) || (d.id || "").toLowerCase().includes(q))
+        .slice(0, 8);
+    };
+
+    const doResolve = async (item) => {
+      const dId = selectedDebtor[item.id];
+      if (!dId) { showToast("채무자를 선택하세요"); return; }
+      const d = data.debtors.find(x => x.id === dId);
+      if (!confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
+      setResolving(item.id);
+      try {
+        const res = await fetch(`/api/pending-payments/${item.id}/resolve`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ debtorId: dId, createdByName: currentUser?.name }),
+        });
+        const result = await res.json();
+        if (result.ok) {
+          const autoMsg = result.autoResolved > 0 ? ` + 동일 입금자 ${result.autoResolved}건 자동처리` : "";
+          showToast(`✓ 연결 완료: ${result.debtorName} — 잔액 ${fmt(result.balanceAfter)}${autoMsg}`);
+          // 같은 payer_name인 항목도 목록에서 제거
+          const removedNames = new Set([item.payer_name]);
+          const updated = items.filter(x => !removedNames.has(x.payer_name));
+          setItems(updated);
+          setPendingCount(updated.length);
+          // 학습 매핑 갱신
+          setLearnedMap(prev => ({ ...prev, [item.payer_name]: { payer_name: item.payer_name, debtor_id: dId, debtor_name: d?.name, resolved_count: (prev[item.payer_name]?.resolved_count || 0) + 1 } }));
+          await reloadFromBackend();
+        } else {
+          showToast(`오류: ${result.error}`);
+        }
+      } catch (e) { showToast(e.message); }
+      setResolving(null);
+    };
+
+    const doDiscard = async (item) => {
+      if (!confirm(`"${item.payer_name}" ${fmt(item.total_amount)} 항목을 삭제할까요?`)) return;
+      try {
+        await fetch(`/api/pending-payments/${item.id}`, { method: "DELETE" });
+        const updated = items.filter(x => x.id !== item.id);
+        setItems(updated);
+        setPendingCount(updated.length);
+        showToast("삭제됨");
+      } catch (e) { showToast(e.message); }
+    };
+
+    const doDeleteMapping = async (payerName) => {
+      if (!confirm(`"${payerName}" 학습 매핑을 삭제할까요?\n앞으로 이 입금자는 다시 수동 연결이 필요합니다.`)) return;
+      try {
+        await fetch(`/api/payer-mappings/${encodeURIComponent(payerName)}`, { method: "DELETE" });
+        setLearnedMap(prev => { const n = { ...prev }; delete n[payerName]; return n; });
+        showToast("매핑 삭제됨");
+      } catch (e) { showToast(e.message); }
+    };
+
+    const totalAmt = items.reduce((s, x) => s + (x.total_amount || 0), 0);
+    const learnedList = Object.values(learnedMap);
+    const learnedCount = items.filter(x => learnedMap[x.payer_name]).length;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* 대기열 목록 */}
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>⏳ 미매칭 대기열 ({items.length}건)</div>
+              <div style={{ fontSize: 12, color: "var(--tm)" }}>
+                합계 <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>{fmt(totalAmt)}</span>
+                {learnedCount > 0 && <span style={{ marginLeft: 10, color: "#7c3aed" }}>· 학습매핑 자동완성 <b>{learnedCount}건</b></span>}
+              </div>
+            </div>
+            <button onClick={() => setShowMappings(p => !p)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "#7c3aed18", color: "#7c3aed", border: "1px solid #7c3aed30", fontWeight: 600 }}>
+              🧠 학습 매핑 {learnedList.length}개 {showMappings ? "▲" : "▼"}
+            </button>
+          </div>
+
+          {loadingList ? (
+            <div style={{ textAlign: "center", padding: 40, color: "var(--tm)" }}>불러오는 중...</div>
+          ) : items.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 40, color: "var(--ok)", fontSize: 14 }}>✓ 미처리 대기 항목이 없습니다</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {items.map(item => {
+                const srch = debtorSearch[item.id] || "";
+                const chosen = selectedDebtor[item.id];
+                const chosenDebtor = chosen ? data.debtors.find(d => d.id === chosen) : null;
+                const filtered = getFiltered(srch);
+                const isLearned = !!learnedMap[item.payer_name];
+                return (
+                  <div key={item.id} style={{ background: isLearned ? "#7c3aed08" : "var(--bg)", borderRadius: 10, padding: "10px 14px", border: `1px solid ${isLearned ? "#7c3aed30" : "var(--brd)"}`, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 600, fontSize: 14 }}>{item.payer_name}</span>
+                        <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--acc)" }}>{fmt(item.total_amount)}</span>
+                        <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{item.payment_date}</span>
+                        <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#f59e0b18", color: "#b45309", fontWeight: 600 }}>
+                          {item.source === "slack" ? "Slack 자동" : "수동입력"}
+                        </span>
+                        {isLearned && (
+                          <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#7c3aed18", color: "#7c3aed", fontWeight: 600 }}>
+                            🧠 학습됨
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ position: "relative" }}>
+                        <input
+                          value={chosenDebtor ? `${chosenDebtor.name} (${chosenDebtor.id})` : srch}
+                          onChange={e => {
+                            setDebtorSearch(p => ({ ...p, [item.id]: e.target.value }));
+                            setSelectedDebtor(p => ({ ...p, [item.id]: null }));
+                          }}
+                          placeholder="채무자 검색..."
+                          style={{ width: 210, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: `1px solid ${chosen ? (isLearned ? "#7c3aed" : "var(--ok)") : "var(--brd)"}`, background: "var(--inp)", outline: "none" }}
+                        />
+                        {srch && !chosen && filtered.length > 0 && (
+                          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 6, zIndex: 200, maxHeight: 220, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,.15)" }}>
+                            {filtered.map(d => (
+                              <div key={d.id}
+                                onClick={() => { setSelectedDebtor(p => ({ ...p, [item.id]: d.id })); setDebtorSearch(p => ({ ...p, [item.id]: "" })); }}
+                                style={{ padding: "8px 10px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
+                                onMouseEnter={e => e.currentTarget.style.background = "var(--bg)"}
+                                onMouseLeave={e => e.currentTarget.style.background = ""}
+                              >
+                                <div style={{ fontWeight: 600 }}>{d.name}</div>
+                                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{d.id} · {d.hubName || ""} · 잔액 {fmt(d.finalBalanceLegal)}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => doResolve(item)}
+                        disabled={!chosen || resolving === item.id}
+                        style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: chosen ? (isLearned ? "#7c3aed" : "var(--ok)") : "var(--bg)", color: chosen ? "#fff" : "var(--tm)", border: chosen ? "none" : "1px solid var(--brd)", opacity: (!chosen || resolving === item.id) ? 0.6 : 1, cursor: !chosen ? "not-allowed" : "pointer" }}
+                      >
+                        {resolving === item.id ? "처리중..." : "✓ 연결"}
+                      </button>
+                      <button
+                        onClick={() => doDiscard(item)}
+                        title="이 항목 삭제"
+                        style={{ padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430", cursor: "pointer" }}
+                      >
+                        <I name="trash" size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 학습 매핑 관리 패널 */}
+        {showMappings && (
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid #7c3aed30" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: "#7c3aed" }}>🧠 학습된 입금자 매핑 ({learnedList.length}개)</div>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
+              한 번 수동 연결한 입금자명은 여기 저장되어, 앞으로 같은 이름이 오면 자동으로 채무자가 선택됩니다.
+            </div>
+            {learnedList.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--tm)", textAlign: "center", padding: 20 }}>아직 학습된 매핑이 없습니다</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {learnedList.map(m => (
+                  <div key={m.payer_name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--bg)", borderRadius: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120 }}>{m.payer_name}</span>
+                    <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
+                    <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{m.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({m.debtor_id})</span></span>
+                    <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{m.resolved_count}회 적용</span>
+                    <button onClick={() => doDeleteMapping(m.payer_name)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}>삭제</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── 민사소송 View ───────────────────────────────────────
+  const MinSaView = () => {
+    const [brandF,       setBrandF]       = useState("전체");
+    const [typeF,        setTypeF]        = useState("전체");
+    const [searchQ,      setSearchQ]      = useState("");
+    const [selCase,      setSelCase]      = useState(null);
+    const [matchingCase, setMatchingCase] = useState(null);
+    const [matchQ,       setMatchQ]       = useState("");
+
+    const mc = data.minsaCases || [];
+
+    const getCaseType = (caseNumber) => {
+      if (!caseNumber) return "기타";
+      if (caseNumber.includes("가합")) return "가합";
+      if (caseNumber.includes("가단")) return "가단";
+      if (caseNumber.includes("가소")) return "가소";
+      return "기타";
+    };
+
+    const caseTypeTabs = [
+      { k: "전체", label: "전체" },
+      { k: "가합", label: "가합", desc: "합의부" },
+      { k: "가단", label: "가단", desc: "단독" },
+      { k: "가소", label: "가소", desc: "소액" },
+      { k: "기타", label: "기타" },
+    ].filter(t => t.k === "전체" || mc.some(c => getCaseType(c.caseNumber) === t.k));
+
+    const filtered = useMemo(() => {
+      let r = mc;
+      if (brandF !== "전체") r = r.filter(c => c.brand === brandF);
+      if (typeF !== "전체") r = r.filter(c => getCaseType(c.caseNumber) === typeF);
+      if (searchQ) {
+        const q = searchQ.toLowerCase();
+        r = r.filter(c =>
+          (c.defendant || "").toLowerCase().includes(q) ||
+          (c.caseNumber || "").toLowerCase().includes(q) ||
+          (c.court || "").toLowerCase().includes(q)
+        );
+      }
+      return r;
+    }, [mc, brandF, typeF, searchQ]);
+
+    const getDebtor = (id) => data.debtors.find(d => d.id === id);
+
+    const matchCandidates = useMemo(() => {
+      if (!matchingCase) return [];
+      const q = matchQ.toLowerCase().trim();
+      return (q
+        ? data.debtors.filter(d => d.name.toLowerCase().includes(q) || (d.phone || "").includes(q) || (d.hubName || "").includes(q))
+        : data.debtors
+      ).slice(0, 30);
+    }, [matchQ, matchingCase, data.debtors]);
+
+    const handleManualMatch = (caseId, debtorId) => {
+      saveLegalOv(MINSA_OVERRIDES_KEY, caseId, debtorId);
+      setData(prev => ({
+        ...prev,
+        minsaCases: prev.minsaCases.map(c => c.id === caseId ? { ...c, debtorId } : c),
+      }));
+      setMatchingCase(null);
+      setMatchQ("");
+      showToast(debtorId ? "수동 매칭 완료 — 저장됨" : "연결 해제됨");
+    };
+
+    const ManualMatchPanel = ({ caseId, onClose }) => (
+      <div style={{ background: "var(--bg2)", borderRadius: 10, border: "1px solid var(--acc)", padding: 14, marginTop: -4 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--acc)", flex: 1 }}>채무자 수동 연결</div>
+          <button onClick={() => handleManualMatch(caseId, null)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", cursor: "pointer" }}>연결 해제</button>
+          <button onClick={onClose} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+        </div>
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
+          <input value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+        </div>
+        <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
+          {matchCandidates.length === 0 && <div style={{ fontSize: 12, color: "var(--tm)", padding: 8 }}>검색 결과 없음</div>}
+          {matchCandidates.map(d => (
+            <div key={d.id} onClick={() => handleManualMatch(caseId, d.id)}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 12, background: "var(--card)", border: "1px solid var(--brd)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+              onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+            >
+              <BrandBadge code={d.brand} brands={config.brands} />
+              <span style={{ fontWeight: 600, minWidth: 70 }}>{d.name}</span>
+              <span style={{ color: "var(--ts)", fontSize: 11 }}>{d.hubName}</span>
+              <span style={{ flex: 1 }} />
+              <span className="mono" style={{ color: "var(--ok)", fontSize: 11 }}>{fmt(d.finalBalanceLegal)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+
+    const DetailModal = () => {
+      if (!selCase) return null;
+      const debtor = getDebtor(selCase.debtorId);
+      const DL = ({ label, val }) => val ? (
+        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
+          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
+        </div>
+      ) : null;
+      return (
+        <Overlay onClose={() => setSelCase(null)} wide>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {selCase.brand && <BrandBadge code={selCase.brand} brands={config.brands} />}
+              <span style={{ fontSize: 17, fontWeight: 700 }}>{selCase.defendant}</span>
+              <Badge status="민사소송" />
+              {selCase.caseStatus && <Badge status={selCase.caseStatus} small />}
+            </div>
+            <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
+          </div>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
+            <DL label="법원"        val={selCase.court} />
+            <DL label="사건번호"    val={selCase.caseNumber} />
+            <DL label="원고(채권자)" val={selCase.plaintiff} />
+            <DL label="피고(채무자)" val={selCase.defendant} />
+            <DL label="접수일자"    val={selCase.filingDate} />
+            <DL label="기일시간"    val={selCase.hearingTime} />
+            <DL label="기일장소"    val={selCase.hearingLocation} />
+            <DL label="진행상황"    val={selCase.progressStatus} />
+          </div>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
+            {debtor ? (
+              <>
+                <DL label="이름"      val={debtor.name} />
+                <DL label="브랜드"    val={debtor.brandName || debtor.brand} />
+                <DL label="분류"      val={debtor.category} />
+                <DL label="담당자"    val={debtor.assignee} />
+                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
+              </>
+            ) : (
+              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            {debtor && (
+              <button
+                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차"); setSelCase(null); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+              >
+                <I name="users" size={14} /> 채무자 페이지로 가기
+              </button>
+            )}
+            <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          </div>
+        </Overlay>
+      );
+    };
+
+    const brandCount = (code) => mc.filter(c => c.brand === code).length;
+    const typeCount  = (type) => mc.filter(c => getCaseType(c.caseNumber) === type).length;
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {selCase && <DetailModal />}
+
+        {/* KPI */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          <KPI label="민사소송 전체" value={`${mc.length}건`}
+            sub={config.brands.filter(b=>brandCount(b.code)>0).map(b=>`${b.name} ${brandCount(b.code)}`).join(" / ")}
+            color="#10b981" />
+          <KPI label="가합 (합의부)" value={`${typeCount("가합")}건`}
+            sub={`가단 ${typeCount("가단")}건`}
+            color="#8b5cf6" />
+          <KPI label="가소 (소액)" value={`${typeCount("가소")}건`}
+            sub={`소액사건`}
+            color="#f59e0b" />
+          {config.brands.slice(0,1).map(b => (
+            <KPI key={b.code} label={b.name} value={`${brandCount(b.code)}건`}
+              sub={config.brands.slice(1).filter(b2=>brandCount(b2.code)>0).map(b2=>`${b2.name} ${brandCount(b2.code)}`).join(" / ")}
+              color={b.color} />
+          ))}
+        </div>
+
+        {/* 사건번호 유형 탭 */}
+        <div style={{ display: "flex", gap: 4, borderBottom: "2px solid var(--brd)", paddingBottom: 0 }}>
+          {caseTypeTabs.map(t => {
+            const count = t.k === "전체" ? mc.length : mc.filter(c => getCaseType(c.caseNumber) === t.k).length;
+            const active = typeF === t.k;
+            return (
+              <button key={t.k} onClick={() => setTypeF(t.k)}
+                style={{ padding: "8px 16px", fontSize: 13, fontWeight: active ? 700 : 500, border: "none", borderBottom: active ? "2px solid var(--acc)" : "2px solid transparent", marginBottom: -2, background: "none", cursor: "pointer", color: active ? "var(--acc)" : "var(--tm)", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+              >
+                {t.label}
+                {t.desc && <span style={{ fontSize: 10, color: active ? "var(--acc)" : "var(--ts)", fontWeight: 400 }}>({t.desc})</span>}
+                <span style={{ fontSize: 11, background: active ? "var(--acc)" : "var(--bg2)", color: active ? "#fff" : "var(--ts)", borderRadius: 10, padding: "1px 7px", fontWeight: 600 }}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 필터 */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={brandF} onChange={e => setBrandF(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
+            <option value="전체">전체 브랜드</option>
+            {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+          </select>
+          <div style={{ position: "relative", flex: 1 }}>
+            <input
+              value={searchQ} onChange={e => setSearchQ(e.target.value)}
+              placeholder="채무자명·사건번호·법원 검색"
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}
+            />
+          </div>
+          <button onClick={() => setModal({ type: "addMinsa" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>
+            <I name="plus" size={14} />데이터 추가
+          </button>
+          <button onClick={() => {
+            const rows = filtered.map(c => {
+              const d = getDebtor(c.debtorId);
+              return ["민사소송", c.brand||"", c.defendant||"", c.court, c.caseNumber, c.filingDate||"", c.progressStatus||"", d ? (d.finalBalanceLegal||0) : ""];
+            });
+            downloadCSV(`민사소송_${today()}.csv`, ["유형","브랜드","채무자","법원","사건번호","접수일","상태","잔액"], rows);
+          }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", whiteSpace: "nowrap" }}>
+            <I name="arrowDown" size={14} />엑셀
+          </button>
+        </div>
+
+        {/* 헤더 */}
+        <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
+          <span style={{ width: 22 }} /><span style={{ minWidth: 80 }}>채무자명</span>
+          <span style={{ minWidth: 100 }}>법원</span><span style={{ minWidth: 130 }}>사건번호</span>
+          <span style={{ minWidth: 90 }}>접수일</span><span style={{ minWidth: 60 }}>상태</span>
+          <span style={{ flex: 1 }} /><span>잔액</span>
+        </div>
+
+        {/* 리스트 */}
+        {filtered.length === 0
+          ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>민사소송 사건이 없습니다.</div>
+          : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {filtered.map(c => {
+                const debtor     = getDebtor(c.debtorId);
+                const isMatching = matchingCase?.id === c.id;
+                return (
+                  <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                    <div
+                      onClick={() => !isMatching && setSelCase(c)}
+                      style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+                      onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
+                      onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
+                    >
+                      {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
+                      <span style={{ fontWeight: 600, minWidth: 80 }}>{c.defendant || "-"}</span>
+                      <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
+                      {(() => { const t = getCaseType(c.caseNumber); const clr = t==="가합"?"#8b5cf6":t==="가단"?"#3b82f6":t==="가소"?"#f59e0b":"#6b7280"; return t !== "기타" ? <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: clr+"18", color: clr, border: `1px solid ${clr}40` }}>{t}</span> : null; })()}
+                      <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.filingDate || "-"}</span>
+                      {c.progressStatus ? <Badge status={c.progressStatus} /> : null}
+                      {c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
+                      <span style={{ flex: 1 }} />
+                      {debtor
+                        ? <>
+                            <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
+                            <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                              style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                          </>
+                        : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                            style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
+                      }
+                    </div>
+                    {isMatching && <ManualMatchPanel caseId={c.id} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+                  </div>
+                );
+              })}
+            </div>
+        }
+      </div>
+    );
+  };
+
+  // ─── Admin View ─────────────────────────────────────────
+  const [adminAddUserForm, setAdminAddUserForm] = useState(null);
+  const [adminResetPwId,   setAdminResetPwId]   = useState(null);
+  const [adminResetPwVal,  setAdminResetPwVal]  = useState("");
+  const adminView = (() => {
+    const mainTab = adminMainTab, setMainTab = setAdminMainTab;
+    const settingTab = adminSettingTab, setSettingTab = setAdminSettingTab;
+    const newItem = adminNewItem, setNewItem = setAdminNewItem;
+    const editingRule = adminEditingRule, setEditingRule = setAdminEditingRule;
+
+    const ListEditor = ({ title, items, onAdd, onRemove, onEdit }) => {
+      const [editIdx, setEditIdx] = useState(-1);
+      const [editVal, setEditVal] = useState("");
+      return (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{title}</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="새 항목 입력..." style={{ flex: 1, ...inp }} onKeyDown={e => { if (e.key === "Enter" && newItem.trim()) { onAdd(newItem.trim()); setNewItem(""); } }} />
+            <button onClick={() => { if (newItem.trim()) { onAdd(newItem.trim()); setNewItem(""); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />추가</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {items.map((item, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "var(--bg)", borderRadius: 8, gap: 8 }}>
+                {editIdx === i ? (
+                  <>
+                    <input value={editVal} onChange={e => setEditVal(e.target.value)} style={{ flex: 1, ...inp, padding: "4px 8px" }} autoFocus onKeyDown={e => { if (e.key === "Enter" && editVal.trim()) { onEdit(i, editVal.trim()); setEditIdx(-1); } if (e.key === "Escape") setEditIdx(-1); }} />
+                    <button onClick={() => { if (editVal.trim()) { onEdit(i, editVal.trim()); setEditIdx(-1); } }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--ok)", color: "#fff", fontWeight: 600 }}>저장</button>
+                    <button onClick={() => setEditIdx(-1)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ fontSize: 13, flex: 1 }}>{item}</span>
+                    <button onClick={() => { setEditIdx(i); setEditVal(item); }} style={{ background: "none", color: "var(--ts)", padding: 4 }}><I name="edit" size={14} /></button>
+                    <button onClick={() => { if (confirm(`"${item}"을 삭제하시겠습니까?`)) onRemove(i); }} style={{ background: "none", color: "var(--err)", padding: 4 }}><I name="trash" size={14} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const BrandEditor = () => {
+      const [nb, setNb] = useState({ code: "", name: "", color: "#3b82f6" });
+      const [editIdx, setEditIdx] = useState(-1);
+      const [eb, setEb] = useState({ code: "", name: "", color: "" });
+      return (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드 관리</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input value={nb.code} onChange={e => setNb(p => ({ ...p, code: e.target.value }))} placeholder="코드 (1글자)" style={{ width: 80, ...inp }} maxLength={2} />
+            <input value={nb.name} onChange={e => setNb(p => ({ ...p, name: e.target.value }))} placeholder="브랜드명" style={{ flex: 1, ...inp }} />
+            <input type="color" value={nb.color} onChange={e => setNb(p => ({ ...p, color: e.target.value }))} style={{ width: 40, height: 36, border: "none", cursor: "pointer" }} />
+            <button onClick={() => { if (nb.code && nb.name) { setConfig(p => ({ ...p, brands: [...p.brands, { ...nb }] })); setNb({ code: "", name: "", color: "#3b82f6" }); showToast("브랜드 추가 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />추가</button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {config.brands.map((b, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "var(--bg)", borderRadius: 8, gap: 8 }}>
+                {editIdx === i ? (
+                  <>
+                    <input value={eb.code} onChange={e => setEb(p => ({ ...p, code: e.target.value }))} style={{ width: 60, ...inp, padding: "4px 8px" }} maxLength={2} />
+                    <input value={eb.name} onChange={e => setEb(p => ({ ...p, name: e.target.value }))} style={{ flex: 1, ...inp, padding: "4px 8px" }} />
+                    <input type="color" value={eb.color} onChange={e => setEb(p => ({ ...p, color: e.target.value }))} style={{ width: 32, height: 28, border: "none", cursor: "pointer" }} />
+                    <button onClick={() => { if (eb.code && eb.name) { const oldBrand = config.brands[i]; setConfig(p => ({ ...p, brands: p.brands.map((x, idx) => idx === i ? { ...eb } : x) })); updateBrandInDebtors(oldBrand.code, eb); setEditIdx(-1); showToast("브랜드 수정 완료"); } }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--ok)", color: "#fff", fontWeight: 600 }}>저장</button>
+                    <button onClick={() => setEditIdx(-1)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                      <div style={{ width: 16, height: 16, borderRadius: 4, background: b.color }} />
+                      <BrandBadge code={b.code} brands={config.brands} />
+                      <span style={{ fontSize: 13, fontWeight: 500 }}>{b.name}</span>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{b.code}</span>
+                    </div>
+                    <button onClick={() => { setEditIdx(i); setEb({ ...b }); }} style={{ background: "none", color: "var(--ts)", padding: 4 }}><I name="edit" size={14} /></button>
+                    <button onClick={() => { if (confirm(`"${b.name}" 브랜드를 삭제하시겠습니까?`)) removeBrandFromConfig(i); }} style={{ background: "none", color: "var(--err)", padding: 4 }}><I name="trash" size={14} /></button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    const CONFIG_TO_DEBTOR_FIELD = {
+      assignees: "assignee", hubNames: "hubName", debtCauses: "debtCause",
+      collStatuses: "collectionStatus", categories: "category",
+      activityTypes: null, paymentChannels: null, installmentTimings: null,
+      courts: null, chargeTypes: null, policeStations: null,
+    };
+    const cascadeConfigEdit = (key, oldVal, newVal) => {
+      const debtorField = CONFIG_TO_DEBTOR_FIELD[key];
+      if (!debtorField) return;
+      setData(prev => {
+        const updateArr = (arr, field) => arr.map(item => item[field] === oldVal ? { ...item, [field]: newVal } : item);
+        return {
+          ...prev,
+          debtors: prev.debtors.map(d => d[debtorField] === oldVal ? { ...d, [debtorField]: newVal } : d),
+          payments: debtorField === "assignee" ? updateArr(prev.payments, "assignee") : prev.payments,
+          activities: debtorField === "assignee" ? updateArr(prev.activities, "assignee") : prev.activities,
+          installmentPlans: debtorField === "assignee" ? updateArr(prev.installmentPlans, "assignee") : prev.installmentPlans,
+          complaints: debtorField === "assignee" ? updateArr(prev.complaints, "assignee") : prev.complaints,
+        };
+      });
+      if (sel && sel[debtorField] === oldVal) setSel(prev => ({ ...prev, [debtorField]: newVal }));
+    };
+    const updateList = (key) => ({
+      onAdd: (item) => { setConfig(p => ({ ...p, [key]: [...p[key], item] })); showToast("추가 완료"); },
+      onEdit: (idx, newVal) => {
+        const oldVal = config[key][idx];
+        setConfig(p => ({ ...p, [key]: p[key].map((v, i) => i === idx ? newVal : v) }));
+        if (oldVal !== newVal) cascadeConfigEdit(key, oldVal, newVal);
+        showToast("수정 완료");
+      },
+      onRemove: (idx) => { setConfig(p => ({ ...p, [key]: p[key].filter((_, i) => i !== idx) })); showToast("삭제 완료"); },
+    });
+
+    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서"];
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* 상단 4탭 */}
+        <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
+          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `변경 로그 (${auditLogs.length})` }].map(t => (
+            <button key={t.k} onClick={() => setMainTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
+          ))}
+        </div>
+
+        {/* 시스템 설정 */}
+        {mainTab === "settings" && <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {settingTabs.map(t => (
+              <button key={t} onClick={() => { setSettingTab(t); setNewItem(""); }} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 500, background: settingTab === t ? "var(--acc)" : "var(--bg)", color: settingTab === t ? "#fff" : "var(--tm)" }}>{t}</button>
+            ))}
+          </div>
+          {settingTab === "담당자" && <ListEditor title="담당자 관리" items={config.assignees} onAdd={updateList("assignees").onAdd} onEdit={updateList("assignees").onEdit} onRemove={(idx) => removeAssigneeFromConfig(idx)} />}
+          {settingTab === "브랜드" && <BrandEditor />}
+          {settingTab === "허브/지점" && <ListEditor title="허브/지점 관리" items={config.hubNames} {...updateList("hubNames")} />}
+          {settingTab === "채무발생원인" && <ListEditor title="채무발생원인 관리" items={config.debtCauses} {...updateList("debtCauses")} />}
+          {settingTab === "추심상태" && <ListEditor title="추심상태 관리" items={config.collStatuses} {...updateList("collStatuses")} />}
+          {settingTab === "분류" && <ListEditor title="채권 분류 관리" items={config.categories} {...updateList("categories")} />}
+          {settingTab === "활동유형" && <ListEditor title="활동 유형 관리" items={config.activityTypes} {...updateList("activityTypes")} />}
+          {settingTab === "입금채널" && <ListEditor title="입금 채널 관리" items={config.paymentChannels} {...updateList("paymentChannels")} />}
+          {settingTab === "납부시기" && <ListEditor title="납부 시기 관리" items={config.installmentTimings} {...updateList("installmentTimings")} />}
+          {settingTab === "법원" && <ListEditor title="법원 관리" items={config.courts} {...updateList("courts")} />}
+          {settingTab === "죄명" && <ListEditor title="죄명 관리" items={config.chargeTypes} {...updateList("chargeTypes")} />}
+          {settingTab === "경찰서" && <ListEditor title="경찰서 관리" items={config.policeStations} {...updateList("policeStations")} />}
+        </>}
+
+        {/* 사용자 관리 */}
+        {mainTab === "users" && (() => {
+          const addUserForm = adminAddUserForm, setAddUserForm = setAdminAddUserForm;
+          const resetPwId   = adminResetPwId,   setResetPwId   = setAdminResetPwId;
+          const resetPwVal  = adminResetPwVal,  setResetPwVal  = setAdminResetPwVal;
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* 사용자 초대 버튼 */}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => setAddUserForm({ name:"", email:"", avatar:"", role:"member", password:"" })}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
+                  <I name="userPlus" size={14} /> 사용자 추가
+                </button>
+              </div>
+
+              {/* 사용자 추가 폼 */}
+              {addUserForm && (
+                <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "2px solid var(--acc)" }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>새 사용자 추가</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+                    {[["이름", "name", "이름"], ["이메일", "email", "이메일 주소"], ["아바타", "avatar", "1글자"], ["초기 비밀번호", "password", "비밀번호"]].map(([label, key, ph]) => (
+                      <div key={key}>
+                        <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{label}</div>
+                        <input type={key === "password" ? "password" : "text"} value={addUserForm[key]} onChange={e => setAddUserForm(p => ({ ...p, [key]: e.target.value }))} placeholder={ph} maxLength={key === "avatar" ? 1 : undefined}
+                          style={{ width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }} />
+                      </div>
+                    ))}
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>역할</div>
+                      <select value={addUserForm.role} onChange={e => setAddUserForm(p => ({ ...p, role: e.target.value }))} style={{ width: "100%", padding: "7px 10px", fontSize: 13, borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)" }}>
+                        {ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <button onClick={() => setAddUserForm(null)} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                    <button onClick={() => {
+                      if (!addUserForm.name.trim() || !addUserForm.password.trim()) { showToast("이름과 비밀번호는 필수입니다"); return; }
+                      const newUser = { id: uid("U"), name: addUserForm.name.trim(), email: addUserForm.email.trim(), avatar: addUserForm.avatar.trim() || addUserForm.name[0], role: addUserForm.role, approved: true, registeredAt: today(), password: addUserForm.password };
+                      setUsers(prev => [...prev, newUser]);
+                      setAddUserForm(null);
+                      showToast(`${newUser.name} 추가 완료`);
+                    }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>추가</button>
+                  </div>
+                </div>
+              )}
+
+              {/* 사용자 목록 */}
+              {users.map((u, i) => (
+                <div key={u.id || u.name} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 12, background: u.approved ? "var(--acc)18" : "#64748b18", color: u.approved ? "var(--acc)" : "#64748b", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700, flexShrink: 0 }}>{u.avatar}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14, fontWeight: 600 }}>{u.name}</span>
+                        <span style={{ fontSize: 11, color: "var(--tm)" }}>{u.email}</span>
+                        {!u.approved && <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "#f59e0b18", color: "#b45309" }}>승인 대기</span>}
+                        {currentUser?.id === u.id && <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "#3b82f618", color: "#3b82f6" }}>나</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--tm)" }}>가입일: {u.registeredAt}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {/* 역할 배지 (비관리자에게는 select 대신 텍스트로) */}
+                      {isAdmin ? (
+                        <select value={u.role} onChange={e => {
+                          const newRole = e.target.value;
+                          setUsers(prev => prev.map((x) => x.id === u.id ? { ...x, role: newRole } : x));
+                          if (currentUser?.id === u.id) setCurrentUser(prev => ({ ...prev, role: newRole }));
+                          showToast(`${u.name} 권한: ${ROLES.find(r => r.key === newRole)?.label}`);
+                        }} style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--inp)" }}>
+                          {ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{ fontSize: 12, padding: "5px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>
+                          {ROLES.find(r => r.key === u.role)?.label || u.role}
+                        </span>
+                      )}
+                      {/* 비밀번호 재설정 — 본인 또는 관리자 */}
+                      {(isAdmin || currentUser?.id === u.id) && (
+                        <button onClick={() => { setResetPwId(u.id); setResetPwVal(""); }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: "pointer" }}>
+                          <I name="key" size={12} /> 비밀번호
+                        </button>
+                      )}
+                      {/* 승인/비활성화/삭제 — 관리자만 */}
+                      {isAdmin && !u.approved && (
+                        <button onClick={() => { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: true } : x)); showToast(`${u.name} 승인 완료`); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--ok)", color: "#fff", cursor: "pointer", border: "none" }}>승인</button>
+                      )}
+                      {isAdmin && u.approved && currentUser?.id !== u.id && (
+                        <button onClick={() => { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: false } : x)); showToast(`${u.name} 비활성화`); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>비활성화</button>
+                      )}
+                      {isAdmin && currentUser?.id !== u.id && (
+                        <button onClick={() => {
+                          if (!confirm(`"${u.name}" 계정을 삭제하시겠습니까?`)) return;
+                          setUsers(prev => prev.filter(x => x.id !== u.id));
+                          showToast(`${u.name} 삭제 완료`);
+                        }} style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--err)", border: "1px solid #fecaca", cursor: "pointer" }}>
+                          <I name="trash" size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {/* 비밀번호 재설정 인라인 */}
+                  {resetPwId === u.id && (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", background: "var(--bg)", borderRadius: 8, border: "1px solid var(--brd)" }}>
+                      <I name="key" size={14} />
+                      <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>새 비밀번호</span>
+                      <input type="password" value={resetPwVal} onChange={e => setResetPwVal(e.target.value)} placeholder="새 비밀번호 입력" style={{ flex: 1, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} onKeyDown={e => { if (e.key === "Enter" && resetPwVal.trim()) { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, password: resetPwVal } : x)); setResetPwId(null); showToast("비밀번호 변경 완료"); } }} />
+                      <button onClick={() => { if (!resetPwVal.trim()) return; setUsers(prev => prev.map(x => x.id === u.id ? { ...x, password: resetPwVal } : x)); setResetPwId(null); showToast("비밀번호 변경 완료"); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                      <button onClick={() => setResetPwId(null)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>권한 안내</div>
+                {ROLES.map(r => (<div key={r.key} style={{ display: "flex", gap: 10, padding: "4px 0", fontSize: 12 }}><span style={{ fontWeight: 600, minWidth: 60, color: "var(--acc)" }}>{r.label}</span><span style={{ color: "var(--ts)" }}>{r.desc}</span></div>))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* 알림 설정 */}
+        {mainTab === "alerts" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>알림 규칙 ({alertRules.length}개)</span>
+            <button onClick={() => { const nr = { id: uid("rule"), name: "새 알림 규칙", enabled: false, trigger: TRIGGER_TYPES[0].key, condition: "", target: "channel", channel: "#npl-알림", assignee: "" }; setAlertRules(prev => [...prev, nr]); setEditingRule(nr.id); }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />규칙 추가</button>
+          </div>
+          {alertRules.map((rule, ri) => (
+            <div key={rule.id} style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: editingRule === rule.id ? "1px solid var(--brd)" : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button onClick={() => { setAlertRules(prev => prev.map((r, i) => i === ri ? { ...r, enabled: !r.enabled } : r)); }} style={{ width: 40, height: 22, borderRadius: 11, background: rule.enabled ? "var(--ok)" : "#cbd5e1", position: "relative", border: "none", cursor: "pointer", transition: "background .2s" }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 9, background: "#fff", position: "absolute", top: 2, left: rule.enabled ? 20 : 2, transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,.2)" }} />
+                  </button>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{rule.name}</span>
+                  <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "var(--bg)", color: "var(--tm)" }}>{TRIGGER_TYPES.find(t => t.key === rule.trigger)?.label}</span>
+                  <span style={{ fontSize: 11, color: "var(--tm)" }}>→ {rule.target === "channel" ? rule.channel : `DM: ${rule.assignee}`}</span>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button onClick={() => setEditingRule(editingRule === rule.id ? null : rule.id)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}><I name="edit" size={13} /></button>
+                  <button onClick={() => { if (confirm("이 규칙을 삭제하시겠습니까?")) setAlertRules(prev => prev.filter(r => r.id !== rule.id)); }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}><I name="trash" size={13} /></button>
+                </div>
+              </div>
+              {editingRule === rule.id && (
+                <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <Field label="규칙 이름"><input value={rule.name} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))} style={inp} /></Field>
+                  <Field label="트리거"><select value={rule.trigger} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, trigger: e.target.value } : r))} style={inp}>{TRIGGER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
+                  <Field label="조건 설명"><input value={rule.condition} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, condition: e.target.value } : r))} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
+                  <Field label="알림 대상"><select value={rule.target} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, target: e.target.value } : r))} style={inp}><option value="channel">Slack 채널</option><option value="dm">개인 DM</option></select></Field>
+                  {rule.target === "channel" && <Field label="Slack 채널"><input value={rule.channel} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, channel: e.target.value } : r))} style={inp} placeholder="#채널명" /></Field>}
+                  {rule.target === "dm" && <Field label="DM 대상자"><select value={rule.assignee} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, assignee: e.target.value } : r))} style={inp}><option value="">-- 선택 --</option>{users.filter(u => u.approved).map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}</select></Field>}
+                </div>
+              )}
+            </div>
+          ))}
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>트리거 유형 안내</div>
+            {TRIGGER_TYPES.map(t => (<div key={t.key} style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}><span className="mono" style={{ fontWeight: 500, minWidth: 160, color: "var(--tm)" }}>{t.key}</span><span style={{ color: "var(--ts)" }}>{t.label}</span></div>))}
+          </div>
+        </div>}
+
+        {/* Slack 수집 */}
+        {mainTab === "slack" && <SlackIngestView showToast={showToast} reloadFromBackend={reloadFromBackend} currentUser={currentUser} />}
+
+        {/* 변경 로그 */}
+        {mainTab === "logs" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>변경 로그 ({auditLogs.length}건)</span>
+            <button onClick={() => {
+              const rows = [];
+              auditLogs.forEach(l => {
+                const time = fmtDate(l.timestamp) + " " + new Date(l.timestamp).toLocaleTimeString("ko-KR");
+                if (l.changes && l.changes.length > 0) {
+                  l.changes.forEach(c => rows.push([time, l.user, l.action, l.target, l.detail, c.field, String(c.from), String(c.to)]));
+                } else {
+                  rows.push([time, l.user, l.action, l.target, l.detail, "", "", ""]);
+                }
+              });
+              downloadCSV(`변경로그_${today()}.csv`, ["시간","사용자","작업","대상","상세","변경항목","기존값","변경값"], rows);
+            }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={12} />엑셀</button>
+          </div>
+          <div style={{ maxHeight: 600, overflow: "auto" }}>
+            {auditLogs.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>아직 기록된 로그가 없습니다</div>}
+            {auditLogs.map(log => (
+              <div key={log.id} style={{ borderBottom: "1px solid var(--brd)" }}>
+                <div style={{ display: "flex", gap: 12, padding: "10px 16px", alignItems: "center" }}>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--tm)", whiteSpace: "nowrap", width: 140, flexShrink: 0 }}>{fmtDate(log.timestamp)} {new Date(log.timestamp).toLocaleTimeString("ko-KR")}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "#8b5cf618", color: "#8b5cf6", whiteSpace: "nowrap" }}>{log.user}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap", background: log.action === "등록" ? "#10b98118" : log.action === "수정" ? "#3b82f618" : "#ef444418", color: log.action === "등록" ? "#10b981" : log.action === "수정" ? "#3b82f6" : "#ef4444" }}>{log.action}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "var(--bg)", whiteSpace: "nowrap" }}>{log.target}</span>
+                  <span style={{ fontSize: 12, color: "var(--ts)", flex: 1 }}>{log.detail}</span>
+                </div>
+                {log.changes && log.changes.length > 0 && (
+                  <div style={{ padding: "0 16px 10px 168px" }}>
+                    {log.changes.map((c, ci) => (
+                      <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12 }}>
+                        <span style={{ fontWeight: 600, color: "var(--tp)", minWidth: 80 }}>{c.field}</span>
+                        <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through" }}>{typeof c.from === "boolean" ? (c.from ? "O" : "X") : String(c.from)}</span>
+                        <span style={{ color: "var(--tm)" }}>→</span>
+                        <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4 }}>{typeof c.to === "boolean" ? (c.to ? "O" : "X") : String(c.to)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>}
+      </div>
+    );
+  })();
+
+  // ─── Layout ─────────────────────────────────────────────
+  const legalSubItems = [
+    { k: "지급명령",       cnt: (data.legalCases||[]).filter(c => c.type === "지급명령").length },
+    { k: "압류",           cnt: (data.legalCases||[]).filter(c => c.type === "압류").length },
+    { k: "재산명시·재산조회", cnt: (data.assetDisclosures||[]).length },
+    { k: "형사고소",       cnt: (data.complaints||[]).length },
+  ];
+  const rehabSubItems = [
+    { k: "회생",     cnt: (data.rehabilitations||[]).filter(r => r.type === "회생").length },
+    { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
+  ];
+  const navTabs = [
+    { k: "dashboard",       l: "대시보드",     i: "dashboard" },
+    { k: "debtors",         l: "채무자 관리",  i: "users" },
+    { k: "payments",        l: "입금내역",     i: "won" },
+    { k: "installments",    l: "분할상환",     i: "calendar" },
+    { k: "collection",      l: "추심의뢰",     i: "arrowRight" },
+    { k: "legal",           l: "법적절차",     i: "gavel",   sub: legalSubItems,   subState: legalSubTab,  setSub: (v) => { setLegalSubTab(v); setTab("legal"); } },
+    { k: "rehabBankruptcy", l: "회생/파산",    i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
+    { k: "minsa",           l: "민사소송",     i: "scale" },
+    ...(isAdmin ? [{ k: "admin", l: "어드민", i: "settings" }] : []),
+  ];
+
+  // Login gate
+  if (!currentUser) return <><style>{CSS}</style><LoginScreen onLogin={handleLogin} loginError={loginError} /></>;
+  const approvedUser = users.find(u => u.id === currentUser.id);
+  if (!approvedUser?.approved) return <><style>{CSS}</style><PendingScreen user={currentUser} onLogout={handleLogout} /></>;
+
+  return (
+    <div style={{ display: "flex", height: "100vh", background: "#fff", overflow: "hidden" }}>
+      <style>{CSS}</style>
+      {/* Sidebar */}
+      <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "var(--acc)" }}>BAROGO</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
+        <div style={{ flex: 1, padding: "8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
+          {navTabs.map(t => {
+            const isExpanded = t.sub && expandedNav.has(t.k);
+            const isActive   = tab === t.k;
+            return (
+              <div key={t.k}>
+                <button
+                  onClick={() => {
+                    setTab(t.k);
+                    if (t.k !== "debtors") setSel(null);
+                    if (t.sub) {
+                      setExpandedNav(prev => {
+                        const next = new Set(prev);
+                        if (next.has(t.k)) next.delete(t.k); else next.add(t.k);
+                        return next;
+                      });
+                    }
+                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, fontSize: 13, fontWeight: isActive ? 600 : 400, background: isActive ? "var(--hover)" : "transparent", color: isActive ? "var(--tp)" : "var(--ts)", textAlign: "left", width: "100%", border: "none", cursor: "pointer" }}
+                >
+                  <I name={t.i} size={16} />
+                  <span style={{ flex: 1 }}>{t.l}</span>
+                  {t.k === "payments" && pendingCount > 0 && <span style={{ background: "#ef4444", color: "#fff", borderRadius: 10, fontSize: 10, fontWeight: 700, padding: "1px 6px", lineHeight: "1.4" }}>{pendingCount}</span>}
+                  {t.sub && <span style={{ fontSize: 10, color: "var(--tm)" }}>{isExpanded ? "▾" : "▸"}</span>}
+                </button>
+                {isExpanded && (
+                  <div style={{ marginLeft: 8, marginTop: 2, display: "flex", flexDirection: "column", gap: 1 }}>
+                    {t.sub.map(s => {
+                      const isSubActive = isActive && t.subState === s.k;
+                      return (
+                        <button
+                          key={s.k}
+                          onClick={() => { t.setSub(s.k); /* 부모 expanded 상태 건드리지 않음 */ }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px 7px 28px", borderRadius: 6, fontSize: 12, fontWeight: isSubActive ? 600 : 400, background: isSubActive ? "#ff5f0015" : "transparent", color: isSubActive ? "var(--acc)" : "var(--ts)", textAlign: "left", width: "100%", border: "none", cursor: "pointer" }}
+                        >
+                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: isSubActive ? "var(--acc)" : "var(--tm)", flexShrink: 0 }} />
+                          <span style={{ flex: 1 }}>{s.k}</span>
+                          <span className="mono" style={{ fontSize: 10, color: isSubActive ? "var(--acc)" : "var(--tm)" }}>{s.cnt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div style={{ height: 1, background: "var(--brd)", margin: "8px 0" }} />
+        </div>
+        <div style={{ padding: 16, borderTop: "1px solid var(--brd)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>{config.brands.map(b => (<div key={b.code} style={{ textAlign: "center" }}><div className="mono" style={{ fontSize: 14, fontWeight: 700, color: b.color }}>{stats.byBrand[b.code]?.count || 0}</div><div style={{ fontSize: 9, color: "var(--tm)" }}>{b.name}</div></div>))}</div>
+          <div style={{ fontSize: 11, color: "var(--tm)" }}>총 관리 채권</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)" }}>{stats.totalDebtors}건</div>
+        </div>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--acc)" + "18", color: "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{currentUser.avatar}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentUser.name}</div>
+            <div style={{ fontSize: 10, color: "var(--tm)" }}>{ROLES.find(r => r.key === currentUser.role)?.label}</div>
+          </div>
+          <button onClick={handleLogout} style={{ padding: "4px 8px", borderRadius: 4, fontSize: 10, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>로그아웃</button>
+        </div>
+      </div>
+      {/* Main */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ height: 56, padding: "0 24px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {sel && tab === "debtors" && <button onClick={() => setSel(null)} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
+            <span style={{ fontSize: 16, fontWeight: 700 }}>
+              {navTabs.find(t => t.k === tab)?.l}
+              {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
+              {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
+              {sel && tab === "debtors" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {sel.name} ({sel.brandName})</span>}
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => loadData()} disabled={isRefreshing} title="데이터 새로고침" style={{ width: 36, height: 36, borderRadius: 8, background: isRefreshing ? "var(--acc)" : "var(--card)", color: isRefreshing ? "#fff" : "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: isRefreshing ? "default" : "pointer" }}>
+              <span className={isRefreshing ? "spinning" : ""}><I name="refresh" size={16} /></span>
+            </button>
+            <button onClick={() => setAlerts(!alerts)} style={{ position: "relative", width: 36, height: 36, borderRadius: 8, background: "var(--card)", color: "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)" }}><I name="bell" size={16} />{alertList.filter(a => a.p === "high").length > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: 9, background: "var(--err)", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{alertList.filter(a => a.p === "high").length}</span>}</button>
+          </div>
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
+          {tab === "dashboard" && <Dashboard />}
+          {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : debtorListView)}
+          {tab === "collection" && <CollectionView />}
+          {tab === "payments" && <PaymentsView />}
+          {tab === "installments" && <InstallmentsView />}
+          {tab === "legal" && <LegalView />}
+          {tab === "rehabBankruptcy" && <RehabBankruptcyView />}
+          {tab === "minsa" && <MinSaView />}
+          {tab === "admin" && adminView}
+        </div>
+      </div>
+      {/* Modals */}
+      {modal?.type === "debtor"          && <DebtorFormModal />}
+      {modal?.type === "payment"         && <PaymentFormModal />}
+      {modal?.type === "rematch"         && <RematchModal />}
+      {modal?.type === "activity"        && <ActivityFormModal />}
+      {modal?.type === "addInstallment"  && <InstallmentAddModal />}
+      {modal?.type === "addRehab"        && <RehabAddModal />}
+      {modal?.type === "addLegal"        && <LegalAddModal />}
+      {modal?.type === "addMinsa"        && <MinsaAddModal />}
+      {modal?.type === "addComplaint"    && <ComplaintAddModal />}
+      {/* Alerts */}
+      {alerts && <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 360, background: "var(--card)", borderLeft: "1px solid var(--brd)", zIndex: 999, display: "flex", flexDirection: "column" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 15, fontWeight: 700 }}>알림</span><button onClick={() => setAlerts(false)} style={{ background: "none", color: "var(--tm)" }}><I name="close" size={18} /></button></div><div style={{ flex: 1, overflow: "auto", padding: 12 }}>{alertList.map((a, i) => (<div key={i} onClick={() => { const d = data.debtors.find(x => x.id === a.debtorId); if (d) { setSel(d); setTab("debtors"); setAlerts(false); } }} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: a.p === "high" ? "#ef4444" : "#f59e0b", animation: a.p === "high" ? "pulse 2s infinite" : "none" }} /><span style={{ fontSize: 10, fontWeight: 600, color: a.p === "high" ? "#ef4444" : "#f59e0b" }}>{a.p === "high" ? "긴급" : "주의"}</span></div><div style={{ fontSize: 12, lineHeight: 1.5 }}>{a.msg}</div></div>))}</div></div>}
+      {/* 중복 입금 확인 모달 */}
+      {dupConfirm && (
+        <div onClick={() => setDupConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: "28px 32px", maxWidth: 420, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <span style={{ fontSize: 22 }}>⚠️</span>
+              <span style={{ fontSize: 17, fontWeight: 700, color: "#b45309" }}>중복 입금 감지</span>
+            </div>
+            <p style={{ margin: "0 0 8px", fontSize: 14, color: "#374151", lineHeight: 1.6 }}>
+              <b>{dupConfirm.debtorName}</b>에게 <b>{fmtDate(dupConfirm.paymentDate)}</b> /&nbsp;
+              <b>{(dupConfirm.total || 0).toLocaleString()}원</b> 입금건이 이미 존재합니다.
+            </p>
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "#6b7280" }}>
+              기존 입금 ID: <code style={{ background: "#f3f4f6", padding: "1px 6px", borderRadius: 4 }}>{dupConfirm.existingPaymentId}</code>
+            </p>
+            <p style={{ margin: "0 0 20px", fontSize: 13, color: "#92400e", background: "#fef3c7", borderRadius: 8, padding: "10px 14px" }}>
+              실제로 동일인이 같은 날 두 번 입금한 경우에만 [중복 확인 후 등록]을 선택하세요.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setDupConfirm(null)} style={{ padding: "8px 20px", borderRadius: 8, border: "1.5px solid #d1d5db", background: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#374151" }}>취소</button>
+              <button onClick={() => { const p = dupConfirm.payment; setDupConfirm(null); addPayment(p, true); }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#ef4444", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 600 }}>중복 확인 후 등록</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toast && <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, zIndex: 2e3, animation: "toastIn .3s ease-out", boxShadow: "0 4px 20px rgba(16,185,129,.3)" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><I name="check" size={16} />{toast}</div></div>}
+    </div>
+  );
+}
