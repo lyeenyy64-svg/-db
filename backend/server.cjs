@@ -1237,6 +1237,33 @@ app.post("/api/documents/preview-html", (req, res) => {
 });
 
 // ─── 정적 파일 서빙 (React 빌드) ────────────────
+// ─── 공유 KV 스토어 API (localStorage → DB 마이그레이션) ──
+// 내부 서버 전용 키는 클라이언트에 노출하지 않음
+const KV_INTERNAL_PREFIXES = ["slack_last_ts", "cmp_hist_migrated"];
+const isInternalKey = (k) => KV_INTERNAL_PREFIXES.some(p => k.startsWith(p));
+
+// GET /api/kv-all — 앱 공유 KV 전체 조회 (loadData 시 localStorage 동기화용)
+app.get("/api/kv-all", (req, res) => {
+  const rows = db.prepare("SELECT key, value FROM kv_store").all();
+  const result = {};
+  for (const { key, value } of rows) {
+    if (isInternalKey(key)) continue;
+    try { result[key] = JSON.parse(value); } catch { result[key] = value; }
+  }
+  res.json(result);
+});
+
+// PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
+app.put("/api/kv/:key", (req, res) => {
+  const key = req.params.key;
+  if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
+  db.prepare(`
+    INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, JSON.stringify(req.body));
+  res.json({ ok: true });
+});
+
 app.use(express.static(path.join(__dirname, "../dist")));
 app.get("/{*splat}", (req, res) => {
   if (!req.path.startsWith("/api")) {

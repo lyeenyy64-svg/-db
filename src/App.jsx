@@ -156,7 +156,17 @@ function normNameForMatch(s) {
     .trim();
 }
 
-// ─── 수동 추가 데이터 (localStorage 영구 저장) ────────────
+// ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
+// 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
+function kvPut(key, value) {
+  fetch(`/api/kv/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(value),
+  }).catch(() => {});
+}
+
+// ─── 수동 추가 데이터 (localStorage + DB 공유 저장) ────────
 const MK = {
   legalCases:       "manual_legal_cases",
   minsaCases:       "manual_minsa_cases",
@@ -169,20 +179,23 @@ const MK = {
   activities:       "manual_activities",
 };
 function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
-function saveMR(key, recs) { localStorage.setItem(key, JSON.stringify(recs)); }
+function saveMR(key, recs) {
+  localStorage.setItem(key, JSON.stringify(recs));
+  kvPut(key, recs);
+}
 function addMR(key, rec)   { const r = [rec, ...getMR(key)]; saveMR(key, r); return r; }
 function delMR(key, id)    { const r = getMR(key).filter(x => x.id !== id); saveMR(key, r); return r; }
 
-// ─── 채무자 히스토리 localStorage ──────────────────────────
+// ─── 채무자 히스토리 (localStorage + DB 공유 저장) ──────────
 // hist_m_{id}: 수동 추가 항목 [{id, date, content}]
 // hist_e_{id}: Excel 항목 편집 { "e_N": {date, content} }
 // hist_d_{id}: Excel 항목 삭제 [N, ...]
 const getHistM = (id) => { try { return JSON.parse(localStorage.getItem(`hist_m_${id}`) || "[]"); } catch { return []; } };
-const saveHistM = (id, arr) => localStorage.setItem(`hist_m_${id}`, JSON.stringify(arr));
+const saveHistM = (id, arr) => { localStorage.setItem(`hist_m_${id}`, JSON.stringify(arr)); kvPut(`hist_m_${id}`, arr); };
 const getHistE = (id) => { try { return JSON.parse(localStorage.getItem(`hist_e_${id}`) || "{}"); } catch { return {}; } };
-const saveHistE = (id, obj) => localStorage.setItem(`hist_e_${id}`, JSON.stringify(obj));
+const saveHistE = (id, obj) => { localStorage.setItem(`hist_e_${id}`, JSON.stringify(obj)); kvPut(`hist_e_${id}`, obj); };
 const getHistD = (id) => { try { return JSON.parse(localStorage.getItem(`hist_d_${id}`) || "[]"); } catch { return []; } };
-const saveHistD = (id, arr) => localStorage.setItem(`hist_d_${id}`, JSON.stringify(arr));
+const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.stringify(arr)); kvPut(`hist_d_${id}`, arr); };
 const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
 const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 
@@ -195,6 +208,7 @@ function saveRehabOverride(rehabId, debtorId) {
   const ov = getRehabOverrides();
   if (debtorId === null) delete ov[rehabId]; else ov[rehabId] = debtorId;
   localStorage.setItem(REHAB_OVERRIDES_KEY, JSON.stringify(ov));
+  kvPut(REHAB_OVERRIDES_KEY, ov);
 }
 function applyRehabOverrides(rehabs) {
   const ov = getRehabOverrides();
@@ -241,6 +255,7 @@ function saveLegalOv(key, caseId, debtorId) {
   const ov = getLegalOv(key);
   if (debtorId === null) delete ov[caseId]; else ov[caseId] = debtorId;
   localStorage.setItem(key, JSON.stringify(ov));
+  kvPut(key, ov);
 }
 function applyLegalOv(cases, key) {
   const ov = getLegalOv(key);
@@ -251,7 +266,7 @@ function applyLegalOv(cases, key) {
 // ─── 사건별 OneDrive URL ─────────────────────────────────
 const CASE_URLS_KEY = "case_onedrive_urls";
 function getCaseUrls() { try { return JSON.parse(localStorage.getItem(CASE_URLS_KEY) || "{}"); } catch { return {}; } }
-function saveCaseUrl(caseId, url) { const m = getCaseUrls(); if (url && url.trim()) m[caseId] = url.trim(); else delete m[caseId]; localStorage.setItem(CASE_URLS_KEY, JSON.stringify(m)); }
+function saveCaseUrl(caseId, url) { const m = getCaseUrls(); if (url && url.trim()) m[caseId] = url.trim(); else delete m[caseId]; localStorage.setItem(CASE_URLS_KEY, JSON.stringify(m)); kvPut(CASE_URLS_KEY, m); }
 function getCaseUrl(caseId) { return getCaseUrls()[caseId] || ""; }
 
 // ─── 추심의뢰 수동 매칭 + 편집 + 수동추가 + 삭제 override ───
@@ -267,18 +282,25 @@ function saveCollectionOv(orderId, debtorId) {
   const ov = getCollectionOv();
   if (debtorId === null) delete ov[orderId]; else ov[orderId] = debtorId;
   localStorage.setItem(COLLECTION_OV_KEY, JSON.stringify(ov));
+  kvPut(COLLECTION_OV_KEY, ov);
 }
 function saveCollectionEdit(orderId, fields) {
   const ed = getCollectionEdits();
   ed[orderId] = { ...(ed[orderId] || {}), ...fields };
   localStorage.setItem(COLLECTION_EDIT_KEY, JSON.stringify(ed));
+  kvPut(COLLECTION_EDIT_KEY, ed);
 }
 function saveCollectionManual(records) {
   localStorage.setItem(COLLECTION_MANUAL_KEY, JSON.stringify(records));
+  kvPut(COLLECTION_MANUAL_KEY, records);
 }
 function addCollectionDeleted(id) {
   const del = getCollectionDeleted();
-  if (!del.includes(id)) localStorage.setItem(COLLECTION_DELETED_KEY, JSON.stringify([...del, id]));
+  if (!del.includes(id)) {
+    const next = [...del, id];
+    localStorage.setItem(COLLECTION_DELETED_KEY, JSON.stringify(next));
+    kvPut(COLLECTION_DELETED_KEY, next);
+  }
 }
 function applyCollectionOv(orders, debtors) {
   const ov      = getCollectionOv();
@@ -308,6 +330,7 @@ function saveThirdsOv(caseId, thirds) {
   const ov = getThirdsOv();
   ov[caseId] = thirds;
   localStorage.setItem(THIRDS_OV_KEY, JSON.stringify(ov));
+  kvPut(THIRDS_OV_KEY, ov);
 }
 function applyThirdsOv(cases) {
   const ov = getThirdsOv();
@@ -962,7 +985,7 @@ export default function App() {
       return extras.length ? [...base, ...extras] : base;
     } catch { return DEFAULT_USERS; }
   });
-  useEffect(() => { localStorage.setItem(APP_USERS_KEY, JSON.stringify(users)); }, [users]);
+  useEffect(() => { localStorage.setItem(APP_USERS_KEY, JSON.stringify(users)); kvPut(APP_USERS_KEY, users); }, [users]);
   const [alertRules, setAlertRules] = useState(DEFAULT_ALERT_RULES);
 
   const handleLogin = (nameOrEmail, password) => {
@@ -1016,6 +1039,21 @@ export default function App() {
     loadingRef.current = true;
     setIsRefreshing(true);
     try {
+      // DB → localStorage 동기화 (공유 데이터 최신화)
+      try {
+        const kvAll = await fetch("/api/kv-all").then(r => r.ok ? r.json() : {});
+        for (const [key, value] of Object.entries(kvAll)) {
+          // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호)
+          if (key === APP_USERS_KEY) {
+            if (Array.isArray(value) && value.length > 0) {
+              localStorage.setItem(key, JSON.stringify(value));
+            }
+          } else {
+            localStorage.setItem(key, JSON.stringify(value));
+          }
+        }
+      } catch {}
+
       const [debtorsRes, paymentsRes, installmentsRes, complaintsRes, activitiesRes] = await Promise.all([
         fetch("/api/debtors").then(r => { if (!r.ok) throw new Error(`debtors ${r.status}`); return r.json(); }),
         fetch("/api/payments").then(r => { if (!r.ok) throw new Error(`payments ${r.status}`); return r.json(); }),
