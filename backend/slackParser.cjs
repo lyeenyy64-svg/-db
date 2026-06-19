@@ -114,41 +114,41 @@ function parse(text, messageDate) {
 
 // ============================================================
 // 모아라인 파서
-// 형식 (메시지 1건 = 입금 1건):
-//   ★ 모아라인 입금알림 ★
-//   YYYY-MM-DD
-//   입금자명
-//   [5/11~5/17 같은 기간 라인 — 무시]
-//   금액원
+// 새 형식 (FinanceDesk 앱, 1메시지 = 1건):
+//   국민#8334
+//   06/15 입금자명 금액원
 // ============================================================
-function parseMoaline(text) {
+
+// 국민#8334 패턴 (공백·# 변형 허용)
+const KOOKMIN_8334 = /국민\s*[#]?\s*8334/;
+
+function parseMoaline(text, messageDate) {
   const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const entries = [];
   const meta = { brand: "M", hasHeader: false };
 
-  const headerIdx = lines.findIndex(l => /★.*모아라인.*입금/.test(l));
+  const messageYear = messageDate
+    ? new Date(messageDate).getFullYear()
+    : new Date().getFullYear();
+
+  const headerIdx = lines.findIndex(l => KOOKMIN_8334.test(l));
   if (headerIdx === -1) return { entries, meta };
   meta.hasHeader = true;
 
-  let paymentDate = null, payerName = null;
+  // 헤더 이후 라인에서 날짜+이름+금액 합산 라인 파싱
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    // 날짜 라인
-    if (/^\d{4}-\d{2}-\d{2}$/.test(line)) { paymentDate = line; continue; }
-    // 기간 라인 (5/11~5/17) — 무시
-    if (/^\d{1,2}\/\d{1,2}~\d{1,2}\/\d{1,2}$/.test(line)) continue;
-    // 금액 라인 (숫자+콤마+원)
-    const am = line.match(/^([\d,]+)원$/);
-    if (am) {
-      const amount = parseInt(am[1].replace(/,/g, ""), 10);
-      if (paymentDate && payerName && amount > 0) {
-        entries.push({ paymentDate, payerName, totalAmount: amount, brand: "M" });
+    const cm = line.match(COMBINED_LINE);
+    if (cm) {
+      const mm = cm[1].padStart(2, "0");
+      const dd = cm[2].padStart(2, "0");
+      const date = `${messageYear}-${mm}-${dd}`;
+      const payerName = cm[3].trim().replace(/\s+/g, " ");
+      const amount = parseInt(cm[4].replace(/,/g, ""), 10);
+      if (!isNaN(amount) && amount > 0) {
+        entries.push({ paymentDate: date, payerName, totalAmount: amount, brand: "M" });
       }
-      paymentDate = null; payerName = null;
-      continue;
     }
-    // 이름 라인
-    if (!payerName) payerName = line;
   }
   return { entries, meta };
 }

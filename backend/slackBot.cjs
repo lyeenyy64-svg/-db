@@ -28,7 +28,7 @@ const CHANNEL_CONFIGS = [
     label: "모아라인",
     brand: "M",
     kvKey: "slack_last_ts_moaline",
-    parse: (text) => slackParser.parseMoaline(text),
+    parse: (text, msgDate) => slackParser.parseMoaline(text, msgDate),
   },
   {
     id: process.env.SLACK_CHANNEL_DILVER_ID,

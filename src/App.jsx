@@ -509,6 +509,8 @@ const I = ({ name, size = 18 }) => {
     shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
     scale: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="3" x2="12" y2="21"/><path d="M4 9h16"/><path d="M4 9l4 6c0 1.1-.9 2-2 2s-2-.9-2-2l4-6z"/><path d="M20 9l-4 6c0 1.1.9 2 2 2s2-.9 2-2l-4-6z"/></svg>,
     refresh: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+    fileText: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
+    download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
   };
   return s[name] || null;
 };
@@ -4597,6 +4599,497 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     );
   };
 
+  // ─── AI 문건생성 ─────────────────────────────────────────
+  const PRESET_BANKS = [
+    { label: "국민은행",   fullName: "주식회사 국민은행",           type: "bank" },
+    { label: "농협은행",   fullName: "농협은행 주식회사",            type: "bank" },
+    { label: "우리은행",   fullName: "주식회사 우리은행",            type: "bank" },
+    { label: "신한은행",   fullName: "주식회사 신한은행",            type: "bank" },
+    { label: "하나은행",   fullName: "주식회사 하나은행",            type: "bank" },
+    { label: "카카오뱅크", fullName: "주식회사 카카오뱅크",          type: "bank" },
+    { label: "케이뱅크",   fullName: "주식회사 케이뱅크",            type: "bank" },
+    { label: "기업은행",   fullName: "중소기업은행",                 type: "bank" },
+    { label: "쿠팡이츠",   fullName: "쿠팡이츠서비스 유한회사",      type: "platform" },
+    { label: "배민",       fullName: "주식회사 우아한청년들",         type: "platform" },
+    { label: "바로고",     fullName: "유한책임회사 플라이앤컴퍼니",   type: "platform" },
+  ];
+
+  const AI_TEMPLATES = [
+    { id: "압류별지", label: "[압류][별지] 압류 및 추심할 채권의 표시", active: true },
+    { id: "강제집행", label: "강제집행 신청서", active: false },
+  ];
+
+  const EXEC_TITLE_TYPES = [
+    { id: "공정증서", label: "공정증서" },
+    { id: "판결문",   label: "판결문" },
+    { id: "지급명령", label: "지급명령" },
+  ];
+
+  const AiDocsView = () => {
+    const [selTemplate,   setSelTemplate]   = useState("압류별지");
+    const [execType,      setExecType]      = useState("공정증서");
+    const [debtorQ,       setDebtorQ]       = useState("");
+    const [selDebtor,     setSelDebtor]     = useState(null);
+    const [residentId,    setResidentId]    = useState("");
+    const [origPrincipal, setOrigPrincipal] = useState("");
+    const [remaining,     setRemaining]     = useState("");
+    // 공정증서 전용
+    const [notaryDoc,  setNotaryDoc]  = useState("");
+    const [docType,    setDocType]    = useState("공정증서 정본");
+    const [clause,     setClause]     = useState("제1조(목적)상");
+    const [borrowDate, setBorrowDate] = useState("");
+    // 판결문/지급명령 공통
+    const [courtName,   setCourtName]   = useState("");
+    const [caseNumber,  setCaseNumber]  = useState("");
+    const [orderNumber, setOrderNumber] = useState("");
+
+    const [items,      setItems]      = useState([]);
+    const [customName, setCustomName] = useState("");
+    const [customType, setCustomType] = useState("bank");
+    const [previewHtml, setPreviewHtml] = useState("");
+    const [showPreview, setShowPreview] = useState(false);
+    const [dlLoading,  setDlLoading]  = useState(false);
+    const [dlError,    setDlError]    = useState("");
+
+    const debtorResults = useMemo(() => {
+      if (!debtorQ.trim()) return [];
+      const q = debtorQ.trim().toLowerCase();
+      return data.debtors
+        .filter(d => d.name.toLowerCase().includes(q) || (d.hubCode || "").includes(q))
+        .slice(0, 8);
+    }, [debtorQ, data.debtors]);
+
+    const handleSelectDebtor = (d) => {
+      setSelDebtor(d);
+      setDebtorQ(d.name);
+      setRemaining(String(d.principalBalance || d.principal_balance || ""));
+    };
+
+    const togglePreset = (preset) => {
+      const exists = items.find(it => it.name === preset.fullName);
+      if (exists) setItems(items.filter(it => it.name !== preset.fullName));
+      else setItems([...items, { id: Date.now(), name: preset.fullName, amount: 2000000, type: preset.type }]);
+    };
+
+    const addCustom = () => {
+      if (!customName.trim()) return;
+      setItems([...items, { id: Date.now(), name: customName.trim(), amount: 2000000, type: customType }]);
+      setCustomName("");
+    };
+
+    const updateItemAmount = (id, val) =>
+      setItems(items.map(it => it.id === id ? { ...it, amount: parseInt(String(val).replace(/,/g, ""), 10) || 0 } : it));
+    const updateItemName = (id, val) =>
+      setItems(items.map(it => it.id === id ? { ...it, name: val } : it));
+    const removeItem = (id) => setItems(items.filter(it => it.id !== id));
+    const moveItem = (id, dir) => {
+      const idx = items.findIndex(it => it.id === id);
+      if (idx < 0) return;
+      const next = [...items];
+      const swap = idx + dir;
+      if (swap < 0 || swap >= next.length) return;
+      [next[idx], next[swap]] = [next[swap], next[idx]];
+      setItems(next);
+    };
+
+    const bankItems     = items.filter(it => it.type === "bank");
+    const platformItems = items.filter(it => it.type === "platform");
+    const totalAmount   = items.reduce((s, it) => s + (it.amount || 0), 0);
+    const fmtNum        = n => Number(n || 0).toLocaleString("ko-KR");
+    const origNum       = parseInt(String(origPrincipal).replace(/,/g, ""), 10) || 0;
+    const remNum        = parseInt(String(remaining).replace(/,/g, ""), 10) || 0;
+
+    const buildExecTitleText = () => {
+      if (execType === "공정증서") {
+        return `[${notaryDoc || "공증인가 법무법인 ○○ 증서 20__년 제___호"}] 집행력있는 [${docType || "공정증서 정본"}] [${clause || "제1조(목적)상"}]의 채무자가 채권자에게 [${borrowDate || "20__년 __월 __일"}] 차용한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+      } else if (execType === "판결문") {
+        return `[${courtName || "○○지방법원"}] [${caseNumber || "20__가단_____"}] 판결문에 의한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+      } else {
+        return `[${courtName || "○○지방법원"}] [${orderNumber || "20__차_____"}] 지급명령에 의한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+      }
+    };
+
+    const buildDocData = () => ({
+      debtorName:         selDebtor?.name || "",
+      residentId:         residentId || "000000-0000000",
+      totalAmount,
+      executionTitleText: buildExecTitleText(),
+      bankItems:          bankItems.map(it => ({ name: it.name, amount: it.amount })),
+      platformItems:      platformItems.map(it => ({ name: it.name, amount: it.amount })),
+    });
+
+    const generateDocHtml = () => {
+      const dName = selDebtor?.name || "(채무자 미선택)";
+      const rid   = residentId || "000000-0000000";
+      const execText = buildExecTitleText();
+      const allItems = [...bankItems, ...platformItems];
+      const formula  = allItems.length > 0
+        ? "(" + allItems.map((_, i) => i + 1).join("+") + ")"
+        : "(항목 없음)";
+
+      const bankBody = (name) =>
+        `채무자[${dName}][(주민등록번호 : ${rid})]이 제3채무자 [${name}]에 대하여 가지는 다음의 예금채권 중 현재 입금되어 있거나 장래 입금될 예금채권으로서 다음에서 기재한 순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 7호, 8호 및 동법시행령에 의하여 압류가 금지되는 예금은 제외한다.)`;
+      const platBody = (name) =>
+        `채무자[${dName}][(주민등록번호 : ${rid})]이 제3채무자 [${name}]의 배달대행 프로그램상 가지는 배달수수료 및 이에 따른 수당채권 일체중 제3채무자가 채무자에게 현재 지급해야 할 금액 및 장래에 지급해야 금액 중 위 청구금액에 이를 때까지의 금액`;
+
+      const bankRows = bankItems.map((item, i) => `
+        <div class="item-title"><strong>${i + 1}. [${item.name}]에 대하여</strong></div>
+        <div class="item-amount">&nbsp;&nbsp;&nbsp;[금 ${fmtNum(item.amount)}원]</div>
+        <p>${bankBody(item.name)}</p>`).join("");
+
+      const platRows = platformItems.map((item, i) => `
+        <div class="item-title"><strong>${bankItems.length + i + 1}. [${item.name}]에 대하여</strong></div>
+        <div class="item-amount">&nbsp;&nbsp;[ 금 ${fmtNum(item.amount)}원]</div>
+        <p>${platBody(item.name)}</p>`).join("");
+
+      return `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"/>
+<style>
+  body{font-family:"맑은 고딕","Malgun Gothic",sans-serif;font-size:10pt;line-height:1.6;margin:0;padding:0;background:#fff;color:#000}
+  .page{width:210mm;margin:0 auto;padding:20mm 22mm;box-sizing:border-box}
+  h2{text-align:center;font-size:14pt;margin:16px 0 20px}
+  .label{font-size:11pt;font-weight:bold;margin:8px 0 4px}
+  .claim{font-size:12pt;font-weight:bold}
+  .notary{font-size:9.5pt;margin:10px 0}
+  .item-title{font-weight:bold;margin-top:14px}
+  .item-amount{margin:2px 0 4px;font-weight:bold}
+  p{margin:4px 0 8px;font-size:9.5pt}
+  .daeum-box{border:1px solid #000;padding:10px 14px;margin:14px 0;font-size:9.5pt}
+  .daeum-title{text-align:center;font-weight:bold;margin-bottom:8px}
+  @media print{body{margin:0}.page{margin:0;padding:15mm 18mm}}
+</style></head><body>
+<div class="page">
+  <p>[별지]</p>
+  <h2>압류 및 추심할 채권의 표시</h2>
+  <div class="label">채무자 : [ ${dName} ]</div>
+  <div class="claim">청구금액 : [ ${fmtNum(totalAmount)} ]원</div>
+  <div>${formula}</div>
+  <div class="notary">* 청구금액 산정내역 : ${execText}</div>
+  ${bankRows}
+  ${bankItems.length > 0 ? `<div class="daeum-box">
+    <div class="daeum-title">- 다 음 -</div>
+    <div>1. 압류·가압류되지 않은 예금과 압류·가압류된 예금이 있는 때에는 다음 순서에 따라서 압류한다.<br>
+      &nbsp;&nbsp;&nbsp;① 선행 압류·가압류가 되지 않은 예금&nbsp;&nbsp;② 선행 압류·가압류가 된 예금</div>
+    <div>2. 여러 종류의 예금이 있는 때에는 다음 순서에 의하여 압류한다.<br>
+      &nbsp;&nbsp;&nbsp;① 보통예금 ② 당좌예금 ③ 정기예금 ④ 정기적금 ⑤ 별단예금<br>
+      &nbsp;&nbsp;&nbsp;⑥ 저축예금 ⑦ MMF ⑧ MMDA ⑨ 적립식펀드예금 ⑩ 신탁예금 ⑪ 채권형 예금 ⑫청약예금</div>
+    <div>3. 같은 종류의 예금이 여러 계좌에 있는 때에는 계좌번호가 빠른 예금부터 압류한다.</div>
+    <div><strong>4. 다만, 채무자의 1개월간 생계유지에 필요한 예금으로 민사집행법 시행령이 정한 금액에 해당하는 경우에는 이를 제외한 나머지 금액. 끝.</strong></div>
+  </div>` : ""}
+  ${platRows}
+</div></body></html>`;
+    };
+
+    const handlePreview = () => {
+      setDlError("");
+      setPreviewHtml(generateDocHtml());
+      setShowPreview(true);
+    };
+
+    const handleDownloadHwpx = async () => {
+      if (!selDebtor) return setDlError("채무자를 먼저 선택하세요.");
+      if (items.length === 0) return setDlError("제3채무자 항목을 1개 이상 추가하세요.");
+      setDlLoading(true); setDlError("");
+      try {
+        const res = await fetch("/api/documents/generate-hwpx", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildDocData()),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: res.statusText }));
+          throw new Error(err.error || "서버 오류");
+        }
+        const blob = await res.blob();
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url;
+        a.download = `압류채권표시_${selDebtor.name}.hwpx`;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+      } catch (e) {
+        setDlError("HWPX 생성 실패: " + e.message);
+      } finally {
+        setDlLoading(false);
+      }
+    };
+
+    const handlePrintPdf = () => {
+      const html = previewHtml || generateDocHtml();
+      const w = window.open("", "_blank");
+      w.document.write(html);
+      w.document.close();
+      setTimeout(() => { w.focus(); w.print(); }, 600);
+    };
+
+    const inputStyle   = { width: "100%", padding: "7px 10px", fontSize: 12, borderRadius: 6,
+      border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", boxSizing: "border-box" };
+    const labelStyle   = { fontSize: 11, color: "var(--tm)", fontWeight: 500, marginBottom: 3, display: "block" };
+    const sectionStyle = { background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)",
+      padding: "14px 16px", marginBottom: 14 };
+
+    return (
+      <div style={{ display: "flex", gap: 16, height: "100%", alignItems: "flex-start" }}>
+        {/* ── 좌측: 입력 폼 ── */}
+        <div style={{ width: 440, flexShrink: 0, overflowY: "auto", maxHeight: "calc(100vh - 100px)" }}>
+
+          {/* 양식 선택 */}
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>양식 선택</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {AI_TEMPLATES.map(t => (
+                <div key={t.id} onClick={() => t.active && setSelTemplate(t.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 8,
+                    border: `2px solid ${selTemplate === t.id ? "var(--acc)" : "var(--brd)"}`,
+                    background: selTemplate === t.id ? "rgba(99,102,241,.06)" : "var(--bg2)",
+                    cursor: t.active ? "pointer" : "not-allowed", opacity: t.active ? 1 : 0.45 }}>
+                  <div style={{ width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+                    border: `2px solid ${selTemplate === t.id ? "var(--acc)" : "var(--brd)"}`,
+                    background: selTemplate === t.id ? "var(--acc)" : "transparent" }} />
+                  <span style={{ fontSize: 12, fontWeight: 500, flex: 1 }}>{t.label}</span>
+                  {!t.active && (
+                    <span style={{ fontSize: 10, color: "var(--tm)", background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>준비 중</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 채무자 정보 */}
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>채무자 정보</div>
+            <label style={labelStyle}>채무자 검색 (DB)</label>
+            <div style={{ position: "relative", marginBottom: 10 }}>
+              <input
+                value={debtorQ}
+                onChange={e => { setDebtorQ(e.target.value); setSelDebtor(null); }}
+                placeholder="채무자명 또는 허브코드 입력..."
+                style={inputStyle}
+              />
+              {debtorResults.length > 0 && !selDebtor && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
+                  border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
+                  {debtorResults.map(d => (
+                    <div key={d.id} onClick={() => handleSelectDebtor(d)}
+                      style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ fontWeight: 600 }}>{d.name}</span>
+                      <span style={{ color: "var(--tm)", marginLeft: 8 }}>{d.brandName || d.brand_code} / {d.hubCode || d.hub_code}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selDebtor && (
+              <div style={{ background: "var(--bg2)", borderRadius: 6, padding: "6px 10px", fontSize: 11,
+                color: "var(--ts)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span>선택됨: <strong>{selDebtor.name}</strong> ({selDebtor.brandName || selDebtor.brand_code})</span>
+                <button onClick={() => { setSelDebtor(null); setDebtorQ(""); }}
+                  style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 10 }}>×</button>
+              </div>
+            )}
+            <label style={labelStyle}>주민등록번호 (수동 입력)</label>
+            <input value={residentId} onChange={e => setResidentId(e.target.value)}
+              placeholder="000000-0000000" style={{ ...inputStyle, marginBottom: 0 }} />
+          </div>
+
+          {/* 집행권원 유형 + 동적 필드 */}
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>집행권원 유형</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {EXEC_TITLE_TYPES.map(et => (
+                <button key={et.id} onClick={() => setExecType(et.id)}
+                  style={{ flex: 1, padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    border: `2px solid ${execType === et.id ? "var(--acc)" : "var(--brd)"}`,
+                    background: execType === et.id ? "var(--acc)" : "var(--bg2)",
+                    color: execType === et.id ? "#fff" : "var(--tp)" }}>
+                  {et.label}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+              {execType === "공정증서" && <>
+                <div>
+                  <label style={labelStyle}>공증서류명</label>
+                  <input value={notaryDoc} onChange={e => setNotaryDoc(e.target.value)}
+                    placeholder="공증인가 법무법인 ○○ 증서 20__년 제___호" style={inputStyle} />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={labelStyle}>서류종류</label>
+                    <input value={docType} onChange={e => setDocType(e.target.value)}
+                      placeholder="공정증서 정본" style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>조항</label>
+                    <input value={clause} onChange={e => setClause(e.target.value)}
+                      placeholder="제1조(목적)상" style={inputStyle} />
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>차용일</label>
+                  <input value={borrowDate} onChange={e => setBorrowDate(e.target.value)}
+                    placeholder="20__년 __월 __일" style={inputStyle} />
+                </div>
+              </>}
+              {(execType === "판결문" || execType === "지급명령") && <>
+                <div>
+                  <label style={labelStyle}>법원명</label>
+                  <input value={courtName} onChange={e => setCourtName(e.target.value)}
+                    placeholder="○○지방법원" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>{execType === "판결문" ? "사건번호" : "명령번호"}</label>
+                  <input
+                    value={execType === "판결문" ? caseNumber : orderNumber}
+                    onChange={e => execType === "판결문" ? setCaseNumber(e.target.value) : setOrderNumber(e.target.value)}
+                    placeholder={execType === "판결문" ? "20__가단_____" : "20__차_____"}
+                    style={inputStyle}
+                  />
+                </div>
+              </>}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                <div>
+                  <label style={labelStyle}>원금</label>
+                  <input value={origPrincipal} onChange={e => setOrigPrincipal(e.target.value)}
+                    placeholder="123,645,678" style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>변제 후 잔액 (DB 자동)</label>
+                  <input value={remaining ? Number(remaining).toLocaleString("ko-KR") : ""}
+                    onChange={e => setRemaining(e.target.value.replace(/,/g, ""))}
+                    placeholder="12,234,567" style={inputStyle} />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 제3채무자 선택 */}
+          <div style={sectionStyle}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
+              제3채무자 선택
+              <span style={{ fontSize: 10, color: "var(--tm)", fontWeight: 400, marginLeft: 8 }}>
+                선택 순서대로 1번부터 번호가 매겨집니다
+              </span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+              {PRESET_BANKS.map(p => {
+                const active = !!items.find(it => it.name === p.fullName);
+                return (
+                  <button key={p.fullName} onClick={() => togglePreset(p)}
+                    style={{ padding: "4px 10px", borderRadius: 16, fontSize: 11, fontWeight: 500, cursor: "pointer",
+                      background: active ? (p.type === "bank" ? "#eff6ff" : "#f0fdf4") : "var(--bg2)",
+                      color: active ? (p.type === "bank" ? "#1d4ed8" : "#166534") : "var(--ts)",
+                      border: `1px solid ${active ? (p.type === "bank" ? "#bfdbfe" : "#bbf7d0") : "var(--brd)"}` }}>
+                    {active && "✓ "}{p.label}
+                    <span style={{ fontSize: 9, color: "var(--tm)", marginLeft: 4 }}>
+                      {p.type === "bank" ? "은행" : "플랫폼"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              <input value={customName} onChange={e => setCustomName(e.target.value)}
+                placeholder="직접입력 (예: 주식회사 하나저축은행)" style={{ ...inputStyle, flex: 1 }} />
+              <select value={customType} onChange={e => setCustomType(e.target.value)}
+                style={{ ...inputStyle, width: 80, flex: "none" }}>
+                <option value="bank">은행</option>
+                <option value="platform">플랫폼</option>
+              </select>
+              <button onClick={addCustom}
+                style={{ padding: "7px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff",
+                  fontSize: 12, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>추가</button>
+            </div>
+            {items.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {items.map((item, idx) => (
+                  <div key={item.id} style={{ display: "flex", gap: 6, alignItems: "center",
+                    background: "var(--bg2)", borderRadius: 6, padding: "6px 8px",
+                    borderLeft: `3px solid ${item.type === "bank" ? "#3b82f6" : "#10b981"}` }}>
+                    <span style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, width: 18 }}>{idx + 1}.</span>
+                    <input value={item.name} onChange={e => updateItemName(item.id, e.target.value)}
+                      style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: 11 }} />
+                    <input value={item.amount.toLocaleString("ko-KR")}
+                      onChange={e => updateItemAmount(item.id, e.target.value.replace(/,/g, ""))}
+                      style={{ ...inputStyle, width: 110, flex: "none", padding: "4px 8px", fontSize: 11,
+                        textAlign: "right", fontFamily: "monospace" }} />
+                    <span style={{ fontSize: 10, color: "var(--tm)" }}>원</span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      <button onClick={() => moveItem(item.id, -1)} style={{ padding: "1px 4px", fontSize: 9,
+                        background: "var(--bg)", border: "1px solid var(--brd)", borderRadius: 3, cursor: "pointer" }}>▲</button>
+                      <button onClick={() => moveItem(item.id, 1)} style={{ padding: "1px 4px", fontSize: 9,
+                        background: "var(--bg)", border: "1px solid var(--brd)", borderRadius: 3, cursor: "pointer" }}>▼</button>
+                    </div>
+                    <button onClick={() => removeItem(item.id)}
+                      style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
+                  </div>
+                ))}
+                <div style={{ textAlign: "right", fontSize: 11, color: "var(--tm)", marginTop: 4 }}>
+                  총 청구금액: <strong style={{ color: "var(--acc)" }}>{totalAmount.toLocaleString("ko-KR")}원</strong>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: "12px 0", color: "var(--tm)", fontSize: 12 }}>
+                위에서 항목을 선택하거나 직접 추가하세요
+              </div>
+            )}
+          </div>
+
+          {/* 버튼 */}
+          {dlError && <div style={{ color: "var(--err)", fontSize: 11, marginBottom: 8 }}>{dlError}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handlePreview}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "var(--bg2)",
+                color: "var(--tp)", fontSize: 13, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <I name="eye" size={15} /> 미리보기
+            </button>
+            <button onClick={handleDownloadHwpx} disabled={dlLoading}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 8,
+                background: dlLoading ? "var(--bg2)" : "#6366f1", color: dlLoading ? "var(--tm)" : "#fff",
+                fontSize: 13, fontWeight: 600, border: "none", cursor: dlLoading ? "default" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <I name="download" size={15} /> {dlLoading ? "생성 중..." : "HWPX 다운"}
+            </button>
+            <button onClick={handlePrintPdf}
+              style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "#ef4444", color: "#fff",
+                fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <I name="download" size={15} /> PDF 출력
+            </button>
+          </div>
+        </div>
+
+        {/* ── 우측: 미리보기 ── */}
+        <div style={{ flex: 1, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10,
+          overflow: "hidden", minHeight: 500 }}>
+          {showPreview && previewHtml ? (
+            <div style={{ height: "calc(100vh - 120px)", display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--brd)", display: "flex",
+                justifyContent: "space-between", alignItems: "center", background: "var(--bg2)" }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>미리보기</span>
+                <button onClick={() => setShowPreview(false)}
+                  style={{ background: "none", border: "none", color: "var(--tm)", cursor: "pointer" }}>
+                  <I name="close" size={14} />
+                </button>
+              </div>
+              <iframe srcDoc={previewHtml} style={{ flex: 1, border: "none", width: "100%" }}
+                title="문건 미리보기" />
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              height: 400, color: "var(--tm)" }}>
+              <I name="fileText" size={40} />
+              <div style={{ marginTop: 12, fontSize: 13 }}>좌측 양식을 작성하고 미리보기를 눌러주세요</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // ─── 민사소송 View ───────────────────────────────────────
   const MinSaView = () => {
     const [brandF,       setBrandF]       = useState("전체");
@@ -5256,6 +5749,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "legal",           l: "법적절차",     i: "gavel",   sub: legalSubItems,   subState: legalSubTab,  setSub: (v) => { setLegalSubTab(v); setTab("legal"); } },
     { k: "rehabBankruptcy", l: "회생/파산",    i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
     { k: "minsa",           l: "민사소송",     i: "scale" },
+    { k: "aiDocs",          l: "AI 문건생성",  i: "fileText" },
     ...(isAdmin ? [{ k: "admin", l: "어드민", i: "settings" }] : []),
   ];
 
@@ -5359,6 +5853,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {tab === "legal" && <LegalView />}
           {tab === "rehabBankruptcy" && <RehabBankruptcyView />}
           {tab === "minsa" && <MinSaView />}
+          {tab === "aiDocs" && <AiDocsView />}
           {tab === "admin" && adminView}
         </div>
       </div>

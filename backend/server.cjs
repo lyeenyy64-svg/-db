@@ -12,6 +12,7 @@ const path = require("path");
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
+const { generateHwpx, buildPreviewHtml } = require("./documentGenerator.cjs");
 const { WebClient: SlackClient } = require("@slack/web-api");
 
 const slackNotify = process.env.SLACK_BOT_TOKEN ? new SlackClient(process.env.SLACK_BOT_TOKEN) : null;
@@ -1205,6 +1206,34 @@ app.delete("/api/pending-payments/:id", (req, res) => {
   const result = db.prepare("DELETE FROM pending_payments WHERE id = ? AND resolved = 0").run(pendingId);
   if (result.changes === 0) return res.status(404).json({ ok: false, error: "항목 없음" });
   res.json({ ok: true });
+});
+
+// ─── AI 문건생성 ─────────────────────────────────
+app.post("/api/documents/generate-hwpx", async (req, res) => {
+  try {
+    const docData = req.body;
+    if (!docData || !docData.debtorName) {
+      return res.status(400).json({ ok: false, error: "채무자명 필수" });
+    }
+    const buffer = await generateHwpx(docData);
+    const filename = encodeURIComponent(`압류채권표시_${docData.debtorName}.hwpx`);
+    res.setHeader("Content-Type", "application/hwp+zip");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${filename}`);
+    res.send(buffer);
+  } catch (e) {
+    console.error("HWPX 생성 오류:", e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/documents/preview-html", (req, res) => {
+  try {
+    const html = buildPreviewHtml(req.body || {});
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ─── 정적 파일 서빙 (React 빌드) ────────────────

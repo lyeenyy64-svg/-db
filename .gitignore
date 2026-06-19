@@ -6,9 +6,16 @@ dist/
 .vite/
 
 # 데이터베이스 (실제 채무자 데이터)
+debtflow.db
+debtflow.db-shm
+debtflow.db-wal
 db/debtflow.db
 db/debtflow.db-shm
 db/debtflow.db-wal
+
+# 테스트/디버그 산출물
+test_output.hwpx
+db/section0_debug.xml
 
 # 엑셀 원본 데이터 파일
 db/*.xlsx
@@ -22,3 +29,9 @@ excel_debtors.json
 # 코드베이스 내보내기
 CODEBASE_EXPORT.md
 CODEBASE_EXPORT.txt
+
+# Claude Code 설정
+.claude/
+
+# 에러/로그 파일
+*.err
