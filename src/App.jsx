@@ -2389,7 +2389,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           return { key: `e_${i}`, date: ed?.date ?? h.date, content: ed?.content ?? h.content, isExcel: true, origIdx: i };
         })
         .filter(Boolean),
-      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, isManual: true, manualId: h.id })),
+      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, isManual: true, manualId: h.id, createdBy: h.createdBy })),
     ].sort((a, b) => b.date.localeCompare(a.date));
 
     const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
@@ -2400,7 +2400,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const content = histForm.content.trim();
       if (!date || !content) return;
       if (histForm.mode === "add") {
-        updHistM([{ id: uid("HIST"), date, content }, ...histManual]);
+        updHistM([{ id: uid("HIST"), date, content, createdBy: currentUser?.name }, ...histManual]);
       } else {
         if (histForm.key.startsWith("e_")) {
           updHistE({ ...histEdits, [histForm.key]: { date, content } });
@@ -2618,8 +2618,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
                 <div style={{ flex: 1, padding: "12px 16px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
                 <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, padding: "8px 10px", borderLeft: "1px solid var(--brd)" }}>
-                  {canEditRecord(h) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
-                  {canDeleteRecord(h) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
+                  {(canEditRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
+                  {(canDeleteRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
                 </div>
               </div>
             ))}
