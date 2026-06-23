@@ -1028,8 +1028,8 @@ export default function App() {
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
   const isAdmin = userPerms.admin;
-  const canEditRecord   = (record) => isAdmin || (currentUser?.role === "manager" && record?.createdBy === currentUser?.id);
-  const canDeleteRecord = (record) => isAdmin || (currentUser?.role === "manager" && record?.createdBy === currentUser?.id);
+  const canEditRecord   = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
+  const canDeleteRecord = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
 
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
@@ -2614,6 +2614,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ width: 110, flexShrink: 0, padding: "12px 14px", background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
                   <span className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, lineHeight: 1.4 }}>{h.date}</span>
                   {h.isManual && <span style={{ fontSize: 9, color: "var(--ok)", fontWeight: 600, background: "#10b98115", borderRadius: 4, padding: "1px 4px" }}>수동</span>}
+                  {h.createdBy && <span style={{ fontSize: 9, color: "var(--tm)", lineHeight: 1.3 }}>{h.createdBy}</span>}
                 </div>
                 <div style={{ flex: 1, padding: "12px 16px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
                 <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, padding: "8px 10px", borderLeft: "1px solid var(--brd)" }}>
@@ -2627,7 +2628,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canDelete && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
               {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
         </div>}
 
@@ -2749,7 +2750,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canDelete && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -2891,7 +2892,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", gap: 3 }}>
               {canEdit && s.status !== "완납" && <button onClick={() => markComplete(s.id)} title="완납처리" style={{ padding: "3px 8px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>완납</button>}
               {canEdit && s.status === "완납" && <button onClick={() => markUnpaid(s.id)} title="미납으로 되돌리기" style={{ padding: "3px 8px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>취소</button>}
-              {canDelete && <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>}
+              {canEdit && <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>}
             </div>
           </td>
         </tr>
@@ -3007,7 +3008,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       </span>
                       <span style={{ fontSize: 12, color: "var(--ts)" }}>총채권: <b className="mono">{fmt(plan.totalClaim || (d?.finalBalanceLegal ?? 0))}</b></span>
                       <Badge status={plan.status} small />
-                      {canDelete && <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>}
+                      {canEdit && <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>}
                     </div>
                   </div>
                   {overdue > 0 && <div style={{ padding: "4px 14px", background: "#f59e0b10", fontSize: 11, color: "#b45309", fontWeight: 600 }}>⚠ 지연 {overdue}건</div>}
@@ -3280,11 +3281,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <div style={{ width: 100, flexShrink: 0, padding: "10px 12px", background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 3 }}>
                         <span className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600 }}>{h.date}</span>
                         {h.assignee && <span style={{ fontSize: 10, color: "var(--tm)" }}>{h.assignee}</span>}
+                        {h.createdBy && h.createdBy !== h.assignee && <span style={{ fontSize: 9, color: "var(--tm)", opacity: 0.7 }}>{h.createdBy}</span>}
                       </div>
                       <div style={{ flex: 1, padding: "10px 14px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
                       <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "6px 8px", borderLeft: "1px solid var(--brd)" }}>
                         {canEdit && <button onClick={() => setCmpHistForm({ mode: "edit", id: h.id, date: h.date, content: h.content, assignee: h.assignee || "" })} style={{ width: 24, height: 24, borderRadius: 5, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={11} /></button>}
-                        {canDelete && <button onClick={() => deleteCmpHist(h)} style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
+                        {canEdit && <button onClick={() => deleteCmpHist(h)} style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                       </div>
                     </div>
                   ))}
@@ -4615,7 +4617,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {checkedIds.size > 0 && canDelete && (
+              {checkedIds.size > 0 && canEdit && (
                 <button onClick={doBulkDelete} style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, background: "#ef444415", color: "var(--err)", border: "1px solid #ef444430", fontWeight: 600, cursor: "pointer" }}>
                   <I name="trash" size={12} /> 선택 삭제 ({checkedIds.size})
                 </button>
@@ -4632,7 +4634,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ textAlign: "center", padding: 40, color: "var(--ok)", fontSize: 14 }}>✓ 미처리 대기 항목이 없습니다</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {canDelete && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 4px 10px" }}>
+              {canEdit && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 4px 10px" }}>
                 <input type="checkbox"
                   checked={unlearnedItems.length > 0 && checkedIds.size === unlearnedItems.length}
                   ref={el => { if (el) el.indeterminate = checkedIds.size > 0 && checkedIds.size < unlearnedItems.length; }}
@@ -4651,7 +4653,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const brandInfo = brandCode ? (config.brands.find(x => x.code === brandCode) || { name: brandCode, color: "#64748b" }) : null;
                 return (
                   <div key={item.id} style={{ background: isChecked ? "#ef444408" : "var(--bg)", borderRadius: 10, padding: "10px 14px", border: `1px solid ${isChecked ? "#ef444440" : "var(--brd)"}`, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    {canDelete && <input type="checkbox" checked={isChecked}
+                    {canEdit && <input type="checkbox" checked={isChecked}
                       onChange={e => setCheckedIds(prev => { const n = new Set(prev); e.target.checked ? n.add(item.id) : n.delete(item.id); return n; })}
                       style={{ width: 15, height: 15, cursor: "pointer", flexShrink: 0 }}
                     />}
@@ -4704,7 +4706,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       >
                         {resolving === item.id ? "처리중..." : "✓ 연결"}
                       </button>}
-                      {canDelete && <button
+                      {canEdit && <button
                         onClick={() => doDiscard(item)}
                         title="이 항목 삭제"
                         style={{ padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430", cursor: "pointer" }}
