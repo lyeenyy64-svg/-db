@@ -851,9 +851,9 @@ function SlackIngestView({ showToast, reloadFromBackend, currentUser }) {
       <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>🤖 Slack 봇 상태</div>
-          <button onClick={doPollNow} disabled={polling || !botStatus?.enabled} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: botStatus?.enabled ? "var(--acc)" : "var(--bg)", color: botStatus?.enabled ? "#fff" : "var(--tm)", opacity: polling || !botStatus?.enabled ? 0.5 : 1 }}>
+          {isAdmin && <button onClick={doPollNow} disabled={polling || !botStatus?.enabled} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: botStatus?.enabled ? "var(--acc)" : "var(--bg)", color: botStatus?.enabled ? "#fff" : "var(--tm)", opacity: polling || !botStatus?.enabled ? 0.5 : 1 }}>
             {polling ? "폴링중..." : "🔄 지금 폴링"}
-          </button>
+          </button>}
         </div>
         {!botStatus ? (
           <div style={{ fontSize: 12, color: "var(--tm)" }}>상태 조회 중...</div>
@@ -2572,13 +2572,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 2, flex: 1, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
             {dtabs.map(t => (<button key={t.k} onClick={() => setDetailTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 500, background: detailTab === t.k ? "var(--bg)" : "transparent", color: detailTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.k} {t.count > 0 && <span className="mono" style={{ fontSize: 10 }}>({t.count})</span>}</button>))}
           </div>
-          {detailTab === "히스토리" && (
+          {detailTab === "히스토리" && canEdit && (
             <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />히스토리 추가</button>
           )}
-          {detailTab === "입금내역" && (
+          {detailTab === "입금내역" && canEdit && (
             <button onClick={() => setModal({ type: "payment", debtorId: d.id })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />입금 등록</button>
           )}
-          {detailTab === "분할상환" && !debtorInstPlan && (
+          {detailTab === "분할상환" && !debtorInstPlan && canEdit && (
             <button onClick={() => setModal({ type: "addInstallment", debtorId: d.id })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />플랜 추가</button>
           )}
         </div>
@@ -2617,8 +2617,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
                 <div style={{ flex: 1, padding: "12px 16px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
                 <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, padding: "8px 10px", borderLeft: "1px solid var(--brd)" }}>
-                  <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>
-                  <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>
+                  {canEditRecord(h) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
+                  {canDeleteRecord(h) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
                 </div>
               </div>
             ))}
@@ -2627,7 +2627,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button></td></tr>))}
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canDelete && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
               {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
         </div>}
 
@@ -2749,7 +2749,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}><button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button><button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button></div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canDelete && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -2879,7 +2879,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             ) : (
               <span className="mono" style={{ fontSize: 12 }}>
                 {s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b", fontSize: 11 }}>{s.dueMonth} (날짜미정)</span>}
-                {!s.dueDate && s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ marginLeft: 4, padding: "1px 6px", background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>지정</button>}
+                {canEdit && !s.dueDate && s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ marginLeft: 4, padding: "1px 6px", background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>지정</button>}
               </span>
             )}
           </td>
@@ -2889,9 +2889,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </td>
           <td style={{ padding: "8px 10px" }}>
             <div style={{ display: "flex", gap: 3 }}>
-              {s.status !== "완납" && <button onClick={() => markComplete(s.id)} title="완납처리" style={{ padding: "3px 8px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>완납</button>}
-              {s.status === "완납" && <button onClick={() => markUnpaid(s.id)} title="미납으로 되돌리기" style={{ padding: "3px 8px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>취소</button>}
-              <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>
+              {canEdit && s.status !== "완납" && <button onClick={() => markComplete(s.id)} title="완납처리" style={{ padding: "3px 8px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>완납</button>}
+              {canEdit && s.status === "완납" && <button onClick={() => markUnpaid(s.id)} title="미납으로 되돌리기" style={{ padding: "3px 8px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>취소</button>}
+              {canDelete && <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>}
             </div>
           </td>
         </tr>
@@ -2929,8 +2929,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
                 {["전체", "미납", "완납", "지연"].map(s => <option key={s}>{s}</option>)}
               </select>
-              <button onClick={checkOverdue} style={{ padding: "6px 10px", borderRadius: 8, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b30", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>지연확인</button>
-              <button onClick={sendMonthlyNotify} style={{ padding: "6px 10px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Slack</button>
+              {isAdmin && <button onClick={checkOverdue} style={{ padding: "6px 10px", borderRadius: 8, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b30", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>지연확인</button>}
+              {isAdmin && <button onClick={sendMonthlyNotify} style={{ padding: "6px 10px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Slack</button>}
             </div>
           </div>
           {/* 이번달 금액 요약 */}
@@ -2978,8 +2978,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: instTab === "플랜관리" ? "flex" : "none", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", gap: 6 }}>
-              <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={14} />플랜 추가</button>
-              <button onClick={doImport} disabled={importing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: importing ? "var(--bg2)" : "#f59e0b18", color: importing ? "var(--tm)" : "#b45309", fontSize: 12, fontWeight: 600, border: "1px solid #f59e0b40", cursor: importing ? "not-allowed" : "pointer" }}><I name="upload" size={14} />{importing ? "이관중…" : "엑셀 이관"}</button>
+              {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={14} />플랜 추가</button>}
+              {isAdmin && <button onClick={doImport} disabled={importing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: importing ? "var(--bg2)" : "#f59e0b18", color: importing ? "var(--tm)" : "#b45309", fontSize: 12, fontWeight: 600, border: "1px solid #f59e0b40", cursor: importing ? "not-allowed" : "pointer" }}><I name="upload" size={14} />{importing ? "이관중…" : "엑셀 이관"}</button>}
               <button onClick={() => exportInstallments(data.installmentPlans)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}><I name="arrowDown" size={14} />CSV</button>
             </div>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>플랜 {data.installmentPlans.length}건</span>
@@ -3007,7 +3007,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       </span>
                       <span style={{ fontSize: 12, color: "var(--ts)" }}>총채권: <b className="mono">{fmt(plan.totalClaim || (d?.finalBalanceLegal ?? 0))}</b></span>
                       <Badge status={plan.status} small />
-                      <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>
+                      {canDelete && <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>}
                     </div>
                   </div>
                   {overdue > 0 && <div style={{ padding: "4px 14px", background: "#f59e0b10", fontSize: 11, color: "#b45309", fontWeight: 600 }}>⚠ 지연 {overdue}건</div>}
@@ -3283,8 +3283,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       </div>
                       <div style={{ flex: 1, padding: "10px 14px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{h.content}</div>
                       <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "6px 8px", borderLeft: "1px solid var(--brd)" }}>
-                        <button onClick={() => setCmpHistForm({ mode: "edit", id: h.id, date: h.date, content: h.content, assignee: h.assignee || "" })} style={{ width: 24, height: 24, borderRadius: 5, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={11} /></button>
-                        <button onClick={() => deleteCmpHist(h)} style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>
+                        {canEdit && <button onClick={() => setCmpHistForm({ mode: "edit", id: h.id, date: h.date, content: h.content, assignee: h.assignee || "" })} style={{ width: 24, height: 24, borderRadius: 5, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={11} /></button>}
+                        {canDelete && <button onClick={() => deleteCmpHist(h)} style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                       </div>
                     </div>
                   ))}
@@ -4615,7 +4615,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              {checkedIds.size > 0 && (
+              {checkedIds.size > 0 && canDelete && (
                 <button onClick={doBulkDelete} style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, background: "#ef444415", color: "var(--err)", border: "1px solid #ef444430", fontWeight: 600, cursor: "pointer" }}>
                   <I name="trash" size={12} /> 선택 삭제 ({checkedIds.size})
                 </button>
@@ -4632,7 +4632,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ textAlign: "center", padding: 40, color: "var(--ok)", fontSize: 14 }}>✓ 미처리 대기 항목이 없습니다</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 4px 10px" }}>
+              {canDelete && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 4px 10px" }}>
                 <input type="checkbox"
                   checked={unlearnedItems.length > 0 && checkedIds.size === unlearnedItems.length}
                   ref={el => { if (el) el.indeterminate = checkedIds.size > 0 && checkedIds.size < unlearnedItems.length; }}
@@ -4640,7 +4640,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   style={{ width: 15, height: 15, cursor: "pointer" }}
                 />
                 <span style={{ fontSize: 11, color: "var(--tm)" }}>전체 선택</span>
-              </div>
+              </div>}
               {unlearnedItems.map(item => {
                 const srch = debtorSearch[item.id] || "";
                 const chosen = selectedDebtor[item.id];
@@ -4651,10 +4651,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const brandInfo = brandCode ? (config.brands.find(x => x.code === brandCode) || { name: brandCode, color: "#64748b" }) : null;
                 return (
                   <div key={item.id} style={{ background: isChecked ? "#ef444408" : "var(--bg)", borderRadius: 10, padding: "10px 14px", border: `1px solid ${isChecked ? "#ef444440" : "var(--brd)"}`, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <input type="checkbox" checked={isChecked}
+                    {canDelete && <input type="checkbox" checked={isChecked}
                       onChange={e => setCheckedIds(prev => { const n = new Set(prev); e.target.checked ? n.add(item.id) : n.delete(item.id); return n; })}
                       style={{ width: 15, height: 15, cursor: "pointer", flexShrink: 0 }}
-                    />
+                    />}
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         {brandInfo && (
@@ -4697,20 +4697,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           </div>
                         )}
                       </div>
-                      <button
+                      {canEdit && <button
                         onClick={() => doResolve(item)}
                         disabled={!chosen || resolving === item.id}
                         style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: chosen ? "var(--ok)" : "var(--bg)", color: chosen ? "#fff" : "var(--tm)", border: chosen ? "none" : "1px solid var(--brd)", opacity: (!chosen || resolving === item.id) ? 0.6 : 1, cursor: !chosen ? "not-allowed" : "pointer" }}
                       >
                         {resolving === item.id ? "처리중..." : "✓ 연결"}
-                      </button>
-                      <button
+                      </button>}
+                      {canDelete && <button
                         onClick={() => doDiscard(item)}
                         title="이 항목 삭제"
                         style={{ padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430", cursor: "pointer" }}
                       >
                         <I name="trash" size={13} />
-                      </button>
+                      </button>}
                     </div>
                   </div>
                 );
@@ -4774,7 +4774,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
                       <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{m.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({m.debtor_id})</span></span>
                       <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{m.resolved_count}회 적용</span>
-                      <button onClick={() => doDeleteMapping(m.payer_name)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}>삭제</button>
+                      {isAdmin && <button onClick={() => doDeleteMapping(m.payer_name)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}>삭제</button>}
                     </div>
                   ))}
                 </div>
