@@ -644,6 +644,33 @@ const Overlay = ({ children, onClose, wide }) => (
     <div className="anim" onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, width: wide ? 720 : 560, maxHeight: "85vh", overflow: "auto", padding: 24, border: "1px solid var(--brd)" }}>{children}</div>
   </div>
 );
+const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const pad2 = n => String(n).padStart(2, "0");
+function HeaderClock({ currentUser, lastSaved }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const dateStr = `${now.getFullYear()}-${pad2(now.getMonth()+1)}-${pad2(now.getDate())} (${KO_DAYS[now.getDay()]})`;
+  const timeStr = `${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+  const savedStr = lastSaved ? (() => {
+    const sameDay = lastSaved.getFullYear() === now.getFullYear() && lastSaved.getMonth() === now.getMonth() && lastSaved.getDate() === now.getDate();
+    const t = `${pad2(lastSaved.getHours())}:${pad2(lastSaved.getMinutes())}:${pad2(lastSaved.getSeconds())}`;
+    return sameDay ? t : `${lastSaved.getMonth()+1}/${pad2(lastSaved.getDate())} ${t}`;
+  })() : "-";
+  return (
+    <div style={{ textAlign: "right" }}>
+      <div style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums", fontFamily: "monospace", color: "var(--tp)", lineHeight: "1.4" }}>{dateStr}&nbsp;&nbsp;{timeStr}</div>
+      <div style={{ fontSize: 11, color: "var(--tm)", lineHeight: "1.4" }}>
+        <span style={{ fontWeight: 600, color: "var(--ts)" }}>{currentUser.name}</span>
+        <span style={{ margin: "0 6px", opacity: 0.4 }}>|</span>
+        마지막 갱신&nbsp;<span style={{ fontFamily: "monospace", fontVariantNumeric: "tabular-nums" }}>{savedStr}</span>
+      </div>
+    </div>
+  );
+}
+
 const ModalHeader = ({ title, onClose }) => (
   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
     <div style={{ fontSize: 16, fontWeight: 700 }}>{title}</div>
@@ -972,6 +999,7 @@ export default function App() {
   // ─── Auth & Users ─────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(null);
   const [loginError, setLoginError]   = useState("");
+  const [lastSaved,  setLastSaved]    = useState(null);
   const REMOVED_USER_EMAILS = ["junwon@barogo.com"]; // 삭제된 계정 목록
   // DEFAULT_USERS 기준으로 이름/역할 등 강제 동기화할 필드 (이메일 키)
   const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" } };
@@ -1022,6 +1050,7 @@ export default function App() {
   const [adminNewItem, setAdminNewItem] = useState("");
   const [adminEditingRule, setAdminEditingRule] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   const [legalSubTab, setLegalSubTab] = useState("지급명령");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
@@ -1091,6 +1120,8 @@ export default function App() {
       const allDebtors   = [...debtors, ...manualDebtors];
       setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders }));
       setBackendStatus("connected");
+      setLastSaved(new Date());
+      setPendingRefreshKey(k => k + 1);
       setToast(`데이터 동기화 완료: 채무자 ${debtors.length}건, 입금 ${paymentsRes.length}건`);
       setTimeout(() => setToast(null), 3000);
     } catch (e) {
@@ -1105,17 +1136,38 @@ export default function App() {
   // 초기 로드
   useEffect(() => { loadData(); }, [loadData]);
 
+
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
   useEffect(() => {
     if (backendStatus !== "connected") return;
     let debounce;
-    const src = new EventSource("/api/events");
-    src.addEventListener("data-changed", () => {
+    let src;
+    let retryTimer;
+
+    const connect = () => {
+      src = new EventSource("/api/events");
+      src.addEventListener("data-changed", () => {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => loadData(), 500);
+      });
+      src.onerror = () => {
+        src.close();
+        // 3초 후 재연결 시도
+        retryTimer = setTimeout(connect, 3000);
+      };
+    };
+    connect();
+
+    // 탭 복귀 시 놓친 변경사항 즉시 반영
+    const onVisible = () => { if (document.visibilityState === "visible") loadData(); };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      src.close();
       clearTimeout(debounce);
-      debounce = setTimeout(() => loadData(), 800);
-    });
-    src.onerror = () => {};
-    return () => { src.close(); clearTimeout(debounce); };
+      clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [backendStatus, loadData]);
 
   useEffect(() => {
@@ -1278,6 +1330,7 @@ export default function App() {
       // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override 적용
       const rehabilitations = applyRehabOverrides(matchRehabsToDebtors(EXCEL_REHABS, debtors));
       setData(prev => ({ ...prev, debtors, payments: paymentsRes, rehabilitations }));
+      setLastSaved(new Date());
       if (sel) {
         const updated = debtors.find(d => d.id === sel.id);
         if (updated) setSel(updated);
@@ -2668,7 +2721,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button key={t.k} onClick={() => setSubTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: subTab === t.k ? "var(--bg)" : "transparent", color: subTab === t.k ? (t.k === "미매칭" && pendingCount > 0 ? "#ef4444" : "var(--tp)") : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
-        {subTab === "미매칭" && <PendingPaymentsView />}
+        {subTab === "미매칭" && <PendingPaymentsView refreshKey={pendingRefreshKey} />}
         <div style={{ display: subTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
           <KPI label="총 입금건수" value={`${pFiltered.length}건`} sub={`전체 ${data.payments.length}건`} color="#3b82f6" />
@@ -4415,7 +4468,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   };
 
   // ─── 미매칭 대기열 View ──────────────────────────────────
-  const PendingPaymentsView = () => {
+  const PendingPaymentsView = ({ refreshKey }) => {
     const [items, setItems] = useState([]);
     const [loadingList, setLoadingList] = useState(true);
     const [resolving, setResolving] = useState(null);
@@ -4423,6 +4476,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [debtorSearch, setDebtorSearch] = useState({});
     const [learnedMap, setLearnedMap] = useState({}); // { payerName → { debtor_id, debtor_name, resolved_count } }
     const [showMappings, setShowMappings] = useState(false);
+    const [checkedIds, setCheckedIds] = useState(new Set());
 
     const loadPending = async () => {
       try {
@@ -4450,7 +4504,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       } catch (e) {}
       setLoadingList(false);
     };
-    useEffect(() => { loadPending(); }, []);
+    useEffect(() => { loadPending(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const getFiltered = (srch) => {
       if (!srch) return [];
@@ -4497,7 +4551,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const updated = items.filter(x => x.id !== item.id);
         setItems(updated);
         setPendingCount(updated.length);
+        setCheckedIds(prev => { const n = new Set(prev); n.delete(item.id); return n; });
         showToast("삭제됨");
+      } catch (e) { showToast(e.message); }
+    };
+
+    const doBulkDelete = async () => {
+      if (checkedIds.size === 0) return;
+      if (!confirm(`선택한 ${checkedIds.size}건을 삭제할까요?`)) return;
+      try {
+        await Promise.all([...checkedIds].map(id => fetch(`/api/pending-payments/${id}`, { method: "DELETE" })));
+        const updated = items.filter(x => !checkedIds.has(x.id));
+        setItems(updated);
+        setPendingCount(updated.length);
+        setCheckedIds(new Set());
+        showToast(`${checkedIds.size}건 삭제됨`);
       } catch (e) { showToast(e.message); }
     };
 
@@ -4510,9 +4578,30 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       } catch (e) { showToast(e.message); }
     };
 
-    const totalAmt = items.reduce((s, x) => s + (x.total_amount || 0), 0);
+    const learnedPendingItems = items.filter(x => learnedMap[x.payer_name]);
+    const unlearnedItems = items.filter(x => !learnedMap[x.payer_name]);
+    const totalAmt = unlearnedItems.reduce((s, x) => s + (x.total_amount || 0), 0);
     const learnedList = Object.values(learnedMap);
-    const learnedCount = items.filter(x => learnedMap[x.payer_name]).length;
+
+    const doResolveAll = async () => {
+      if (learnedPendingItems.length === 0) return;
+      if (!confirm(`학습 매핑된 ${learnedPendingItems.length}건을 일괄 연결할까요?`)) return;
+      let ok = 0;
+      for (const item of learnedPendingItems) {
+        const mapping = learnedMap[item.payer_name];
+        if (!mapping) continue;
+        try {
+          const res = await fetch(`/api/pending-payments/${item.id}/resolve`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ debtorId: mapping.debtor_id, createdByName: currentUser?.name }),
+          });
+          if ((await res.json()).ok) ok++;
+        } catch {}
+      }
+      showToast(`${ok}건 일괄 연결 완료`);
+      await loadPending();
+      await reloadFromBackend();
+    };
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -4520,44 +4609,65 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
             <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>⏳ 미매칭 대기열 ({items.length}건)</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>⏳ 미매칭 대기열 ({unlearnedItems.length}건)</div>
               <div style={{ fontSize: 12, color: "var(--tm)" }}>
                 합계 <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>{fmt(totalAmt)}</span>
-                {learnedCount > 0 && <span style={{ marginLeft: 10, color: "#7c3aed" }}>· 학습매핑 자동완성 <b>{learnedCount}건</b></span>}
               </div>
             </div>
-            <button onClick={() => setShowMappings(p => !p)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "#7c3aed18", color: "#7c3aed", border: "1px solid #7c3aed30", fontWeight: 600 }}>
-              🧠 학습 매핑 {learnedList.length}개 {showMappings ? "▲" : "▼"}
-            </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {checkedIds.size > 0 && (
+                <button onClick={doBulkDelete} style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, background: "#ef444415", color: "var(--err)", border: "1px solid #ef444430", fontWeight: 600, cursor: "pointer" }}>
+                  <I name="trash" size={12} /> 선택 삭제 ({checkedIds.size})
+                </button>
+              )}
+              <button onClick={() => setShowMappings(p => !p)} style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "#7c3aed18", color: "#7c3aed", border: "1px solid #7c3aed30", fontWeight: 600 }}>
+                🧠 학습 매핑 {learnedList.length}개{learnedPendingItems.length > 0 ? ` · 대기 ${learnedPendingItems.length}건` : ""} {showMappings ? "▲" : "▼"}
+              </button>
+            </div>
           </div>
 
           {loadingList ? (
             <div style={{ textAlign: "center", padding: 40, color: "var(--tm)" }}>불러오는 중...</div>
-          ) : items.length === 0 ? (
+          ) : unlearnedItems.length === 0 ? (
             <div style={{ textAlign: "center", padding: 40, color: "var(--ok)", fontSize: 14 }}>✓ 미처리 대기 항목이 없습니다</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {items.map(item => {
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 4px 10px" }}>
+                <input type="checkbox"
+                  checked={unlearnedItems.length > 0 && checkedIds.size === unlearnedItems.length}
+                  ref={el => { if (el) el.indeterminate = checkedIds.size > 0 && checkedIds.size < unlearnedItems.length; }}
+                  onChange={e => setCheckedIds(e.target.checked ? new Set(unlearnedItems.map(x => x.id)) : new Set())}
+                  style={{ width: 15, height: 15, cursor: "pointer" }}
+                />
+                <span style={{ fontSize: 11, color: "var(--tm)" }}>전체 선택</span>
+              </div>
+              {unlearnedItems.map(item => {
                 const srch = debtorSearch[item.id] || "";
                 const chosen = selectedDebtor[item.id];
                 const chosenDebtor = chosen ? data.debtors.find(d => d.id === chosen) : null;
                 const filtered = getFiltered(srch);
-                const isLearned = !!learnedMap[item.payer_name];
+                const isChecked = checkedIds.has(item.id);
+                const brandCode = item.excel_brand || (item.source === "slack" ? "B" : null);
+                const brandInfo = brandCode ? (config.brands.find(x => x.code === brandCode) || { name: brandCode, color: "#64748b" }) : null;
                 return (
-                  <div key={item.id} style={{ background: isLearned ? "#7c3aed08" : "var(--bg)", borderRadius: 10, padding: "10px 14px", border: `1px solid ${isLearned ? "#7c3aed30" : "var(--brd)"}`, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <div key={item.id} style={{ background: isChecked ? "#ef444408" : "var(--bg)", borderRadius: 10, padding: "10px 14px", border: `1px solid ${isChecked ? "#ef444440" : "var(--brd)"}`, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <input type="checkbox" checked={isChecked}
+                      onChange={e => setCheckedIds(prev => { const n = new Set(prev); e.target.checked ? n.add(item.id) : n.delete(item.id); return n; })}
+                      style={{ width: 15, height: 15, cursor: "pointer", flexShrink: 0 }}
+                    />
                     <div style={{ flex: 1, minWidth: 200 }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {brandInfo && (
+                          <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 4, fontWeight: 700, background: `${brandInfo.color}18`, color: brandInfo.color, border: `1px solid ${brandInfo.color}30`, flexShrink: 0 }}>
+                            {brandInfo.name}
+                          </span>
+                        )}
                         <span style={{ fontWeight: 600, fontSize: 14 }}>{item.payer_name}</span>
                         <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--acc)" }}>{fmt(item.total_amount)}</span>
                         <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{item.payment_date}</span>
                         <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#f59e0b18", color: "#b45309", fontWeight: 600 }}>
                           {item.source === "slack" ? "Slack 자동" : "수동입력"}
                         </span>
-                        {isLearned && (
-                          <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#7c3aed18", color: "#7c3aed", fontWeight: 600 }}>
-                            🧠 학습됨
-                          </span>
-                        )}
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -4569,7 +4679,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             setSelectedDebtor(p => ({ ...p, [item.id]: null }));
                           }}
                           placeholder="채무자 검색..."
-                          style={{ width: 210, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: `1px solid ${chosen ? (isLearned ? "#7c3aed" : "var(--ok)") : "var(--brd)"}`, background: "var(--inp)", outline: "none" }}
+                          style={{ width: 210, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: `1px solid ${chosen ? "var(--ok)" : "var(--brd)"}`, background: "var(--inp)", outline: "none" }}
                         />
                         {srch && !chosen && filtered.length > 0 && (
                           <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 6, zIndex: 200, maxHeight: 220, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,.15)" }}>
@@ -4590,7 +4700,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <button
                         onClick={() => doResolve(item)}
                         disabled={!chosen || resolving === item.id}
-                        style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: chosen ? (isLearned ? "#7c3aed" : "var(--ok)") : "var(--bg)", color: chosen ? "#fff" : "var(--tm)", border: chosen ? "none" : "1px solid var(--brd)", opacity: (!chosen || resolving === item.id) ? 0.6 : 1, cursor: !chosen ? "not-allowed" : "pointer" }}
+                        style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: chosen ? "var(--ok)" : "var(--bg)", color: chosen ? "#fff" : "var(--tm)", border: chosen ? "none" : "1px solid var(--brd)", opacity: (!chosen || resolving === item.id) ? 0.6 : 1, cursor: !chosen ? "not-allowed" : "pointer" }}
                       >
                         {resolving === item.id ? "처리중..." : "✓ 연결"}
                       </button>
@@ -4611,26 +4721,66 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 학습 매핑 관리 패널 */}
         {showMappings && (
-          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid #7c3aed30" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: "#7c3aed" }}>🧠 학습된 입금자 매핑 ({learnedList.length}개)</div>
-            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
-              한 번 수동 연결한 입금자명은 여기 저장되어, 앞으로 같은 이름이 오면 자동으로 채무자가 선택됩니다.
-            </div>
-            {learnedList.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--tm)", textAlign: "center", padding: 20 }}>아직 학습된 매핑이 없습니다</div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {learnedList.map(m => (
-                  <div key={m.payer_name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--bg)", borderRadius: 8 }}>
-                    <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120 }}>{m.payer_name}</span>
-                    <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
-                    <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{m.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({m.debtor_id})</span></span>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{m.resolved_count}회 적용</span>
-                    <button onClick={() => doDeleteMapping(m.payer_name)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}>삭제</button>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid #7c3aed30", display: "flex", flexDirection: "column", gap: 20 }}>
+
+            {/* 학습 매핑으로 대기 중인 항목 */}
+            {learnedPendingItems.length > 0 && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#7c3aed" }}>🧠 학습 매핑 대기 ({learnedPendingItems.length}건)</div>
+                    <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>채무자가 이미 자동 선택된 항목입니다. 일괄 연결하거나 개별 처리하세요.</div>
                   </div>
-                ))}
+                  <button onClick={doResolveAll} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer" }}>
+                    전체 일괄 연결
+                  </button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {learnedPendingItems.map(item => {
+                    const mapping = learnedMap[item.payer_name];
+                    return (
+                      <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "#7c3aed08", borderRadius: 8, border: "1px solid #7c3aed20" }}>
+                        <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120 }}>{item.payer_name}</span>
+                        <span className="mono" style={{ fontSize: 13, color: "var(--acc)", fontWeight: 700 }}>{fmt(item.total_amount)}</span>
+                        <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{item.payment_date}</span>
+                        <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
+                        <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{mapping?.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({mapping?.debtor_id})</span></span>
+                        <button onClick={() => doResolve(item)} disabled={resolving === item.id} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer", opacity: resolving === item.id ? 0.6 : 1 }}>
+                          {resolving === item.id ? "처리중..." : "✓ 연결"}
+                        </button>
+                        <button onClick={() => doDiscard(item)} style={{ padding: "4px 8px", borderRadius: 5, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430", cursor: "pointer" }}>
+                          <I name="trash" size={11} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
+
+            {/* 학습된 입금자 매핑 규칙 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4, color: "#7c3aed" }}>학습된 입금자 규칙 ({learnedList.length}개)</div>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 10 }}>
+                수동 연결 이력이 저장되어, 앞으로 같은 입금자명은 자동 선택됩니다.
+              </div>
+              {learnedList.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--tm)", textAlign: "center", padding: 20 }}>아직 학습된 매핑이 없습니다</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {learnedList.map(m => (
+                    <div key={m.payer_name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--bg)", borderRadius: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13, minWidth: 120 }}>{m.payer_name}</span>
+                      <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
+                      <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{m.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({m.debtor_id})</span></span>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{m.resolved_count}회 적용</span>
+                      <button onClick={() => doDeleteMapping(m.payer_name)} style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}>삭제</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
       </div>
@@ -5875,7 +6025,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {sel && tab === "debtors" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {sel.name} ({sel.brandName})</span>}
             </span>
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <HeaderClock currentUser={currentUser} lastSaved={lastSaved} />
+            <div style={{ width: 1, height: 28, background: "var(--brd)" }} />
             <button onClick={() => loadData()} disabled={isRefreshing} title="데이터 새로고침" style={{ width: 36, height: 36, borderRadius: 8, background: isRefreshing ? "var(--acc)" : "var(--card)", color: isRefreshing ? "#fff" : "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: isRefreshing ? "default" : "pointer" }}>
               <span className={isRefreshing ? "spinning" : ""}><I name="refresh" size={16} /></span>
             </button>

@@ -102,6 +102,14 @@ try { db.exec("ALTER TABLE debtors ADD COLUMN resident_number TEXT"); } catch(e)
     tx();
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('cmp_hist_migrated', '1')").run();
   }
+
+  // Slack 수집 레코드 중 excel_brand NULL인 것 → 바로고(B) 로 1회 보정
+  // (다채널 도입 이전 단일 채널(바로고) 시절 수집된 레코드)
+  const brandFixed = db.prepare("SELECT value FROM kv_store WHERE key='pending_brand_backfill'").get();
+  if (!brandFixed) {
+    db.prepare("UPDATE pending_payments SET excel_brand = 'B' WHERE excel_brand IS NULL AND source = 'slack'").run();
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('pending_brand_backfill', '1')").run();
+  }
 }
 
 // 학습 매핑 테이블 (최초 실행 시 자동 생성)
@@ -147,7 +155,9 @@ app.get("/api/events", (req, res) => {
   res.flushHeaders();
   res.write(": connected\n\n");
   sseClients.add(res);
-  req.on("close", () => sseClients.delete(res));
+  // 25초마다 keepalive ping — 프록시/방화벽이 idle 연결을 끊는 것 방지
+  const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { clearInterval(ping); } }, 25000);
+  req.on("close", () => { clearInterval(ping); sseClients.delete(res); });
 });
 
 // ─── 헬스체크 ─────────────────────────────────────
