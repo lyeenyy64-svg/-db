@@ -7,7 +7,7 @@ const fs = require("fs");
 const path = require("path");
 
 const SUPPORTED_EXTS = new Set(["pdf","docx","doc","xlsx","xls","hwp","hwpx","jpg","jpeg","png","zip","pptx","ppt"]);
-const MAX_FILES = 8000;
+const MAX_FILES = 50000;
 const MAX_DEPTH = 8;
 
 /**
@@ -171,4 +171,30 @@ function findCandidates(rootPath, debtorName, guarantorNames = [], minScore = 20
   return { ok: true, candidates, totalScanned: allFiles.length };
 }
 
-module.exports = { findCandidates, parseFileName };
+/**
+ * 전체 파일 목록 반환 (점수 없이, 인덱스 구축용)
+ */
+function indexAllFiles(rootPath) {
+  if (!rootPath || !fs.existsSync(rootPath)) {
+    return { ok: false, error: "스캔 경로가 존재하지 않습니다", files: [], totalScanned: 0 };
+  }
+  const allFiles = [];
+  scanDir(rootPath, 0, allFiles);
+  const files = allFiles.map(filePath => {
+    const filename   = path.basename(filePath);
+    const relPath    = path.relative(rootPath, filePath);
+    const folderName = path.basename(path.dirname(filePath));
+    const parsed     = parseFileName(filename);
+    return {
+      filePath, filename, relPath, folderName,
+      parsedDate:       parsed.date       || null,
+      parsedDirection:  parsed.direction  || null,
+      parsedPersonName: parsed.personName || null,
+      docType:          parsed.docType    || filename,
+      ext:              parsed.ext,
+    };
+  });
+  return { ok: true, files, totalScanned: allFiles.length };
+}
+
+module.exports = { findCandidates, parseFileName, scoreFile, indexAllFiles };

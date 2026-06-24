@@ -28,7 +28,7 @@ const DEFAULT_CONFIG = {
   categories: ["장기채권", "추심의뢰", "회생/파산", "협의소송", "분할상환", "캐쉬상환", "완료", "대손채권"],
   collStatuses: ["추심진행", "추심보류", "완료", "대손채권"],
   assignees: ["준원", "덕진"],
-  debtCauses: ["본사", "웰컴", "물품대금"],
+  debtCauses: ["본사", "웰컴", "어뷰징", "물품대금"],
   hubNames: [
     "광진본점허브", "충남천안원콜성두7지점", "강서마곡허브", "동대문허브",
     "용산허브", "송파석촌허브", "인천서구허브", "부산해운대허브",
@@ -736,7 +736,7 @@ const LoginScreen = ({ onLogin, loginError }) => {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
       <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 48, width: 400, border: "1px solid var(--brd)", boxShadow: "0 8px 40px rgba(0,0,0,.08)" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}><span style={{ color: "var(--acc)" }}>BAROGO</span> DEBTFLOW</div>
+          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}><span style={{ color: "#3b82f6" }}>B</span><span style={{ color: "#f97316" }}>M</span><span style={{ color: "#8b5cf6" }}>D</span> DEBTFLOW</div>
           <div style={{ fontSize: 12, color: "var(--tm)" }}>NPL 채권관리 시스템</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1055,6 +1055,10 @@ export default function App() {
   const [legalSubTab, setLegalSubTab] = useState("지급명령");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
   const [expandedNav, setExpandedNav] = useState(() => new Set());
+  const [autoResidentNums, setAutoResidentNums] = useState({});
+  const [residentRevealed, setResidentRevealed] = useState(() => new Set());
+  const [autoCreditScores, setAutoCreditScores] = useState({});
+  const [autoSubrogationDates, setAutoSubrogationDates] = useState({});
   const PP = 25;
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -1136,6 +1140,41 @@ export default function App() {
   // 초기 로드
   useEffect(() => { loadData(); }, [loadData]);
 
+  // 채무자 선택 시 초본 PDF에서 주민등록번호 자동 추출 (entries: [{name, number}])
+  useEffect(() => {
+    if (!sel || autoResidentNums[sel.id] !== undefined) return;
+    setAutoResidentNums(prev => ({ ...prev, [sel.id]: null }));
+    fetch(`/api/debtor/${sel.id}/resident-number`)
+      .then(r => r.json())
+      .then(data => {
+        setAutoResidentNums(prev => ({ ...prev, [sel.id]: (data.ok && data.entries?.length) ? data.entries : [] }));
+      })
+      .catch(() => { setAutoResidentNums(prev => ({ ...prev, [sel.id]: [] })); });
+  }, [sel?.id]);
+
+  // 채무자 선택 시 CB종합보고서에서 신용점수 자동 추출
+  useEffect(() => {
+    if (!sel || autoCreditScores[sel.id] !== undefined) return;
+    setAutoCreditScores(prev => ({ ...prev, [sel.id]: null }));
+    fetch(`/api/debtor/${sel.id}/credit-score`)
+      .then(r => r.json())
+      .then(data => {
+        setAutoCreditScores(prev => ({ ...prev, [sel.id]: data.ok && data.entries?.length ? data.entries : [] }));
+      })
+      .catch(() => { setAutoCreditScores(prev => ({ ...prev, [sel.id]: [] })); });
+  }, [sel?.id]);
+
+  // 채무자 선택 시 대위변제증명서에서 대위변제일 자동 추출
+  useEffect(() => {
+    if (!sel || autoSubrogationDates[sel.id] !== undefined) return;
+    setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: null }));
+    fetch(`/api/debtor/${sel.id}/subrogation-date`)
+      .then(r => r.json())
+      .then(data => {
+        setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: data.ok && data.date ? { date: data.date, filename: data.filename } : false }));
+      })
+      .catch(() => { setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: false })); });
+  }, [sel?.id]);
 
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
   useEffect(() => {
@@ -1581,7 +1620,7 @@ export default function App() {
     if (brandFilter !== "전체") l = l.filter(d => d.brand === brandFilter);
     if (catFilter !== "전체") l = l.filter(d => d.category === catFilter);
     if (statusFilter !== "전체") l = l.filter(d => d.collectionStatus === statusFilter);
-    l.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
+    if (sort.f) l.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
 
     // 같은 이름+브랜드 or 유사 코드(1234 / 1234-1)인 채무자를 그룹핑
     const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
@@ -1619,7 +1658,14 @@ export default function App() {
   const tp = Math.ceil(filtered.length / PP);
   const paged = filtered.slice((page - 1) * PP, page * PP);
   useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter]);
-  const doSort = (f) => { if (sort.f === f) setSort({ f, d: sort.d === "asc" ? "desc" : "asc" }); else setSort({ f, d: "desc" }); };
+  const doSort = (f) => {
+    if (sort.f === f) {
+      if (sort.d === "desc") setSort({ f, d: "asc" });
+      else setSort({ f: null, d: null });
+    } else {
+      setSort({ f, d: "desc" });
+    }
+  };
 
   // ─── CSS ────────────────────────────────────────────────
   const CSS = `@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1698,7 +1744,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="분류"><select value={f.category} onChange={e => set("category", e.target.value)} style={inp}>{config.categories.map(c => <option key={c}>{c}</option>)}</select></Field>
           <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
           <Field label="채무자명"><input value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
-          <Field label="연락처" span={2}>
+          <Field label="연대보증인" span={2}><input value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
+          <Field label="연락처" span={3}>
             <div>
               {phoneItems.map((p, i) => (
                 <div key={i} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
@@ -1713,20 +1760,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="허브/지점"><AutoComplete value={f.hubName} onChange={v => set("hubName", v)} options={config.hubNames} placeholder="허브/지점 검색..." /></Field>
           <Field label="채무발생원인"><select value={f.debtCause} onChange={e => set("debtCause", e.target.value)} style={inp}>{config.debtCauses.map(c => <option key={c}>{c}</option>)}</select></Field>
           <Field label="추심상태"><select value={f.collectionStatus} onChange={e => set("collectionStatus", e.target.value)} style={inp}>{config.collStatuses.map(s => <option key={s}>{s}</option>)}</select></Field>
-          <Field label="원금 잔액"><input type="number" value={f.principalBalance} onChange={e => set("principalBalance", Number(e.target.value))} style={inp} /></Field>
-          <Field label="조정액(법무비용)"><input type="number" value={f.adjustment} onChange={e => set("adjustment", Number(e.target.value))} style={inp} /></Field>
-          <Field label="회수액"><input type="number" value={f.collectedAmount} onChange={e => set("collectedAmount", Number(e.target.value))} style={inp} /></Field>
+          <Field label="원금 잔액"><input type="text" value={f.principalBalance === 0 || f.principalBalance == null ? "" : Number(f.principalBalance).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("principalBalance", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
+          <Field label="조정액(법무비용)"><input type="text" value={f.adjustment === 0 || f.adjustment == null ? "" : Number(f.adjustment).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("adjustment", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
+          <Field label="회수액"><input type="text" value={f.collectedAmount === 0 || f.collectedAmount == null ? "" : Number(f.collectedAmount).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("collectedAmount", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
           <Field label="대여일자"><input type="date" value={f.loanDate} onChange={e => set("loanDate", e.target.value)} style={inp} /></Field>
           <Field label="집행권원 종류"><select value={f.execTitleType || ""} onChange={e => { set("execTitleType", e.target.value); set("execTitle", !!e.target.value); }} style={inp}><option value="">없음</option><option value="공정증서+집행문">공정증서+집행문</option><option value="지급명령결정정본">지급명령결정정본</option><option value="판결정본+집행문+송달증명원+확정증명원">판결정본+집행문+송달증명원+확정증명원</option></select></Field>
           <Field label="집행권원 PDF (OneDrive)"><input value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
-          <Field label="대위변제월"><input value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2024년 3월" /></Field>
-          <Field label="대위변제증명서 PDF (OneDrive)"><input value={f.subrogationDocUrl || ""} onChange={e => set("subrogationDocUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
-          <Field label="CB종합보고서 PDF (OneDrive)"><input value={f.creditReportUrl || ""} onChange={e => set("creditReportUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
-          <Field label="신용조회 일자"><input value={f.creditCheck || ""} onChange={e => set("creditCheck", e.target.value)} style={inp} placeholder="예: 2023.10.05" /></Field>
+          <Field label="대위변제일"><input value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
           <Field label="신용점수"><input value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
-          <Field label="주민등록초본 (날짜)"><input value={f.residentCopy || ""} onChange={e => set("residentCopy", e.target.value)} style={inp} placeholder="예: 2023.10.04" /></Field>
           <Field label="영업담당자"><input value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
-          <Field label="연대보증인"><input value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
           <Field label="주민등록번호" span={2}><input value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
           <Field label="주요사항" span={3}><textarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
         </div>
@@ -2451,11 +2493,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           return;
         }
         if (!r.candidates || r.candidates.length === 0) {
-          setDocModal({ error: `OneDrive에서 관련 서류를 찾지 못했습니다.\n\n확인사항:\n• 어드민 → 시스템 설정 → 서류 폴더 경로가 설정되어 있는지\n• 서버가 재시작되어 있는지\n• 파일명에 채무자명(앞 3글자)이 포함되어 있는지`, keywords });
+          setDocModal({ error: `OneDrive에 해당 서류 없음`, keywords });
           return;
         }
-        const best = r.candidates[0];
-        setDocModal({ url: `/api/documents/file?path=${encodeURIComponent(best.filePath)}`, filename: best.filename, candidates: r.candidates, debtorId, keywords });
+        setDocModal({ candidates: r.candidates, debtorId, keywords, debtorName });
       } catch (e) {
         clearTimeout(timer);
         const msg = e.name === "AbortError"
@@ -2513,20 +2554,37 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
             <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span>{(d.hubName || d.hubCode) && <span style={{ fontSize: 12, color: "var(--tm)" }}>{d.hubName}{d.hubCode ? ` (${d.hubCode})` : ""}</span>}<Badge status={d.category} /><Badge status={d.collectionStatus} /></div>
-              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}><span>{d.brandName}</span><span>{d.hubName} ({d.hubCode})</span><span>담당: {d.assignee}</span>{d.execTitle && (d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>)}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span><Badge status={d.category} /><Badge status={d.collectionStatus} /></div>
+              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}><span>{d.brandName}</span><span>담당: {d.assignee}</span>{d.execTitle && (d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>)}</div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {canEdit && <button onClick={() => setModal({ type: "debtor", data: d })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
+            {canEdit && <button onClick={() => {
+              const korKey = n => String(n || "").replace(/[^가-힣]/g, "").slice(0, 3);
+              const resEntries = autoResidentNums[d.id];
+              let autoNum = d.residentNumber || "";
+              if (!autoNum && Array.isArray(resEntries) && resEntries.length > 0) {
+                const main = resEntries.find(e => korKey(e.name) === korKey(d.name)) || resEntries[0];
+                if (main?.number) autoNum = main.number;
+              }
+              const scoreEntries = autoCreditScores[d.id];
+              let autoGrade = d.creditGrade || "";
+              if (!autoGrade && Array.isArray(scoreEntries) && scoreEntries.length > 0) {
+                const main = scoreEntries.find(e => korKey(e.name) === korKey(d.name)) || scoreEntries[0];
+                if (main?.score) autoGrade = main.score;
+              }
+              const subResult = autoSubrogationDates[d.id];
+              const autoSubDate = (subResult && subResult.date) ? subResult.date : d.subrogationMonth || "";
+              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate } });
+            }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
             <button onClick={() => setSel(null)} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
           </div>
         </div>
 
         {/* Financial */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
-          {[{ l: "원금 잔액(재무)", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "조정액(법무비용)", v: fmt(d.adjustment), c: "var(--warn)" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "최종잔액(재무)", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "최종잔액(법무)", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+          {[{ l: "원금잔액", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "재무기준잔액", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "법무기준잔액", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
         </div>
 
         {/* Info cards */}
@@ -2551,37 +2609,69 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {d.guarantors?.length > 0 ? d.guarantors.join(", ") : "-"}
               </span>
             </div>
-            {/* 주민등록번호 + 초본 스마트 검색 버튼 */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>주민등록번호</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: 12, fontWeight: 500 }}>{d.residentNumber || "-"}</span>
-                  {d.residentNumber && (() => {
-                    const clean = d.residentNumber.replace(/[-\s]/g, "");
-                    if (clean.length >= 7) {
-                      const yy = clean.slice(0,2), mm = clean.slice(2,4), dd = clean.slice(4,6);
-                      const g = parseInt(clean[6],10);
-                      const century = (g === 3 || g === 4) ? "20" : "19";
-                      return <div style={{ fontSize: 10, color: "var(--ts)" }}>{century}{yy}.{mm}.{dd} 생</div>;
-                    }
-                    return null;
-                  })()}
-                </div>
-                <button onClick={() => openDocModal(d.id, "초본", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
-                  초본 보기
-                </button>
+            {/* 주민등록번호 */}
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--tm)" }}>주민등록번호</span>
+                <button onClick={() => openDocModal(d.id, "주민등록초본,초본", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>초본 보기</button>
               </div>
+              {(() => {
+                const entries = autoResidentNums[d.id];
+                const allEntries = (() => {
+                  const base = Array.isArray(entries) ? entries : [];
+                  if (d.residentNumber && !base.find(e => e.name === d.name)) return [{ name: d.name, number: d.residentNumber, source: "db" }, ...base];
+                  return base;
+                })();
+                if (!allEntries.length) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{entries === null ? "조회 중..." : "없음"}</span>;
+                const renderEntry = (entry, idx) => {
+                  const clean = entry.number.replace(/[-\s]/g, "");
+                  const front = clean.slice(0, 6), back = clean.slice(6);
+                  const revealKey = `${d.id}_${idx}`;
+                  const isRevealed = residentRevealed.has(revealKey);
+                  const toggleReveal = () => setResidentRevealed(prev => { const next = new Set(prev); if (next.has(revealKey)) next.delete(revealKey); else next.add(revealKey); return next; });
+                  const yy = front.slice(0,2), mm = front.slice(2,4), dd2 = front.slice(4,6);
+                  const century = ([3,4].includes(parseInt(clean[6],10))) ? "20" : "19";
+                  return <div key={idx}>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
+                    <span style={{ fontSize: 11, fontWeight: 500 }}>{front}-<span onClick={toggleReveal} style={{ cursor: "pointer", color: isRevealed ? "inherit" : "#9ca3af", textDecoration: "underline dotted", userSelect: "none" }}>{isRevealed ? back : "*".repeat(back.length||7)}</span></span>
+                    <div style={{ fontSize: 10, color: "var(--ts)" }}>{century}{yy}.{mm}.{dd2} 생 {(() => { const by=parseInt(century+yy,10),bm=parseInt(mm,10),bd=parseInt(dd2,10),now=new Date(); const age=now.getFullYear()-by-(now.getMonth()+1<bm||(now.getMonth()+1===bm&&now.getDate()<bd)?1:0); return `(만 ${age}세)`; })()}</div>
+                  </div>;
+                };
+                if (allEntries.length === 1) return renderEntry(allEntries[0], 0);
+                const half = Math.ceil(allEntries.length / 2);
+                return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(0, half).map((e, i) => renderEntry(e, i))}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(half).map((e, i) => renderEntry(e, half+i))}</div>
+                </div>;
+              })()}
             </div>
             {/* 신용조회 */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>신용조회</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.creditCheck ? `${d.creditCheck}${d.creditGrade ? ` (${d.creditGrade})` : ""}` : "-"}</span>
-                <button onClick={() => openDocModal(d.id, "cb종합보고서,신용조회", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
-                  CB 보기
-                </button>
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--tm)" }}>신용조회</span>
+                <button onClick={() => openDocModal(d.id, "cb,신용정보,신용조회,신용보고", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>CB 보기</button>
               </div>
+              {(() => {
+                const scoreEntries = autoCreditScores[d.id];
+                const allEntries = (() => {
+                  const base = Array.isArray(scoreEntries) ? scoreEntries : [];
+                  if (d.creditGrade && !base.find(e => String(e.name||"").replace(/[^가-힣]/g,"").slice(0,3) === String(d.name||"").replace(/[^가-힣]/g,"").slice(0,3))) return [{ name: d.name, score: d.creditGrade, source: "db" }, ...base];
+                  return base;
+                })();
+                if (!allEntries.length) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{scoreEntries === null ? "조회 중..." : "없음"}</span>;
+                const renderScore = (entry, idx) => (
+                  <div key={idx}>
+                    <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: parseInt(entry.score)>=700 ? "var(--ok)" : parseInt(entry.score)>=400 ? "var(--warn)" : "var(--err)" }}>{entry.score}점</span>
+                  </div>
+                );
+                if (allEntries.length === 1) return renderScore(allEntries[0], 0);
+                const half = Math.ceil(allEntries.length / 2);
+                return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(0, half).map((e, i) => renderScore(e, i))}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(half).map((e, i) => renderScore(e, half+i))}</div>
+                </div>;
+              })()}
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
             <div style={{ padding: "7px 0" }}>
@@ -2620,8 +2710,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대위변제일</span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.subrogationMonth || "-"}</span>
-                {d.subrogationDocUrl && <a href={d.subrogationDocUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none" }}>열기</a>}
+                {(() => {
+                  const sub = autoSubrogationDates[d.id];
+                  const displayDate = (sub && sub.date) ? sub.date : d.subrogationMonth || null;
+                  return <span style={{ fontSize: 12, fontWeight: displayDate ? 500 : 400, color: displayDate ? "var(--tp)" : "var(--tm)" }}>
+                    {sub === null ? "조회 중..." : displayDate || "없음"}
+                  </span>;
+                })()}
+                <button onClick={() => openDocModal(d.id, "대위변제증명서,대위변제", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
+                  증명서 보기
+                </button>
               </div>
             </div>
             {/* 영업담당자 */}
@@ -2761,31 +2859,76 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {/* PDF 팝업 모달 */}
         {docModal && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDocModal(null)}>
-            <div style={{ background: "var(--card)", borderRadius: 14, width: "min(92vw, 1100px)", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: "var(--card)", borderRadius: 14, width: "min(92vw, 1100px)", height: docModal.selected ? "88vh" : undefined, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+              {/* 헤더 */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--brd)", flexShrink: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>
-                    {docModal.searching ? `OneDrive 검색 중...` : docModal.error ? "서류를 찾지 못했습니다" : docModal.filename}
-                  </span>
-                  {docModal.candidates && docModal.candidates.length > 1 && (
-                    <select style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", maxWidth: 280 }}
-                      onChange={e => setDocModal(p => ({ ...p, url: `/api/documents/file?path=${encodeURIComponent(e.target.value)}`, filename: docModal.candidates.find(c => c.filePath === e.target.value)?.filename || "" }))}>
-                      {docModal.candidates.map((c, i) => (
-                        <option key={i} value={c.filePath}>{c.filename} ({c.score}점)</option>
-                      ))}
-                    </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {docModal.selected && (
+                    <button onClick={() => setDocModal(p => ({ ...p, selected: null, url: null }))} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer", color: "var(--tp)", fontWeight: 500 }}>← 목록</button>
                   )}
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    {docModal.searching ? "OneDrive 검색 중..."
+                      : docModal.error ? "서류를 찾지 못했습니다"
+                      : docModal.selected ? docModal.selected.filename
+                      : `검색 결과 — ${docModal.debtorName || ""}${docModal.candidates ? ` (${docModal.candidates.length}건)` : ""}`}
+                  </span>
                 </div>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {docModal.url && <a href={docModal.url} target="_blank" rel="noopener noreferrer" style={{ padding: "5px 12px", borderRadius: 7, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, textDecoration: "none", border: "1px solid #3b82f630" }}>새 탭으로 열기</a>}
-                  {docModal.url && canEdit && <button onClick={async () => { const best = docModal.candidates?.[0]; if (!best) return; await linkDoc(best); showToast("서류 연결 완료"); }} style={{ padding: "5px 12px", borderRadius: 7, background: "#10b98118", color: "#059669", fontSize: 12, fontWeight: 600, border: "1px solid #10b98130" }}>연결서류에 저장</button>}
+                  {docModal.url && <button onClick={() => window.open(docModal.url, "_blank")} style={{ padding: "5px 12px", borderRadius: 7, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", cursor: "pointer" }}>새 탭으로 열기</button>}
                   <button onClick={() => setDocModal(null)} style={{ width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}><I name="close" size={15} /></button>
                 </div>
               </div>
-              <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
-                {docModal.searching && <div style={{ color: "var(--tm)", fontSize: 13 }}>OneDrive 검색 중...</div>}
-                {docModal.error && <div style={{ color: "var(--err)", fontSize: 13, textAlign: "center", whiteSpace: "pre-line", padding: 20 }}>{docModal.error}</div>}
-                {docModal.url && <iframe src={docModal.url} style={{ width: "100%", height: "100%", border: "none" }} title={docModal.filename} />}
+              {/* 본문 */}
+              <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                {docModal.searching && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--tm)", fontSize: 13 }}>OneDrive 검색 중...</div>}
+                {docModal.error && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--err)", fontSize: 13, textAlign: "center", whiteSpace: "pre-line", padding: 20 }}>{docModal.error}</div>}
+                {/* 후보 목록 */}
+                {!docModal.searching && !docModal.error && !docModal.selected && docModal.candidates && (() => {
+                  const getDocYear = pd => {
+                    if (!pd || pd.length < 2) return null;
+                    if (/^\d{6}/.test(pd)) return "20" + pd.slice(0, 2) + "년";
+                    if (/^\d{8}/.test(pd)) return pd.slice(0, 4) + "년";
+                    if (/^\d{4}/.test(pd)) return pd.slice(0, 4) + "년";
+                    return null;
+                  };
+                  const sorted = [...docModal.candidates].sort((a, b) => {
+                    const da = a.parsedDate || "", db2 = b.parsedDate || "";
+                    if (db2 !== da) return db2.localeCompare(da);
+                    return b.score - a.score;
+                  });
+                  const items = [];
+                  let lastYear;
+                  for (const c of sorted) {
+                    const year = getDocYear(c.parsedDate);
+                    if (year !== lastYear) {
+                      items.push({ header: true, year: year || "날짜 미상" });
+                      lastYear = year;
+                    }
+                    items.push({ header: false, c });
+                  }
+                  return (
+                    <div style={{ overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 6 }}>
+                      {items.map((item, i) => item.header ? (
+                        <div key={`y${i}`} style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", padding: i === 0 ? "0 4px 2px" : "10px 4px 2px", letterSpacing: 0.5, borderBottom: "1px solid var(--brd)" }}>{item.year}</div>
+                      ) : (
+                        <div key={`f${i}`}
+                          onClick={() => setDocModal(p => ({ ...p, selected: item.c, url: `/api/file-stream?path=${encodeURIComponent(item.c.filePath)}` }))}
+                          style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer" }}>
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>📄</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.c.filename}</div>
+                            <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>
+                              {item.c.folderName}{item.c.parsedDate ? ` · ${item.c.parsedDate}` : ""}{item.c.parsedDirection ? ` · ${item.c.parsedDirection}` : ""}
+                            </div>
+                          </div>
+                          <span style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, flexShrink: 0 }}>미리보기 →</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {/* 미리보기 */}
+                {docModal.url && <iframe src={docModal.url} style={{ flex: 1, border: "none" }} title={docModal.selected?.filename || ""} />}
               </div>
             </div>
           </div>
@@ -2810,7 +2953,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid var(--brd)", fontSize: 12 }}>
                   <span style={{ fontSize: 16 }}>{EXT_ICONS[doc.file_name.split(".").pop()?.toLowerCase()] || "📎"}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <a href={`/api/documents/file?path=${encodeURIComponent(doc.file_path)}`} target="_blank" rel="noopener noreferrer"
+                    <a href={`/api/file-stream?path=${encodeURIComponent(doc.file_path)}`} target="_blank" rel="noopener noreferrer"
                        style={{ fontWeight: 500, color: "var(--acc)", textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
                        title={doc.file_name}>
                       {doc.file_name}
@@ -2856,7 +2999,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                      <a href={`/api/documents/file?path=${encodeURIComponent(c.filePath)}`} target="_blank" rel="noopener noreferrer"
+                      <a href={`/api/file-stream?path=${encodeURIComponent(c.filePath)}`} target="_blank" rel="noopener noreferrer"
                          style={{ padding: "5px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", fontSize: 11, fontWeight: 500, border: "1px solid var(--brd)", textDecoration: "none" }}>
                         열기
                       </a>
@@ -5788,34 +5931,80 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const [rootPath, setRootPath] = useState("");
       const [saved, setSaved] = useState(null);
       const [saving, setSaving] = useState(false);
-      useEffect(() => {
+      const [indexStatus, setIndexStatus] = useState(null);
+      const [reindexing, setReindexing] = useState(false);
+
+      const loadStatus = () => {
         fetch("/api/admin/docs-config").then(r => r.json()).then(d => { setSaved(d.rootPath || ""); setRootPath(d.rootPath || ""); }).catch(() => {});
-      }, []);
+        fetch("/api/admin/index-status").then(r => r.json()).then(d => setIndexStatus(d)).catch(() => {});
+      };
+      useEffect(() => { loadStatus(); }, []);
+
       const handleSave = async () => {
         if (!rootPath.trim()) return;
+        if (rootPath.trim().startsWith("http")) { showToast("URL이 아닌 로컬 폴더 경로를 입력해주세요 (예: C:\\Users\\...)", "err"); return; }
         setSaving(true);
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
         try {
-          await fetch("/api/admin/docs-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rootPath: rootPath.trim() }) });
+          await fetch("/api/admin/docs-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rootPath: rootPath.trim() }), signal: ctrl.signal });
+          clearTimeout(timer);
           setSaved(rootPath.trim()); showToast("서류 폴더 경로 저장 완료");
-        } catch { showToast("저장 실패", "err"); }
+        } catch (e) {
+          clearTimeout(timer);
+          showToast(e.name === "AbortError" ? "저장 시간 초과 — 서버가 실행 중인지 확인해주세요" : "저장 실패", "err");
+        }
         setSaving(false);
       };
+
+      const handleReindex = async () => {
+        if (!saved) { showToast("먼저 폴더 경로를 저장해주세요", "err"); return; }
+        setReindexing(true);
+        showToast("인덱스 구축 시작 — 파일 수에 따라 1~3분 소요됩니다");
+        try {
+          const r = await fetch("/api/admin/reindex", { method: "POST" }).then(x => x.json());
+          if (r.ok) { showToast(`인덱스 완료 — ${r.indexed.toLocaleString()}개 파일 등록`); loadStatus(); }
+          else showToast(`인덱스 실패: ${r.error}`, "err");
+        } catch { showToast("인덱스 실패 — 서버 연결 확인", "err"); }
+        setReindexing(false);
+      };
+
       return (
-        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>서류 폴더 경로 설정</div>
-          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 16, lineHeight: 1.6 }}>
-            채무자 서류가 저장된 OneDrive 폴더의 <b>서버 로컬 경로</b>를 입력하세요.<br />
-            예: <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>C:\Users\hjbae\OneDrive - 바로고\법무실 공유폴더(채권추심)</code>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>서류 폴더 경로 설정</div>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 16, lineHeight: 1.6 }}>
+              채무자 서류가 저장된 OneDrive 폴더의 <b>서버 로컬 경로</b>를 입력하세요.<br />
+              예: <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>C:/Users/hjbae/OneDrive - 바로고</code>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input value={rootPath} onChange={e => setRootPath(e.target.value)} placeholder="폴더 경로 입력..." style={{ flex: 1 }} />
+              <button onClick={handleSave} disabled={saving || !rootPath.trim()} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "저장 중..." : "저장"}
+              </button>
+            </div>
+            {saved && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ok)", display: "flex", alignItems: "center", gap: 6 }}>
+              <I name="check" size={13} /> 현재 경로: <span style={{ color: "var(--tp)", fontFamily: "monospace" }}>{saved}</span>
+            </div>}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input value={rootPath} onChange={e => setRootPath(e.target.value)} placeholder="폴더 경로 입력..." style={{ flex: 1 }} />
-            <button onClick={handleSave} disabled={saving || !rootPath.trim()} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
-              {saving ? "저장 중..." : "저장"}
+
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>파일 인덱스</div>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14, lineHeight: 1.6 }}>
+              OneDrive 파일을 DB에 미리 인덱싱해두면 신용조회·서류 검색이 빨라집니다.<br />
+              새 파일을 추가하거나 폴더 경로를 변경한 후 재구성을 눌러주세요.
+            </div>
+            {indexStatus && (
+              <div style={{ marginBottom: 12, fontSize: 12, color: "var(--tm)" }}>
+                {indexStatus.count > 0
+                  ? <span style={{ color: "var(--ok)" }}>✓ {indexStatus.count.toLocaleString()}개 파일 인덱싱됨 · {indexStatus.lastAt?.slice(0,16)}</span>
+                  : <span style={{ color: "var(--err)" }}>인덱스 없음 — 아래 버튼을 눌러 구축하세요</span>}
+              </div>
+            )}
+            <button onClick={handleReindex} disabled={reindexing || !saved} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 8, background: reindexing ? "var(--bg)" : "#3b82f6", color: reindexing ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: reindexing ? "1px solid var(--brd)" : "none", opacity: !saved ? 0.4 : 1 }}>
+              {reindexing ? <><span style={{ display: "inline-block", animation: "spin 1s linear infinite" }}>⟳</span> 인덱싱 중 (1~3분)...</> : "🔄 인덱스 재구성"}
             </button>
           </div>
-          {saved && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ok)", display: "flex", alignItems: "center", gap: 6 }}>
-            <I name="check" size={13} /> 현재 경로: <span style={{ color: "var(--tp)", fontFamily: "monospace" }}>{saved}</span>
-          </div>}
         </div>
       );
     };
@@ -6154,7 +6343,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
   ];
   const navTabs = [
-    { k: "dashboard",       l: "대시보드",     i: "dashboard" },
+    { k: "dashboard",       l: "종합현황",     i: "dashboard" },
     { k: "debtors",         l: "채무자 관리",  i: "users" },
     { k: "payments",        l: "입금내역",     i: "won" },
     { k: "installments",    l: "분할상환",     i: "calendar" },
@@ -6176,7 +6365,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <style>{CSS}</style>
       {/* Sidebar */}
       <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "var(--acc)" }}>BAROGO</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
+        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "#3b82f6" }}>B</span><span style={{ color: "#f97316" }}>M</span><span style={{ color: "#8b5cf6" }}>D</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
         <div style={{ flex: 1, padding: "8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
           {navTabs.map(t => {
             const isExpanded = t.sub && expandedNav.has(t.k);

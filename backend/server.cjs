@@ -10,6 +10,7 @@ const cors = require("cors");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const path = require("path");
+let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = null; }
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
@@ -31,6 +32,21 @@ db.exec(`
     value TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
+  CREATE TABLE IF NOT EXISTS file_index (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT UNIQUE NOT NULL,
+    filename TEXT NOT NULL,
+    folder_name TEXT,
+    rel_path TEXT,
+    parsed_date TEXT,
+    parsed_direction TEXT,
+    parsed_person_name TEXT,
+    doc_type TEXT,
+    ext TEXT,
+    indexed_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_index_person ON file_index(parsed_person_name);
+  CREATE INDEX IF NOT EXISTS idx_file_index_filename ON file_index(filename);
   CREATE TABLE IF NOT EXISTS installment_schedules (
     id TEXT PRIMARY KEY,
     plan_id TEXT NOT NULL REFERENCES installment_plans(id) ON DELETE CASCADE,
@@ -1322,6 +1338,77 @@ app.get("/api/documents/:debtorId", (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 파일 인덱스 기반 후보 검색 (빠름)
+function findCandidatesFromIndex(debtorName, guarantorNames, minScore, keywords) {
+  let rows = db.prepare("SELECT * FROM file_index").all();
+  if (keywords && keywords.length > 0) {
+    rows = rows.filter(r => {
+      const fn = r.filename.toLowerCase();
+      const dt = (r.doc_type || "").toLowerCase();
+      return keywords.some(kw => fn.includes(kw) || dt.includes(kw));
+    });
+  }
+  const candidates = [];
+  for (const row of rows) {
+    const parsed = { personName: row.parsed_person_name };
+    const { score, matchReason, matchedName, matchType } = fileScanner.scoreFile(
+      parsed, row.filename, row.rel_path || "", debtorName, guarantorNames
+    );
+    if (score >= minScore) {
+      candidates.push({
+        filePath: row.file_path, filename: row.filename, relPath: row.rel_path,
+        folderName: row.folder_name, parsedDate: row.parsed_date,
+        parsedDirection: row.parsed_direction, parsedPersonName: row.parsed_person_name,
+        docType: row.doc_type, ext: row.ext, score, matchReason, matchedName, matchType,
+      });
+    }
+  }
+  candidates.sort((a, b) => b.score !== a.score ? b.score - a.score : (b.parsedDate || "").localeCompare(a.parsedDate || ""));
+  return { ok: true, candidates, totalScanned: rows.length, fromIndex: true };
+}
+
+// 인덱스 상태 조회
+app.get("/api/admin/index-status", (req, res) => {
+  try {
+    const row = db.prepare("SELECT COUNT(*) as cnt, MAX(indexed_at) as lastAt FROM file_index").get();
+    res.json({ count: row.cnt, lastAt: row.lastAt });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 파일 인덱스 재구성 (워커 스레드에서 실행 — 이벤트 루프 비차단)
+app.post("/api/admin/reindex", (req, res) => {
+  try {
+    const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
+    if (!rootRow || !rootRow.value) return res.status(400).json({ ok: false, error: "스캔 폴더 경로가 설정되지 않았습니다" });
+
+    const { Worker } = require("worker_threads");
+    const scannerPath = require.resolve("./fileScanner.cjs");
+    const rootPath    = rootRow.value;
+
+    const workerCode = `
+      const { workerData, parentPort } = require('worker_threads');
+      const { indexAllFiles } = require(workerData.scannerPath);
+      parentPort.postMessage(indexAllFiles(workerData.rootPath));
+    `;
+    const worker = new Worker(workerCode, { eval: true, workerData: { scannerPath, rootPath } });
+    const timer  = setTimeout(() => { worker.terminate(); res.status(408).json({ ok: false, error: "인덱싱 시간 초과 (3분)" }); }, 180000);
+
+    worker.on("message", result => {
+      clearTimeout(timer);
+      if (!result.ok) return res.status(500).json(result);
+      const ins = db.prepare(`INSERT OR REPLACE INTO file_index
+        (file_path,filename,folder_name,rel_path,parsed_date,parsed_direction,parsed_person_name,doc_type,ext)
+        VALUES (?,?,?,?,?,?,?,?,?)`);
+      db.transaction(() => {
+        db.prepare("DELETE FROM file_index").run();
+        for (const f of result.files) ins.run(f.filePath,f.filename,f.folderName,f.relPath,f.parsedDate,f.parsedDirection,f.parsedPersonName,f.docType,f.ext);
+      })();
+      res.json({ ok: true, indexed: result.files.length });
+    });
+    worker.on("error", err => { clearTimeout(timer); res.status(500).json({ ok: false, error: err.message }); });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // 채무자별 파일 후보 스캔
 app.get("/api/documents/:debtorId/scan", (req, res) => {
   try {
@@ -1333,10 +1420,14 @@ app.get("/api/documents/:debtorId/scan", (req, res) => {
 
     const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(debtor.id).map(r => r.name);
     const minScore = parseInt(req.query.minScore, 10) || 20;
-
-    // keywords: 콤마 구분 복수 키워드, OR 조건으로 필터 (예: "cb종합보고서,신용조회")
-    const kwParam = req.query.keywords || req.query.keyword || "";
+    const kwParam  = req.query.keywords || req.query.keyword || "";
     const keywords = kwParam.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
+
+    // 인덱스가 있으면 DB에서 조회 (빠름), 없으면 실시간 스캔 (느림)
+    const indexCount = db.prepare("SELECT COUNT(*) as c FROM file_index").get();
+    if (indexCount.c > 0) {
+      return res.json(findCandidatesFromIndex(debtor.name, guarantors, minScore, keywords));
+    }
 
     let result = fileScanner.findCandidates(rootRow.value, debtor.name, guarantors, minScore);
     if (result.ok && keywords.length > 0) {
@@ -1372,7 +1463,7 @@ app.delete("/api/documents/link/:id", (req, res) => {
 });
 
 // 파일 스트리밍 (보안: 설정된 루트 경로 내부만 허용)
-app.get("/api/documents/file", (req, res) => {
+app.get("/api/file-stream", (req, res) => {
   try {
     const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
     const rootPath = rootRow ? rootRow.value : null;
@@ -1400,6 +1491,180 @@ app.get("/api/documents/file", (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`);
     fs.createReadStream(normalizedFile).pipe(res);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── 주민등록번호 자동 추출 (초본 PDF → Python Windows OCR) ──
+const { spawn } = require("child_process");
+const OCR_SCRIPT = path.join(__dirname, "ocr_resident.py");
+const OCR_CREDIT_SCRIPT = path.join(__dirname, "ocr_credit_score.py");
+const OCR_SUBROGATION_SCRIPT = path.join(__dirname, "ocr_subrogation_date.py");
+
+// pythonw.exe = GUI subsystem, never opens a console window
+const PYTHON_BIN = "C:\\Users\\hjbae\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe";
+
+function ocrPdfForResident(pdfPath) {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    let out = "";
+    proc.stdout.on("data", d => { out += d.toString(); });
+    proc.on("close", () => {
+      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+    });
+    proc.on("error", () => resolve({ ok: false }));
+  });
+}
+
+function ocrPdfForSubrogationDate(pdfPath) {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON_BIN, [OCR_SUBROGATION_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    let out = "";
+    proc.stdout.on("data", d => { out += d.toString(); });
+    proc.on("close", () => {
+      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+    });
+    proc.on("error", () => resolve({ ok: false }));
+  });
+}
+
+function ocrPdfForCreditScore(pdfPath) {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON_BIN, [OCR_CREDIT_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    let out = "";
+    proc.stdout.on("data", d => { out += d.toString(); });
+    proc.on("close", () => {
+      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+    });
+    proc.on("error", () => resolve({ ok: false }));
+  });
+}
+
+function korName3(name) {
+  const kor = String(name || "").replace(/[^가-힣]/g, "");
+  return kor.length >= 2 ? kor.slice(0, 3) : null;
+}
+
+app.get("/api/debtor/:id/resident-number", async (req, res) => {
+  try {
+    const debtor = db.prepare(
+      `SELECT d.name, d.resident_number,
+              (SELECT GROUP_CONCAT(g.name, ',') FROM debtor_guarantors g WHERE g.debtor_id = d.id) AS guarantors_str
+       FROM debtors d WHERE d.id = ?`
+    ).get(req.params.id);
+    if (!debtor) return res.json({ ok: false, entries: [] });
+
+    const entries = [];
+
+    // 주채무자
+    if (debtor.resident_number) {
+      entries.push({ name: debtor.name, number: debtor.resident_number, source: "db" });
+    } else {
+      const kor = korName3(debtor.name);
+      if (kor) {
+        const rows = db.prepare(
+          `SELECT file_path, filename FROM file_index
+           WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+           AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
+           AND ext = 'pdf'
+           ORDER BY parsed_date DESC LIMIT 5`
+        ).all(`%${kor}%`, `%${kor}%`);
+        for (const c of rows) {
+          const r = await ocrPdfForResident(c.file_path);
+          if (r.ok && r.number) { entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename }); break; }
+        }
+      }
+    }
+
+    // 연대보증인
+    const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
+    for (const gName of guarantors) {
+      const kor = korName3(gName);
+      if (!kor) continue;
+      const rows = db.prepare(
+        `SELECT file_path, filename FROM file_index
+         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+         AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
+         AND ext = 'pdf'
+         ORDER BY parsed_date DESC LIMIT 3`
+      ).all(`%${kor}%`, `%${kor}%`);
+      for (const c of rows) {
+        const r = await ocrPdfForResident(c.file_path);
+        if (r.ok && r.number) { entries.push({ name: gName, number: r.number, source: "ocr", filename: c.filename }); break; }
+      }
+    }
+
+    res.json({ ok: true, entries });
+  } catch (e) { res.status(500).json({ ok: false, entries: [], error: e.message }); }
+});
+
+// ─── 신용점수 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
+app.get("/api/debtor/:id/credit-score", async (req, res) => {
+  try {
+    const debtor = db.prepare(
+      `SELECT d.name, d.credit_grade,
+              (SELECT GROUP_CONCAT(g.name, ',') FROM debtor_guarantors g WHERE g.debtor_id = d.id) AS guarantors_str
+       FROM debtors d WHERE d.id = ?`
+    ).get(req.params.id);
+    if (!debtor) return res.json({ ok: false, entries: [] });
+
+    const entries = [];
+
+    const findScore = async (name) => {
+      const kor = korName3(name);
+      if (!kor) return null;
+      const rows = db.prepare(
+        `SELECT file_path, filename FROM file_index
+         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
+         AND ext = 'pdf'
+         ORDER BY parsed_date DESC LIMIT 5`
+      ).all(`%${kor}%`, `%${kor}%`);
+      for (const c of rows) {
+        const r = await ocrPdfForCreditScore(c.file_path);
+        if (r.ok && r.score) return { score: r.score, filename: c.filename };
+      }
+      return null;
+    };
+
+    // 주채무자
+    const mainResult = await findScore(debtor.name);
+    if (mainResult) entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
+
+    // 연대보증인
+    const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
+    for (const gName of guarantors) {
+      const r = await findScore(gName);
+      if (r) entries.push({ name: gName, ...r, source: "ocr" });
+    }
+
+    res.json({ ok: true, entries });
+  } catch (e) { res.status(500).json({ ok: false, entries: [], error: e.message }); }
+});
+
+// ─── 대위변제일 자동 추출 (대위변제증명서 PDF → Python Windows OCR) ──
+app.get("/api/debtor/:id/subrogation-date", async (req, res) => {
+  try {
+    const debtor = db.prepare("SELECT name FROM debtors WHERE id = ?").get(req.params.id);
+    if (!debtor) return res.json({ ok: false, date: null });
+
+    const kor = korName3(debtor.name);
+    if (!kor) return res.json({ ok: false, date: null });
+
+    const rows = db.prepare(
+      `SELECT file_path, filename FROM file_index
+       WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+       AND (LOWER(doc_type) LIKE '%대위변제%' OR LOWER(filename) LIKE '%대위변제%')
+       AND ext IN ('pdf', 'hwp', 'hwpx')
+       ORDER BY parsed_date DESC LIMIT 5`
+    ).all(`%${kor}%`, `%${kor}%`);
+
+    for (const c of rows) {
+      if (!c.file_path.toLowerCase().endsWith('.pdf')) continue;
+      const r = await ocrPdfForSubrogationDate(c.file_path);
+      if (r.ok && r.date) return res.json({ ok: true, date: r.date, filename: c.filename });
+    }
+
+    res.json({ ok: false, date: null });
+  } catch (e) { res.status(500).json({ ok: false, date: null, error: e.message }); }
 });
 
 app.use(express.static(path.join(__dirname, "../dist")));
