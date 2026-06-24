@@ -33,37 +33,59 @@ function parseFileName(filename) {
 }
 
 /**
+ * 이름 정규화: 숫자·특수문자 제거 후 앞 3글자 한글만 추출
+ * 예) "주성호1" → "주성호", "김철수10" → "김철수"
+ */
+function normalizeKorean3(name) {
+  if (!name) return null;
+  const korOnly = String(name).replace(/[^가-힣]/g, "");
+  return korOnly.length >= 2 ? korOnly.slice(0, 3) : null;
+}
+
+/**
  * 파일 하나를 채무자+보증인 목록에 대해 점수 산정
  *
- * 점수 기준:
- *   100 — 파일명 인물명 토큰이 채무자명과 정확 일치
- *    75 — 파일명 인물명 토큰이 보증인명과 정확 일치
- *    65 — 파일명 어딘가에 채무자명 포함
- *    45 — 파일명 어딘가에 보증인명 포함
+ * 점수 기준 (정확명):
+ *   100 — 파일명 인물명 토큰 = 채무자명 정확 일치
+ *    90 — 파일명 인물명 토큰 = 채무자명 정규화(앞3자) 일치
+ *    75 — 파일명 인물명 토큰 = 보증인명 정확 일치
+ *    65 — 파일명에 채무자명 포함
+ *    55 — 파일명에 채무자 정규화명 포함
+ *    45 — 파일명에 보증인명 포함
  *    30 — 폴더명에 채무자명 포함
+ *    25 — 폴더명에 채무자 정규화명 포함
  *    15 — 폴더명에 보증인명 포함
  */
 function scoreFile(parsed, filename, relFolderPath, debtorName, guarantorNames) {
+  const normDebtor = normalizeKorean3(debtorName);
+
   const targets = [
-    { name: debtorName, type: "primary" },
-    ...(guarantorNames || []).map(g => ({ name: g, type: "guarantor" })),
+    { name: debtorName, norm: false, type: "primary" },
+    ...(normDebtor && normDebtor !== debtorName ? [{ name: normDebtor, norm: true, type: "primary" }] : []),
+    ...(guarantorNames || []).flatMap(g => {
+      const ng = normalizeKorean3(g);
+      return [
+        { name: g, norm: false, type: "guarantor" },
+        ...(ng && ng !== g ? [{ name: ng, norm: true, type: "guarantor" }] : []),
+      ];
+    }),
   ].filter(t => t.name && String(t.name).trim());
 
   let bestScore = 0, bestReason = "", bestName = null, bestType = null;
 
-  for (const { name, type } of targets) {
+  for (const { name, norm, type } of targets) {
     const ip = type === "primary";
     let score = 0, reason = "";
 
     if (parsed.personName === name) {
-      score = ip ? 100 : 75;
-      reason = `파일명 인물명 토큰이 ${ip ? "채무자" : "보증인"}명과 정확 일치`;
+      score = ip ? (norm ? 90 : 100) : 75;
+      reason = `파일명 인물명 토큰 = ${ip ? "채무자" : "보증인"}명${norm ? " (정규화)" : ""} 정확 일치`;
     } else if (filename.includes(name)) {
-      score = ip ? 65 : 45;
-      reason = `파일명에 ${ip ? "채무자" : "보증인"}명 포함`;
+      score = ip ? (norm ? 55 : 65) : 45;
+      reason = `파일명에 ${ip ? "채무자" : "보증인"}명${norm ? " (정규화)" : ""} 포함`;
     } else if (relFolderPath.includes(name)) {
-      score = ip ? 30 : 15;
-      reason = `폴더명에 ${ip ? "채무자" : "보증인"}명 포함`;
+      score = ip ? (norm ? 25 : 30) : 15;
+      reason = `폴더명에 ${ip ? "채무자" : "보증인"}명${norm ? " (정규화)" : ""} 포함`;
     }
 
     if (score > bestScore) {

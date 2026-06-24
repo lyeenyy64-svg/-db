@@ -1333,13 +1333,18 @@ app.get("/api/documents/:debtorId/scan", (req, res) => {
 
     const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(debtor.id).map(r => r.name);
     const minScore = parseInt(req.query.minScore, 10) || 20;
-    const keyword = req.query.keyword ? req.query.keyword.toLowerCase() : null;
+
+    // keywords: 콤마 구분 복수 키워드, OR 조건으로 필터 (예: "cb종합보고서,신용조회")
+    const kwParam = req.query.keywords || req.query.keyword || "";
+    const keywords = kwParam.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
 
     let result = fileScanner.findCandidates(rootRow.value, debtor.name, guarantors, minScore);
-    if (result.ok && keyword) {
-      result.candidates = result.candidates.filter(c =>
-        c.filename.toLowerCase().includes(keyword) || c.docType.toLowerCase().includes(keyword)
-      );
+    if (result.ok && keywords.length > 0) {
+      result.candidates = result.candidates.filter(c => {
+        const fn = c.filename.toLowerCase();
+        const dt = (c.docType || "").toLowerCase();
+        return keywords.some(kw => fn.includes(kw) || dt.includes(kw));
+      });
     }
     res.json(result);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

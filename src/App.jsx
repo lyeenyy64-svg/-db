@@ -2436,17 +2436,33 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [scanning, setScanning] = useState(false);
     const [docModal, setDocModal] = useState(null); // { url, filename, candidates }
 
-    const openDocModal = async (debtorId, keyword, debtorName) => {
-      setDocModal({ searching: true, keyword, debtorName });
+    const openDocModal = async (debtorId, keywords, debtorName) => {
+      setDocModal({ searching: true, keywords, debtorName });
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 25000);
       try {
-        const r = await fetch(`/api/documents/${debtorId}/scan?keyword=${encodeURIComponent(keyword)}&minScore=20`).then(x => x.json());
-        if (!r.ok) { setDocModal({ error: r.error, keyword }); return; }
+        const r = await fetch(
+          `/api/documents/${debtorId}/scan?keywords=${encodeURIComponent(keywords)}&minScore=20`,
+          { signal: ctrl.signal }
+        ).then(x => x.json());
+        clearTimeout(timer);
+        if (!r.ok) {
+          setDocModal({ error: r.error || "스캔 실패", keywords });
+          return;
+        }
         if (!r.candidates || r.candidates.length === 0) {
-          setDocModal({ error: `"${keyword}" 관련 서류를 OneDrive에서 찾지 못했습니다.\n관리자 > 서류 폴더 경로가 설정되었는지 확인해주세요.`, keyword }); return;
+          setDocModal({ error: `OneDrive에서 관련 서류를 찾지 못했습니다.\n\n확인사항:\n• 어드민 → 시스템 설정 → 서류 폴더 경로가 설정되어 있는지\n• 서버가 재시작되어 있는지\n• 파일명에 채무자명(앞 3글자)이 포함되어 있는지`, keywords });
+          return;
         }
         const best = r.candidates[0];
-        setDocModal({ url: `/api/documents/file?path=${encodeURIComponent(best.filePath)}`, filename: best.filename, candidates: r.candidates, debtorId, keyword });
-      } catch { setDocModal({ error: "서버 연결 실패", keyword }); }
+        setDocModal({ url: `/api/documents/file?path=${encodeURIComponent(best.filePath)}`, filename: best.filename, candidates: r.candidates, debtorId, keywords });
+      } catch (e) {
+        clearTimeout(timer);
+        const msg = e.name === "AbortError"
+          ? "검색 시간 초과 (25초).\n서버가 실행 중인지, 폴더 경로가 설정되어 있는지 확인해주세요."
+          : `연결 실패: ${e.message}`;
+        setDocModal({ error: msg, keywords });
+      }
     };
 
     useEffect(() => {
@@ -2562,7 +2578,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>신용조회</span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 500 }}>{d.creditCheck ? `${d.creditCheck}${d.creditGrade ? ` (${d.creditGrade})` : ""}` : "-"}</span>
-                <button onClick={() => openDocModal(d.id, "신용", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
+                <button onClick={() => openDocModal(d.id, "cb종합보고서,신용조회", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
                   CB 보기
                 </button>
               </div>
@@ -2749,7 +2765,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--brd)", flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>
-                    {docModal.searching ? `"${docModal.keyword}" 검색 중...` : docModal.error ? "서류 없음" : docModal.filename}
+                    {docModal.searching ? `OneDrive 검색 중...` : docModal.error ? "서류를 찾지 못했습니다" : docModal.filename}
                   </span>
                   {docModal.candidates && docModal.candidates.length > 1 && (
                     <select style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", maxWidth: 280 }}
