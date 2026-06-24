@@ -2433,12 +2433,49 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     ];
     const debtorInstPlan = (data.installmentPlans || []).find(p => p.debtorId === d.id);
     const debtorInstScheds = debtorInstPlan ? (debtorInstPlan.schedules || []) : [];
+    const [linkedDocs, setLinkedDocs] = useState(null);
+    const [scanResult, setScanResult] = useState(null);
+    const [scanning, setScanning] = useState(false);
+
+    useEffect(() => {
+      if (detailTab === "연결서류") {
+        fetch(`/api/documents/${d.id}`).then(r => r.json()).then(rows => setLinkedDocs(rows)).catch(() => setLinkedDocs([]));
+      }
+    }, [detailTab, d.id]);
+
+    const runDocScan = async () => {
+      setScanning(true); setScanResult(null);
+      try {
+        const r = await fetch(`/api/documents/${d.id}/scan`).then(x => x.json());
+        setScanResult(r);
+      } catch { setScanResult({ ok: false, error: "스캔 실패" }); }
+      setScanning(false);
+    };
+
+    const linkDoc = async (cand) => {
+      await fetch(`/api/documents/${d.id}/link`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filePath: cand.filePath, fileName: cand.filename, docLabel: cand.docType, matchType: cand.matchType, matchedName: cand.matchedName, linkedBy: currentUser?.name }) });
+      const rows = await fetch(`/api/documents/${d.id}`).then(r => r.json());
+      setLinkedDocs(rows);
+      setScanResult(prev => prev ? { ...prev, candidates: prev.candidates.filter(c => c.filePath !== cand.filePath) } : prev);
+      showToast("서류 연결 완료");
+    };
+
+    const unlinkDoc = async (docId) => {
+      if (!confirm("서류 연결을 해제하시겠습니까?")) return;
+      await fetch(`/api/documents/link/${docId}`, { method: "DELETE" });
+      setLinkedDocs(prev => prev.filter(x => x.id !== docId));
+      showToast("연결 해제 완료");
+    };
+
+    const EXT_ICONS = { pdf: "📄", docx: "📝", doc: "📝", xlsx: "📊", xls: "📊", hwp: "📋", hwpx: "📋", jpg: "🖼", jpeg: "🖼", png: "🖼", zip: "🗜" };
+
     const dtabs = [
       { k: "히스토리", count: allHistory.length },
       { k: "입금내역", count: debtorPayments.length },
       { k: "분할상환", count: debtorInstScheds.length },
       { k: "법적절차내역", count: debtorLegalAll.length },
       { k: "회생파산", count: debtorRehabs.length },
+      { k: "연결서류", count: linkedDocs ? linkedDocs.length : 0 },
     ];
 
     return (
@@ -2684,6 +2721,87 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {detailTab === "회생파산" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
           {debtorRehabs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>회생/파산 내역 없음</div>}
+        </div>}
+
+        {detailTab === "연결서류" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* 연결된 서류 목록 */}
+          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>연결된 서류 <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>({linkedDocs ? linkedDocs.length : 0})</span></div>
+              {canEdit && <button onClick={runDocScan} disabled={scanning} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 12, fontWeight: 600, opacity: scanning ? 0.6 : 1 }}>
+                {scanning ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> 스캔 중...</> : <><span>🔍</span> OneDrive 스캔</>}
+              </button>}
+            </div>
+            {!linkedDocs && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>}
+            {linkedDocs && linkedDocs.length === 0 && !scanResult && <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>
+              연결된 서류가 없습니다.<br />
+              <span style={{ fontSize: 11, color: "var(--ts)" }}>위의 'OneDrive 스캔' 버튼을 눌러 자동으로 찾아보세요.</span>
+            </div>}
+            {linkedDocs && linkedDocs.length > 0 && <div style={{ display: "flex", flexDirection: "column" }}>
+              {linkedDocs.map(doc => (
+                <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid var(--brd)", fontSize: 12 }}>
+                  <span style={{ fontSize: 16 }}>{EXT_ICONS[doc.file_name.split(".").pop()?.toLowerCase()] || "📎"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a href={`/api/documents/file?path=${encodeURIComponent(doc.file_path)}`} target="_blank" rel="noopener noreferrer"
+                       style={{ fontWeight: 500, color: "var(--acc)", textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                       title={doc.file_name}>
+                      {doc.file_name}
+                    </a>
+                    <div style={{ display: "flex", gap: 8, marginTop: 2, color: "var(--ts)", fontSize: 10 }}>
+                      {doc.match_type === "guarantor" && <span style={{ color: "#f59e0b", fontWeight: 600 }}>보증인 ({doc.matched_name})</span>}
+                      {doc.linked_by && <span>연결: {doc.linked_by}</span>}
+                      <span>{doc.linked_at?.slice(0, 10)}</span>
+                    </div>
+                  </div>
+                  {canEdit && <button onClick={() => unlinkDoc(doc.id)} style={{ background: "none", color: "var(--err)", padding: 4, flexShrink: 0 }} title="연결 해제"><I name="trash" size={13} /></button>}
+                </div>
+              ))}
+            </div>}
+          </div>
+
+          {/* 스캔 결과 - 후보 목록 */}
+          {scanResult && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                스캔 결과
+                {scanResult.ok && <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>후보 {scanResult.candidates?.length}건 / 전체 {scanResult.totalScanned}개 파일 검색</span>}
+              </div>
+              <button onClick={() => setScanResult(null)} style={{ background: "none", color: "var(--tm)", padding: 4 }}><I name="close" size={14} /></button>
+            </div>
+            {!scanResult.ok && <div style={{ padding: 16, color: "var(--err)", fontSize: 12 }}>{scanResult.error}</div>}
+            {scanResult.ok && scanResult.candidates?.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>매칭되는 서류를 찾지 못했습니다.<br /><span style={{ fontSize: 11 }}>관리자 &gt; 시스템 설정 &gt; 서류 폴더 에서 경로가 올바른지 확인해주세요.</span></div>}
+            {scanResult.ok && scanResult.candidates?.length > 0 && <div style={{ display: "flex", flexDirection: "column", maxHeight: 360, overflowY: "auto" }}>
+              {scanResult.candidates.map((c, i) => {
+                const alreadyLinked = linkedDocs?.some(d => d.file_path === c.filePath);
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid var(--brd)", fontSize: 12, opacity: alreadyLinked ? 0.45 : 1 }}>
+                    <span style={{ fontSize: 15 }}>{EXT_ICONS[c.ext] || "📎"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.filename}>{c.filename}</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 2, color: "var(--ts)", fontSize: 10 }}>
+                        <span style={{ background: c.score >= 90 ? "#10b98120" : c.score >= 60 ? "#3b82f620" : "#f59e0b20", color: c.score >= 90 ? "var(--ok)" : c.score >= 60 ? "#3b82f6" : "#f59e0b", padding: "1px 5px", borderRadius: 4, fontWeight: 600 }}>
+                          {c.score}점
+                        </span>
+                        <span>{c.matchReason}</span>
+                        {c.matchType === "guarantor" && <span style={{ color: "#f59e0b" }}>보증인 ({c.matchedName})</span>}
+                        <span style={{ color: "var(--ts)" }}>{c.folderName}</span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                      <a href={`/api/documents/file?path=${encodeURIComponent(c.filePath)}`} target="_blank" rel="noopener noreferrer"
+                         style={{ padding: "5px 10px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", fontSize: 11, fontWeight: 500, border: "1px solid var(--brd)", textDecoration: "none" }}>
+                        열기
+                      </a>
+                      {!alreadyLinked && canEdit && <button onClick={() => linkDoc(c)} style={{ padding: "5px 10px", borderRadius: 6, background: "#3b82f6", color: "#fff", fontSize: 11, fontWeight: 600, border: "none" }}>
+                        연결
+                      </button>}
+                      {alreadyLinked && <span style={{ padding: "5px 8px", fontSize: 10, color: "var(--ok)" }}>연결됨</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+          </div>}
         </div>}
       </div>
     );
@@ -5598,6 +5716,42 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       );
     };
 
+    const DocsFolderConfig = () => {
+      const [rootPath, setRootPath] = useState("");
+      const [saved, setSaved] = useState(null);
+      const [saving, setSaving] = useState(false);
+      useEffect(() => {
+        fetch("/api/admin/docs-config").then(r => r.json()).then(d => { setSaved(d.rootPath || ""); setRootPath(d.rootPath || ""); }).catch(() => {});
+      }, []);
+      const handleSave = async () => {
+        if (!rootPath.trim()) return;
+        setSaving(true);
+        try {
+          await fetch("/api/admin/docs-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rootPath: rootPath.trim() }) });
+          setSaved(rootPath.trim()); showToast("서류 폴더 경로 저장 완료");
+        } catch { showToast("저장 실패", "err"); }
+        setSaving(false);
+      };
+      return (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>서류 폴더 경로 설정</div>
+          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 16, lineHeight: 1.6 }}>
+            채무자 서류가 저장된 OneDrive 폴더의 <b>서버 로컬 경로</b>를 입력하세요.<br />
+            예: <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>C:\Users\hjbae\OneDrive - 바로고\법무실 공유폴더(채권추심)</code>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input value={rootPath} onChange={e => setRootPath(e.target.value)} placeholder="폴더 경로 입력..." style={{ flex: 1 }} />
+            <button onClick={handleSave} disabled={saving || !rootPath.trim()} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "저장 중..." : "저장"}
+            </button>
+          </div>
+          {saved && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ok)", display: "flex", alignItems: "center", gap: 6 }}>
+            <I name="check" size={13} /> 현재 경로: <span style={{ color: "var(--tp)", fontFamily: "monospace" }}>{saved}</span>
+          </div>}
+        </div>
+      );
+    };
+
     const BrandEditor = () => {
       const [nb, setNb] = useState({ code: "", name: "", color: "#3b82f6" });
       const [editIdx, setEditIdx] = useState(-1);
@@ -5674,7 +5828,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       onRemove: (idx) => { setConfig(p => ({ ...p, [key]: p[key].filter((_, i) => i !== idx) })); showToast("삭제 완료"); },
     });
 
-    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서"];
+    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서","서류 폴더"];
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -5704,6 +5858,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {settingTab === "법원" && <ListEditor title="법원 관리" items={config.courts} {...updateList("courts")} />}
           {settingTab === "죄명" && <ListEditor title="죄명 관리" items={config.chargeTypes} {...updateList("chargeTypes")} />}
           {settingTab === "경찰서" && <ListEditor title="경찰서 관리" items={config.policeStations} {...updateList("policeStations")} />}
+          {settingTab === "서류 폴더" && <DocsFolderConfig />}
         </>}
 
         {/* 사용자 관리 */}

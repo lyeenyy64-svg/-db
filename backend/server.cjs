@@ -7,11 +7,13 @@
 require("dotenv").config({ path: require("path").join(__dirname, ".env") });
 const express = require("express");
 const cors = require("cors");
+const fs = require("fs");
 const Database = require("better-sqlite3");
 const path = require("path");
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
+const fileScanner = require("./fileScanner.cjs");
 const { generateHwpx, buildPreviewHtml } = require("./documentGenerator.cjs");
 const { WebClient: SlackClient } = require("@slack/web-api");
 
@@ -121,6 +123,23 @@ db.exec(`
     resolved_count INTEGER NOT NULL DEFAULT 1,
     learned_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   )
+`);
+
+// 채무자-서류 연결 테이블
+db.exec(`
+  CREATE TABLE IF NOT EXISTS debtor_documents (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id    TEXT NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
+    file_path    TEXT NOT NULL,
+    file_name    TEXT NOT NULL,
+    doc_label    TEXT,
+    match_type   TEXT,
+    matched_name TEXT,
+    linked_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    linked_by    TEXT,
+    UNIQUE(debtor_id, file_path)
+  );
+  CREATE INDEX IF NOT EXISTS idx_debtor_docs ON debtor_documents(debtor_id);
 `);
 
 const app = express();
@@ -1272,6 +1291,104 @@ app.put("/api/kv/:key", (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(key, JSON.stringify(req.body));
   res.json({ ok: true });
+});
+
+// ─── 서류 연결 (Document Links) ──────────────────────────────
+
+// 스캔 루트 경로 조회
+app.get("/api/admin/docs-config", (req, res) => {
+  const row = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
+  res.json({ rootPath: row ? row.value : null });
+});
+
+// 스캔 루트 경로 저장
+app.patch("/api/admin/docs-config", (req, res) => {
+  try {
+    const { rootPath } = req.body;
+    if (!rootPath) return res.status(400).json({ ok: false, error: "rootPath 필요" });
+    db.prepare(`
+      INSERT INTO kv_store (key, value, updated_at) VALUES ('docs_scan_root', ?, datetime('now','localtime'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `).run(rootPath);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 채무자별 연결된 서류 조회
+app.get("/api/documents/:debtorId", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM debtor_documents WHERE debtor_id = ? ORDER BY linked_at DESC").all(req.params.debtorId);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 채무자별 파일 후보 스캔
+app.get("/api/documents/:debtorId/scan", (req, res) => {
+  try {
+    const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
+    if (!rootRow || !rootRow.value) return res.status(400).json({ ok: false, error: "스캔 폴더 경로가 설정되지 않았습니다. 관리자 > 서류 폴더 설정에서 지정해주세요." });
+
+    const debtor = db.prepare("SELECT id, name FROM debtors WHERE id = ?").get(req.params.debtorId);
+    if (!debtor) return res.status(404).json({ ok: false, error: "채무자 없음" });
+
+    const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(debtor.id).map(r => r.name);
+    const minScore = parseInt(req.query.minScore, 10) || 20;
+
+    const result = fileScanner.findCandidates(rootRow.value, debtor.name, guarantors, minScore);
+    res.json(result);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 서류 연결 저장
+app.post("/api/documents/:debtorId/link", (req, res) => {
+  try {
+    const { filePath, fileName, docLabel, matchType, matchedName, linkedBy } = req.body;
+    if (!filePath || !fileName) return res.status(400).json({ ok: false, error: "filePath, fileName 필요" });
+    db.prepare(`
+      INSERT OR IGNORE INTO debtor_documents (debtor_id, file_path, file_name, doc_label, match_type, matched_name, linked_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.debtorId, filePath, fileName, docLabel || null, matchType || null, matchedName || null, linkedBy || null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 서류 연결 해제
+app.delete("/api/documents/link/:id", (req, res) => {
+  try {
+    db.prepare("DELETE FROM debtor_documents WHERE id = ?").run(parseInt(req.params.id, 10));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 파일 스트리밍 (보안: 설정된 루트 경로 내부만 허용)
+app.get("/api/documents/file", (req, res) => {
+  try {
+    const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
+    const rootPath = rootRow ? rootRow.value : null;
+    if (!rootPath) return res.status(400).json({ error: "스캔 경로 미설정" });
+
+    const requestedPath = req.query.path;
+    if (!requestedPath) return res.status(400).json({ error: "path 파라미터 필요" });
+
+    const normalizedRoot = path.resolve(rootPath);
+    const normalizedFile = path.resolve(requestedPath);
+    if (!normalizedFile.startsWith(normalizedRoot + path.sep) && normalizedFile !== normalizedRoot) {
+      return res.status(403).json({ error: "허용되지 않은 경로" });
+    }
+    if (!fs.existsSync(normalizedFile)) return res.status(404).json({ error: "파일 없음" });
+
+    const ext = path.extname(normalizedFile).toLowerCase();
+    const MIME = {
+      ".pdf":"application/pdf", ".docx":"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ".doc":"application/msword", ".xlsx":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xls":"application/vnd.ms-excel", ".hwp":"application/x-hwp", ".hwpx":"application/x-hwpx",
+      ".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".png":"image/png", ".zip":"application/zip",
+    };
+    const filename = path.basename(normalizedFile);
+    res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    fs.createReadStream(normalizedFile).pipe(res);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.use(express.static(path.join(__dirname, "../dist")));
