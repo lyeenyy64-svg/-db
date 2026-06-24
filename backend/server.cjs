@@ -1333,8 +1333,14 @@ app.get("/api/documents/:debtorId/scan", (req, res) => {
 
     const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(debtor.id).map(r => r.name);
     const minScore = parseInt(req.query.minScore, 10) || 20;
+    const keyword = req.query.keyword ? req.query.keyword.toLowerCase() : null;
 
-    const result = fileScanner.findCandidates(rootRow.value, debtor.name, guarantors, minScore);
+    let result = fileScanner.findCandidates(rootRow.value, debtor.name, guarantors, minScore);
+    if (result.ok && keyword) {
+      result.candidates = result.candidates.filter(c =>
+        c.filename.toLowerCase().includes(keyword) || c.docType.toLowerCase().includes(keyword)
+      );
+    }
     res.json(result);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

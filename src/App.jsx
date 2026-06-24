@@ -1656,7 +1656,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       name: "", phone: "", hubCode: "", hubName: config.hubNames[0] || "", debtCause: config.debtCauses[0] || "",
       collectionStatus: config.collStatuses[0], execTitle: false, execTitleType: "", execTitleUrl: "",
       loanDate: today(), principalBalance: 0, adjustment: 0, collectedAmount: 0,
-      birthDate: "", salesRep: "", residentNumber: "",
+      salesRep: "", residentNumber: "",
       keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
     });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -1725,8 +1725,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="신용조회 일자"><input value={f.creditCheck || ""} onChange={e => set("creditCheck", e.target.value)} style={inp} placeholder="예: 2023.10.05" /></Field>
           <Field label="신용점수"><input value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
           <Field label="주민등록초본 (날짜)"><input value={f.residentCopy || ""} onChange={e => set("residentCopy", e.target.value)} style={inp} placeholder="예: 2023.10.04" /></Field>
-          <Field label="주민등록초본 PDF (OneDrive)"><input value={f.residentCopyUrl || ""} onChange={e => set("residentCopyUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
-          <Field label="생년월일"><input value={f.birthDate || ""} onChange={e => set("birthDate", e.target.value)} style={inp} placeholder="예: 1985-03-15" /></Field>
           <Field label="영업담당자"><input value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
           <Field label="연대보증인"><input value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
           <Field label="주민등록번호" span={2}><input value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
@@ -2436,6 +2434,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [linkedDocs, setLinkedDocs] = useState(null);
     const [scanResult, setScanResult] = useState(null);
     const [scanning, setScanning] = useState(false);
+    const [docModal, setDocModal] = useState(null); // { url, filename, candidates }
+
+    const openDocModal = async (debtorId, keyword, debtorName) => {
+      setDocModal({ searching: true, keyword, debtorName });
+      try {
+        const r = await fetch(`/api/documents/${debtorId}/scan?keyword=${encodeURIComponent(keyword)}&minScore=20`).then(x => x.json());
+        if (!r.ok) { setDocModal({ error: r.error, keyword }); return; }
+        if (!r.candidates || r.candidates.length === 0) {
+          setDocModal({ error: `"${keyword}" 관련 서류를 OneDrive에서 찾지 못했습니다.\n관리자 > 서류 폴더 경로가 설정되었는지 확인해주세요.`, keyword }); return;
+        }
+        const best = r.candidates[0];
+        setDocModal({ url: `/api/documents/file?path=${encodeURIComponent(best.filePath)}`, filename: best.filename, candidates: r.candidates, debtorId, keyword });
+      } catch { setDocModal({ error: "서버 연결 실패", keyword }); }
+    };
 
     useEffect(() => {
       if (detailTab === "연결서류") {
@@ -2523,29 +2535,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {d.guarantors?.length > 0 ? d.guarantors.join(", ") : "-"}
               </span>
             </div>
-            {/* 주민등록번호 + 초본 버튼 */}
+            {/* 주민등록번호 + 초본 스마트 검색 버튼 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>주민등록번호</span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 500 }}>{d.residentNumber || "-"}</span>
-                {d.residentCopyUrl
-                  ? <a href={d.residentCopyUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>초본 열기</a>
-                  : <span style={{ padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>초본 미연동</span>}
+                <div style={{ textAlign: "right" }}>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>{d.residentNumber || "-"}</span>
+                  {d.residentNumber && (() => {
+                    const clean = d.residentNumber.replace(/[-\s]/g, "");
+                    if (clean.length >= 7) {
+                      const yy = clean.slice(0,2), mm = clean.slice(2,4), dd = clean.slice(4,6);
+                      const g = parseInt(clean[6],10);
+                      const century = (g === 3 || g === 4) ? "20" : "19";
+                      return <div style={{ fontSize: 10, color: "var(--ts)" }}>{century}{yy}.{mm}.{dd} 생</div>;
+                    }
+                    return null;
+                  })()}
+                </div>
+                <button onClick={() => openDocModal(d.id, "초본", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
+                  초본 보기
+                </button>
               </div>
-            </div>
-            {/* 생년월일 */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>생년월일</span>
-              <span style={{ fontSize: 12, fontWeight: 500 }}>{d.birthDate || "-"}</span>
             </div>
             {/* 신용조회 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>신용조회</span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 500 }}>{d.creditCheck ? `${d.creditCheck}${d.creditGrade ? ` (${d.creditGrade})` : ""}` : "-"}</span>
-                {d.creditReportUrl
-                  ? <a href={d.creditReportUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none" }}>CB 열기</a>
-                  : <span style={{ padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#f1f5f9", color: "#94a3b8", border: "1px solid #e2e8f0" }}>미연동</span>}
+                <button onClick={() => openDocModal(d.id, "신용", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
+                  CB 보기
+                </button>
               </div>
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
@@ -2722,6 +2741,39 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
           {debtorRehabs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>회생/파산 내역 없음</div>}
         </div>}
+
+        {/* PDF 팝업 모달 */}
+        {docModal && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setDocModal(null)}>
+            <div style={{ background: "var(--card)", borderRadius: 14, width: "min(92vw, 1100px)", height: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.4)" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--brd)", flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    {docModal.searching ? `"${docModal.keyword}" 검색 중...` : docModal.error ? "서류 없음" : docModal.filename}
+                  </span>
+                  {docModal.candidates && docModal.candidates.length > 1 && (
+                    <select style={{ fontSize: 11, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", maxWidth: 280 }}
+                      onChange={e => setDocModal(p => ({ ...p, url: `/api/documents/file?path=${encodeURIComponent(e.target.value)}`, filename: docModal.candidates.find(c => c.filePath === e.target.value)?.filename || "" }))}>
+                      {docModal.candidates.map((c, i) => (
+                        <option key={i} value={c.filePath}>{c.filename} ({c.score}점)</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {docModal.url && <a href={docModal.url} target="_blank" rel="noopener noreferrer" style={{ padding: "5px 12px", borderRadius: 7, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, textDecoration: "none", border: "1px solid #3b82f630" }}>새 탭으로 열기</a>}
+                  {docModal.url && canEdit && <button onClick={async () => { const best = docModal.candidates?.[0]; if (!best) return; await linkDoc(best); showToast("서류 연결 완료"); }} style={{ padding: "5px 12px", borderRadius: 7, background: "#10b98118", color: "#059669", fontSize: 12, fontWeight: 600, border: "1px solid #10b98130" }}>연결서류에 저장</button>}
+                  <button onClick={() => setDocModal(null)} style={{ width: 32, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}><I name="close" size={15} /></button>
+                </div>
+              </div>
+              <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
+                {docModal.searching && <div style={{ color: "var(--tm)", fontSize: 13 }}>OneDrive 검색 중...</div>}
+                {docModal.error && <div style={{ color: "var(--err)", fontSize: 13, textAlign: "center", whiteSpace: "pre-line", padding: 20 }}>{docModal.error}</div>}
+                {docModal.url && <iframe src={docModal.url} style={{ width: "100%", height: "100%", border: "none" }} title={docModal.filename} />}
+              </div>
+            </div>
+          </div>
+        )}
 
         {detailTab === "연결서류" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* 연결된 서류 목록 */}
