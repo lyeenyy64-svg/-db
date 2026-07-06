@@ -25,6 +25,20 @@ const DB_PATH = path.join(__dirname, "..", "db", "debtflow.db");
 const db = new Database(DB_PATH, { readonly: false });
 db.pragma("foreign_keys = ON");
 
+// ─── v_debtors 뷰 재생성 (재무기준잔액=원채무액-회수액, 법무기준잔액=원채무액+추가법무비용-회수액)
+db.exec(`
+  DROP VIEW IF EXISTS v_debtors;
+  CREATE VIEW v_debtors AS
+  SELECT
+    d.*,
+    b.name  AS brand_name,
+    b.color AS brand_color,
+    (d.principal_balance - d.collected_amount)                        AS final_balance_finance,
+    (d.principal_balance + d.adjustment - d.collected_amount)         AS final_balance_legal
+  FROM debtors d
+  LEFT JOIN brands b ON d.brand_code = b.code;
+`);
+
 // ─── 기본 보조 테이블 자동 생성 ──────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS kv_store (
@@ -65,9 +79,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_inst_sched_plan ON installment_schedules(plan_id);
   CREATE INDEX IF NOT EXISTS idx_inst_sched_due ON installment_schedules(due_date);
   CREATE INDEX IF NOT EXISTS idx_inst_sched_month ON installment_schedules(due_month);
+  CREATE TABLE IF NOT EXISTS installment_schedule_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    schedule_id TEXT NOT NULL,
+    plan_id TEXT NOT NULL,
+    debtor_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    from_date TEXT,
+    to_date TEXT,
+    amount INTEGER,
+    memo TEXT,
+    user_name TEXT DEFAULT '관리자',
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_inst_hist_plan ON installment_schedule_history(plan_id);
+  CREATE INDEX IF NOT EXISTS idx_inst_hist_debtor ON installment_schedule_history(debtor_id);
 `);
 try { db.exec("ALTER TABLE installment_plans ADD COLUMN memo TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE debtors ADD COLUMN resident_number TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"); } catch(e) {}
 
 // ─── DB 마이그레이션 (컬럼 추가 / 테이블 생성) ─────────────
 {
@@ -140,6 +170,153 @@ db.exec(`
     learned_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   )
 `);
+
+// 채무자 수정 로그 테이블
+db.exec(`
+  CREATE TABLE IF NOT EXISTS debtor_edit_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id   TEXT NOT NULL,
+    debtor_name TEXT,
+    changed_by  TEXT NOT NULL DEFAULT '관리자',
+    changed_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+    field_name  TEXT NOT NULL,
+    field_label TEXT,
+    old_value   TEXT,
+    new_value   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_edit_log_debtor  ON debtor_edit_log(debtor_id);
+  CREATE INDEX IF NOT EXISTS idx_edit_log_changed ON debtor_edit_log(changed_at);
+`);
+
+// 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS collection_channels (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    year       INTEGER NOT NULL,
+    month      INTEGER NOT NULL,
+    brand      TEXT NOT NULL DEFAULT 'all',
+    channel    TEXT NOT NULL,
+    amount     INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_by TEXT DEFAULT '관리자',
+    UNIQUE(year, month, brand, channel)
+  );
+  CREATE INDEX IF NOT EXISTS idx_cc_year_month ON collection_channels(year, month);
+`);
+
+// 2025/2026 seed data (Excel 종합분석 그래프 기준)
+{
+  const seedDone = db.prepare("SELECT value FROM kv_store WHERE key='cc_seed_v1'").get();
+  if (!seedDone) {
+    const ins = db.prepare(
+      "INSERT OR IGNORE INTO collection_channels (year, month, brand, channel, amount) VALUES (?,?,?,?,?)"
+    );
+    const tx = db.transaction(() => {
+      // 2025년 월별 합계 (채널 구분 없음)
+      const t2025 = [118575458,82598742,296271620,93414986,110080471,76516588,106091287,148150125,132633627,187497062,79411669,132409300];
+      t2025.forEach((v, i) => ins.run(2025, i+1, 'all', 'total', v));
+
+      // 2026년 브랜드×채널별 (Excel 기준)
+      const data2026 = [
+        // [brand, channel, month, amount]
+        ['B','캐쉬충전',1,9364974], ['B','캐쉬충전',2,15740976], ['B','캐쉬충전',3,4181614], ['B','캐쉬충전',4,1953294], ['B','캐쉬충전',5,4753030],
+        ['B','웰컴직접상환',1,1515975], ['B','웰컴직접상환',2,1264956], ['B','웰컴직접상환',3,1515975], ['B','웰컴직접상환',4,2970798],
+        ['D','캐쉬충전',1,10248425], ['D','캐쉬충전',2,8372132], ['D','캐쉬충전',3,10645770], ['D','캐쉬충전',4,9062346], ['D','캐쉬충전',5,9414326],
+        ['M','캐쉬충전',1,5740674], ['M','캐쉬충전',2,4227680], ['M','캐쉬충전',3,6115974], ['M','캐쉬충전',4,7804020], ['M','캐쉬충전',5,4826274],
+      ];
+      data2026.forEach(([brand, channel, month, amount]) => ins.run(2026, month, brand, channel, amount));
+    });
+    tx();
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('cc_seed_v1', '1')").run();
+  }
+}
+
+// 2025 브랜드별 캐쉬/웰컴 + 2024 브랜드별 합계 시드
+{
+  const seedDone = db.prepare("SELECT value FROM kv_store WHERE key='cc_seed_v2'").get();
+  if (!seedDone) {
+    const ins = db.prepare(
+      "INSERT OR REPLACE INTO collection_channels (year, month, brand, channel, amount) VALUES (?,?,?,?,?)"
+    );
+    const tx = db.transaction(() => {
+      // 2025 바로고 캐쉬충전
+      [[3,12822017],[4,140000],[5,3062812],[6,2393427],[7,7483609],[8,83313783],[9,24627840],[10,28708024],[11,600000],[12,1797000]]
+        .forEach(([m,v]) => ins.run(2025,m,'B','캐쉬충전',v));
+      // 2025 바로고 웰컴직접상환
+      [[2,600000],[3,1350765],[4,5895386],[6,700000],[7,6697338]]
+        .forEach(([m,v]) => ins.run(2025,m,'B','웰컴직접상환',v));
+      // 2025 딜버 캐쉬충전
+      [[4,2543965],[5,4375166],[6,3481668],[7,4212555],[8,5507658],[9,12311900],[10,11448448],[11,10024303],[12,9300000]]
+        .forEach(([m,v]) => ins.run(2025,m,'D','캐쉬충전',v));
+      // 2025 딜버 웰컴직접상환
+      [[2,429670],[3,218000],[4,209810],[5,225000],[6,225000],[7,225000],[8,225000],[9,225000],[10,225000],[11,217500]]
+        .forEach(([m,v]) => ins.run(2025,m,'D','웰컴직접상환',v));
+      // 2025 모아라인 캐쉬충전
+      [[1,18099302],[2,20154471],[3,20410119],[4,22198199],[5,14671841],[6,12919188],[7,7149954],[8,7074092],[9,13628289],[10,5522612],[11,8934960]]
+        .forEach(([m,v]) => ins.run(2025,m,'M','캐쉬충전',v));
+      // 2025 모아라인 웰컴직접상환
+      [[1,15601506],[2,13614880],[3,8990210],[4,5229652],[5,7249778],[6,4715004],[7,2992800],[8,1870500],[9,1870200],[10,1496400],[11,2249400],[12,2100000]]
+        .forEach(([m,v]) => ins.run(2025,m,'M','웰컴직접상환',v));
+      // 2024 브랜드별 합계 (채널 구분 없음)
+      [[1,43730660],[2,24714216],[3,52582160],[4,29504301],[5,50462509],[6,19711655],[7,46985407],[8,49051102],[9,38579356],[10,38879938],[11,194630224],[12,59989337]]
+        .forEach(([m,v]) => ins.run(2024,m,'B','total',v));
+      [[2,40200000],[3,3813810],[4,4424566],[5,3483151],[6,7366293],[7,145242160],[8,56814261],[9,31720691],[10,3283255],[11,1298785],[12,818210]]
+        .forEach(([m,v]) => ins.run(2024,m,'D','total',v));
+      [[1,45265256],[2,86025959],[3,26291236],[4,34612333],[5,29028430],[6,26619486],[7,53404117],[8,50233804],[9,14187668],[10,16523176],[11,10760000],[12,34202027]]
+        .forEach(([m,v]) => ins.run(2024,m,'M','total',v));
+      [[1,88995916],[2,150940175],[3,82687206],[4,68541200],[5,82974090],[6,53697434],[7,245631684],[8,156099167],[9,84487715],[10,58686369],[11,206689009],[12,95009574]]
+        .forEach(([m,v]) => ins.run(2024,m,'all','total',v));
+    });
+    tx();
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('cc_seed_v2', '1')").run();
+  }
+}
+{
+  // cc_seed_v3: 2025 브랜드별 월합계 (본사+캐쉬+웰컴 합산)
+  const seedDone = db.prepare("SELECT value FROM kv_store WHERE key='cc_seed_v3'").get();
+  if (!seedDone) {
+    const ins = db.prepare("INSERT OR REPLACE INTO collection_channels (year, month, brand, channel, amount) VALUES (?,?,?,?,?)");
+    const tx = db.transaction(() => {
+      [[1,79137995],[2,42038105],[3,131095461],[4,54753360],[5,51059371],[6,38182738],[7,72925930],[8,120614817],[9,86976741],[10,157604602],[11,26385709],[12,32355355]]
+        .forEach(([m,v]) => ins.run(2025,m,'B','total',v));
+      [[1,544517],[2,929670],[3,1718000],[4,6173775],[5,11097666],[6,8101758],[7,6137555],[8,10396671],[9,17024368],[10,17473448],[11,15291803],[12,16070000]]
+        .forEach(([m,v]) => ins.run(2025,m,'D','total',v));
+      [[1,38892946],[2,39630967],[3,163458159],[4,32487851],[5,47923434],[6,30232092],[7,27027802],[8,17138637],[9,28632518],[10,12419012],[11,37734157],[12,83983945]]
+        .forEach(([m,v]) => ins.run(2025,m,'M','total',v));
+    });
+    tx();
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('cc_seed_v3', '1')").run();
+  }
+}
+{
+  // fix_sched_amounts: "7.1 50만원" → 공백 제거 오파싱(71500) 일괄 수정
+  const fixDone = db.prepare("SELECT value FROM kv_store WHERE key='fix_sched_amounts_v1'").get();
+  if (!fixDone) {
+    function parseAmtFromMemo(text) {
+      if (!text) return null;
+      const t = text.replace(/,/g, "");
+      const manMatches = [...t.matchAll(/(\d+(?:\.\d+)?)\s*만\s*원?/g)];
+      if (manMatches.length) return Math.round(parseFloat(manMatches[manMatches.length - 1][1]) * 10000);
+      const wonMatches = [...t.matchAll(/(\d+)\s*원/g)];
+      if (wonMatches.length) return parseInt(wonMatches[wonMatches.length - 1][1], 10) || null;
+      return null;
+    }
+    const schedules = db.prepare("SELECT id, scheduled_amount, memo FROM installment_schedules WHERE memo IS NOT NULL AND memo != ''").all();
+    let fixed = 0;
+    const upd = db.prepare("UPDATE installment_schedules SET scheduled_amount = ? WHERE id = ?");
+    db.transaction(() => {
+      for (const s of schedules) {
+        const correct = parseAmtFromMemo(s.memo);
+        if (correct && correct > 0 && correct !== s.scheduled_amount) {
+          upd.run(correct, s.id);
+          fixed++;
+        }
+      }
+    })();
+    console.log(`[fix_sched_amounts] 잘못된 금액 ${fixed}건 수정 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('fix_sched_amounts_v1', '1')").run();
+  }
+}
 
 // 채무자-서류 연결 테이블
 db.exec(`
@@ -351,9 +528,10 @@ function ingestPayment(b) {
     }
   }
   if (!resolvedId) {
-    // 2순위: 자동 매처
+    // 2순위: 자동 매처 (채무자명 + 연대보증인명 검색, 원코드 우선)
     const all = db.prepare("SELECT id, brand_code, name, hub_code FROM debtors").all();
-    const idx = matcher.buildIndex(all);
+    const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
+    const idx = matcher.buildIndex(all, guarantors);
     const m = matcher.matchDebtor(idx, {
       brand: b.brand, hubCode: b.hubCode,
       debtorName: b.debtorName, payerName: b.payerName,
@@ -467,9 +645,10 @@ app.post("/api/slack/preview", (req, res) => {
 
   const { entries, meta } = slackParser.parse(text, messageDate);
 
-  // 각 entry에 매칭 후보 부착
+  // 각 entry에 매칭 후보 부착 (연대보증인 포함, 원코드 우선)
   const all = db.prepare("SELECT id, brand_code, name, hub_code FROM debtors").all();
-  const idx = matcher.buildIndex(all);
+  const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
+  const idx = matcher.buildIndex(all, guarantors);
   const enriched = entries.map(e => {
     const m = matcher.matchDebtor(idx, { payerName: e.payerName, debtorName: e.payerName });
     if (m) {
@@ -572,11 +751,24 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
       db.prepare(`UPDATE debtors SET collected_amount = collected_amount + ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(pay.total_amount, newDebtorId);
       db.prepare(`UPDATE payments SET debtor_id = ? WHERE id = ?`).run(newDebtorId, payId);
 
-      db.prepare(`INSERT INTO audit_logs (user_name, action, target, target_id, detail) VALUES (?, '재매칭', '입금', ?, ?)`).run(
+      // 입금자명 학습 매핑 업데이트 (다음 자동매칭 때 올바른 채무자로 적용)
+      if (pay.payer_name) {
+        db.prepare(`
+          INSERT INTO payer_name_mappings (payer_name, debtor_id, debtor_name, resolved_count, learned_at)
+          VALUES (?, ?, ?, 1, datetime('now', 'localtime'))
+          ON CONFLICT(payer_name) DO UPDATE SET
+            debtor_id = excluded.debtor_id,
+            debtor_name = excluded.debtor_name,
+            resolved_count = resolved_count + 1,
+            learned_at = excluded.learned_at
+        `).run(pay.payer_name, newDebtorId, newDebtor.name);
+      }
+
+      db.prepare(`INSERT INTO audit_logs (user_name, action, target, target_id, detail) VALUES (?, '수정', '입금', ?, ?)`).run(
         userName || "시스템", payId,
-        `입금 ${pay.total_amount.toLocaleString()}원: ${oldDebtor?.name || pay.debtor_id} → ${newDebtor.name}`
+        `[재매칭] 입금 ${pay.total_amount.toLocaleString()}원: ${oldDebtor?.name || pay.debtor_id} → ${newDebtor.name}`
       );
-      return { ok: true };
+      return { ok: true, oldDebtorName: oldDebtor?.name || pay.debtor_id, newDebtorName: newDebtor.name };
     })();
     res.json(result);
   } catch (e) {
@@ -824,8 +1016,49 @@ app.post("/api/installments/import-excel", (req, res) => {
   }
 });
 
-// GET /api/installments - 전체 플랜 + 일정 목록
+// ─── 분할상환 자동 상태 동기화 (최대 1분에 1회) ─────────────────────────────
+let _lastAutoSync = 0;
+function runAutoSync() {
+  const now = Date.now();
+  if (now - _lastAutoSync < 60000) return 0;
+  _lastAutoSync = now;
+  const today = new Date().toISOString().slice(0, 10);
+  const todayMonth = today.slice(0, 7);
+  const plans = db.prepare("SELECT id, debtor_id FROM installment_plans").all();
+  let updated = 0;
+  db.transaction(() => {
+    for (const plan of plans) {
+      const scheds = db.prepare(`
+        SELECT id, due_date, due_month, scheduled_amount, status, paid_amount
+        FROM installment_schedules WHERE plan_id=? AND status NOT IN ('이월')
+        AND ((due_date IS NOT NULL AND due_date < ?) OR (due_date IS NULL AND due_month <= ?))
+      `).all(plan.id, today, todayMonth);
+      for (const s of scheds) {
+        const anchor = s.due_date || (s.due_month + "-28");
+        const paid = db.prepare(`SELECT COALESCE(SUM(total_amount),0) AS total FROM payments WHERE debtor_id=? AND payment_date BETWEEN DATE(?,'-7 days') AND DATE(?,'+7 days')`).get(plan.debtor_id, anchor, anchor);
+        const paidAmt = paid.total || 0;
+        let newStatus = null;
+        if (s.scheduled_amount > 0) {
+          if (paidAmt >= s.scheduled_amount) newStatus = "완납";
+          else if (paidAmt > 0) newStatus = "일부납";
+          else if (s.due_date && s.due_date < today && s.status === "예정") newStatus = "미납";
+        } else {
+          if (paidAmt > 0 && s.status !== "완납") newStatus = "완납";
+          else if (s.due_date && s.due_date < today && s.status === "예정") newStatus = "미납";
+        }
+        if (newStatus && newStatus !== s.status) {
+          db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?").run(newStatus, paidAmt > 0 ? paidAmt : s.paid_amount, s.id);
+          updated++;
+        }
+      }
+    }
+  })();
+  return updated;
+}
+
+// GET /api/installments - 전체 플랜 + 일정 + 히스토리 목록
 app.get("/api/installments", (req, res) => {
+  runAutoSync();
   const plans = db.prepare(`
     SELECT p.*, d.name AS debtor_name, d.brand_code AS brand, d.assignee,
            d.hub_code, d.hub_name, d.final_balance_legal AS total_claim
@@ -834,6 +1067,7 @@ app.get("/api/installments", (req, res) => {
     ORDER BY p.start_date DESC, p.id
   `).all();
   const getSchedules = db.prepare("SELECT * FROM installment_schedules WHERE plan_id = ? ORDER BY COALESCE(due_date, due_month || '-01'), id");
+  const getHistory = db.prepare("SELECT * FROM installment_schedule_history WHERE plan_id = ? ORDER BY created_at ASC");
   res.json(plans.map(p => ({
     id: p.id, debtorId: p.debtor_id, debtorName: p.debtor_name, brand: p.brand,
     assignee: p.assignee, hubCode: p.hub_code, hubName: p.hub_name,
@@ -842,8 +1076,13 @@ app.get("/api/installments", (req, res) => {
     schedules: getSchedules.all(p.id).map(s => ({
       id: s.id, planId: s.plan_id, debtSource: s.debt_source, institution: s.institution,
       loanAmount: s.loan_amount, interestRate: s.interest_rate,
-      dueDate: s.due_date, dueMonth: s.due_month,
+      dueDate: s.due_date, dueMonth: s.due_month, rolledOverTo: s.rolled_over_to,
       scheduledAmount: s.scheduled_amount, paidAmount: s.paid_amount, status: s.status, memo: s.memo,
+    })),
+    history: getHistory.all(p.id).map(h => ({
+      id: h.id, scheduleId: h.schedule_id, eventType: h.event_type,
+      fromDate: h.from_date, toDate: h.to_date, amount: h.amount,
+      memo: h.memo, userName: h.user_name, createdAt: h.created_at,
     })),
   })));
 });
@@ -860,22 +1099,50 @@ app.post("/api/installments", (req, res) => {
   } catch(e) { res.status(400).json({ ok: false, error: e.message }); }
 });
 
-// PATCH /api/installments/schedules/:id - 일정 수정
+// PATCH /api/installments/schedules/:id - 일정 수정 (상태 변경 시 히스토리 기록)
 app.patch("/api/installments/schedules/:id", (req, res) => {
+  const { status, paidAmount, dueDate, dueMonth, scheduledAmount, memo, userName } = req.body || {};
   const cols = { status: "status", paidAmount: "paid_amount", dueDate: "due_date", dueMonth: "due_month", scheduledAmount: "scheduled_amount", memo: "memo" };
   const fields = [], vals = [];
   for (const [k, col] of Object.entries(cols)) {
     if (req.body[k] !== undefined) { fields.push(`${col} = ?`); vals.push(req.body[k]); }
   }
   if (!fields.length) return res.json({ ok: true });
+  // 변경 전 원본 조회 (월 변경 감지용)
+  const beforeSched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
   vals.push(req.params.id);
   db.prepare(`UPDATE installment_schedules SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+  if (status && beforeSched) {
+    db.prepare(`INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      req.params.id, beforeSched.plan_id, beforeSched.debtor_id,
+      status, beforeSched.due_date || beforeSched.due_month, beforeSched.scheduled_amount,
+      memo || null, userName || '관리자'
+    );
+  }
+  // 드래그 등으로 월이 바뀌었을 때, 원래 월에 일정이 없어지면 날짜미정 플레이스홀더 생성
+  if (dueMonth && beforeSched && beforeSched.due_month && dueMonth !== beforeSched.due_month) {
+    const leftInOldMonth = db.prepare("SELECT COUNT(*) AS cnt FROM installment_schedules WHERE plan_id = ? AND due_month = ?").get(beforeSched.plan_id, beforeSched.due_month);
+    if (leftInOldMonth.cnt === 0) {
+      const newId = "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase();
+      db.prepare("INSERT INTO installment_schedules (id, plan_id, due_month, due_date, scheduled_amount, paid_amount, status, created_at) VALUES (?, ?, ?, NULL, 0, 0, '예정', datetime('now','localtime'))").run(newId, beforeSched.plan_id, beforeSched.due_month);
+    }
+  }
   res.json({ ok: true });
 });
 
 // DELETE /api/installments/schedules/:id - 일정 삭제
 app.delete("/api/installments/schedules/:id", (req, res) => {
+  const sched = db.prepare("SELECT plan_id, due_month FROM installment_schedules WHERE id = ?").get(req.params.id);
+  if (!sched) return res.json({ ok: true });
   db.prepare("DELETE FROM installment_schedules WHERE id = ?").run(req.params.id);
+  if (sched.due_month) {
+    // 같은 월에 일정이 없어지면 날짜미정 플레이스홀더 생성 (해당 월 카드에서 사라지지 않도록)
+    const leftInMonth = db.prepare("SELECT COUNT(*) AS cnt FROM installment_schedules WHERE plan_id = ? AND due_month = ?").get(sched.plan_id, sched.due_month);
+    if (leftInMonth.cnt === 0) {
+      const newId = "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase();
+      db.prepare("INSERT INTO installment_schedules (id, plan_id, due_month, due_date, scheduled_amount, paid_amount, status, created_at) VALUES (?, ?, ?, NULL, 0, 0, '예정', datetime('now','localtime'))").run(newId, sched.plan_id, sched.due_month);
+    }
+  }
   res.json({ ok: true });
 });
 
@@ -898,6 +1165,221 @@ app.delete("/api/installments/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/installments/schedules/:id/rollover - 이월 처리
+app.post("/api/installments/schedules/:id/rollover", (req, res) => {
+  const { newDate, memo, userName } = req.body || {};
+  if (!newDate) return res.status(400).json({ ok: false, error: "newDate 필요" });
+  const sched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
+  if (!sched) return res.status(404).json({ ok: false, error: "일정 없음" });
+  const newId = "ISS" + Date.now();
+  const newMonth = newDate.slice(0, 7);
+  try {
+    db.transaction(() => {
+      db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(newId, req.params.id);
+      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '미납', ?)").run(
+        newId, sched.plan_id, sched.debt_source, sched.institution, sched.loan_amount, sched.interest_rate,
+        newDate, newMonth, sched.scheduled_amount, memo || null
+      );
+      db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
+        req.params.id, sched.plan_id, sched.debtor_id,
+        sched.due_date || sched.due_month, newDate,
+        sched.scheduled_amount, memo || null, userName || '관리자'
+      );
+    })();
+    res.json({ ok: true, newScheduleId: newId });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// POST /api/installments/schedules/:id/memo - 히스토리 메모 추가
+app.post("/api/installments/schedules/:id/memo", (req, res) => {
+  const { memo, eventType, userName } = req.body || {};
+  if (!memo) return res.status(400).json({ ok: false, error: "memo 필요" });
+  const sched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
+  if (!sched) return res.status(404).json({ ok: false, error: "일정 없음" });
+  db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+    req.params.id, sched.plan_id, sched.debtor_id,
+    eventType || '메모', sched.due_date || sched.due_month,
+    sched.scheduled_amount, memo, userName || '관리자'
+  );
+  res.json({ ok: true });
+});
+
+// POST /api/installments/schedules/sync-memo-amounts - 메모 금액 일괄 적용
+app.post("/api/installments/schedules/sync-memo-amounts", (req, res) => {
+  function parseAmountFromText(text) {
+    if (!text) return null;
+    const manMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*만\s*원?/g)];
+    if (manMatches.length) return Math.round(parseFloat(manMatches[manMatches.length - 1][1]) * 10000);
+    const wonMatches = [...text.matchAll(/([\d,]+)\s*원/g)];
+    if (wonMatches.length) return parseInt(wonMatches[wonMatches.length - 1][1].replace(/,/g, ""), 10) || null;
+    return null;
+  }
+  const schedules = db.prepare("SELECT id, scheduled_amount, memo FROM installment_schedules WHERE memo IS NOT NULL AND memo != ''").all();
+  let updated = 0;
+  const updateStmt = db.prepare("UPDATE installment_schedules SET scheduled_amount = ? WHERE id = ?");
+  db.transaction(() => {
+    for (const s of schedules) {
+      const amt = parseAmountFromText(s.memo);
+      if (amt && amt > 0 && amt !== s.scheduled_amount) {
+        updateStmt.run(amt, s.id);
+        updated++;
+      }
+    }
+  })();
+  res.json({ ok: true, updated, total: schedules.length });
+});
+
+// ── 분할상환 자동 동기화 함수 (워터폴 배분 방식) ──
+// 같은 채무자의 여러 일정에 동일 입금액이 중복 매칭되는 것을 방지.
+// 플랜 시작일부터 총 입금합 계산 후 오래된 일정부터 순서대로 배분.
+function runInstallmentAutoSync() {
+  const today = new Date().toISOString().slice(0, 10);
+  const todayMonth = today.slice(0, 7);
+
+  const fmtAmt = (n) => {
+    if (!n || n <= 0) return "0원";
+    const man = Math.floor(n / 10000);
+    const rest = n % 10000;
+    if (man > 0 && rest === 0) return `${man}만원`;
+    if (man > 0) return `${man}만 ${rest.toLocaleString("ko-KR")}원`;
+    return `${n.toLocaleString("ko-KR")}원`;
+  };
+
+  const plans = db.prepare("SELECT id, debtor_id FROM installment_plans").all();
+  let updated = 0;
+
+  db.transaction(() => {
+    for (const plan of plans) {
+      // 이월 제외, 날짜순 전체 일정
+      const allScheds = db.prepare(`
+        SELECT id, due_date, due_month, scheduled_amount, status, paid_amount
+        FROM installment_schedules
+        WHERE plan_id = ? AND status != '이월'
+        ORDER BY COALESCE(due_date, due_month || '-28') ASC
+      `).all(plan.id);
+
+      if (allScheds.length === 0) continue;
+
+      // 플랜 시작일 = 첫 일정 해당 월의 1일
+      const firstSched = allScheds[0];
+      const planStartDate = firstSched.due_date
+        ? firstSched.due_date.slice(0, 7) + "-01"
+        : (firstSched.due_month || today.slice(0, 7)) + "-01";
+
+      // 플랜 시작일 이후 이 채무자의 총 입금액
+      const { total: totalPaid } = db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) AS total
+        FROM payments
+        WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
+      `).get(plan.debtor_id, planStartDate, today);
+
+      // 최근 입금 목록 (메모 생성용)
+      const recentPayments = db.prepare(`
+        SELECT payment_date, total_amount FROM payments
+        WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
+        ORDER BY payment_date ASC
+      `).all(plan.debtor_id, planStartDate, today);
+
+      // 워터폴 배분
+      let pool = totalPaid || 0;
+      const changes = [];
+
+      for (const s of allScheds) {
+        const isDue = (s.due_date && s.due_date <= today) ||
+                      (!s.due_date && s.due_month && s.due_month <= todayMonth);
+
+        if (!isDue) continue;
+
+        const needed = s.scheduled_amount || 0;
+
+        if (s.status === "완납") {
+          // 이미 완납 → 예약된 금액만 풀에서 차감, 재처리 안 함
+          pool = Math.max(0, pool - needed);
+          continue;
+        }
+
+        let allocated = 0;
+        let newStatus;
+
+        if (needed > 0) {
+          allocated = Math.min(pool, needed);
+          pool -= allocated;
+          if (allocated >= needed)      newStatus = "완납";
+          else if (allocated > 0)       newStatus = "일부납";
+          else                          newStatus = "미납";
+        } else {
+          // scheduled_amount 없는 경우
+          newStatus = pool > 0 ? "완납" : "미납";
+        }
+
+        const paidAmtToStore = allocated > 0 ? allocated : (s.paid_amount || 0);
+        const statusChanged   = newStatus !== s.status;
+        const amountChanged   = newStatus === "일부납" && allocated !== (s.paid_amount || 0);
+
+        if (statusChanged || amountChanged) {
+          db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?")
+            .run(newStatus, paidAmtToStore, s.id);
+          if (statusChanged) {
+            changes.push({ sched: s, newStatus, allocated });
+            updated++;
+          }
+        }
+      }
+
+      // 입금 관련 변경(완납/일부납)만 자동 메모 생성
+      const payChanges = changes.filter(c => c.newStatus === "완납" || c.newStatus === "일부납");
+      if (payChanges.length > 0 && recentPayments.length > 0) {
+        const lastPay = recentPayments[recentPayments.length - 1];
+        const payDateStr = lastPay.payment_date.slice(5).replace("-", "/");
+        const payAmtStr  = fmtAmt(lastPay.total_amount);
+
+        const parts = payChanges.map(c => {
+          const d = (c.sched.due_date || c.sched.due_month || "").slice(5).replace("-", "/");
+          if (c.newStatus === "완납")   return `${d} 완납처리`;
+          if (c.newStatus === "일부납") return `${d} ${fmtAmt(c.sched.scheduled_amount)} 중 ${fmtAmt(c.allocated)} 일부납 처리`;
+          return null;
+        }).filter(Boolean);
+
+        const memoText = `${payDateStr} ${payAmtStr} 입금. ${parts.join(", ")}`;
+
+        for (const c of payChanges) {
+          db.prepare(`
+            INSERT INTO installment_schedule_history
+            (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
+            VALUES (?, ?, ?, '자동동기화', ?, ?, ?, '시스템')
+          `).run(c.sched.id, plan.id, plan.debtor_id,
+            c.sched.due_date || c.sched.due_month,
+            lastPay.total_amount, memoText);
+        }
+      } else if (changes.filter(c => c.newStatus === "미납").length > 0) {
+        // 미납 처리 기록 (입금 없음)
+        for (const c of changes.filter(ch => ch.newStatus === "미납")) {
+          db.prepare(`
+            INSERT INTO installment_schedule_history
+            (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
+            VALUES (?, ?, ?, '자동동기화', ?, NULL, '입금 미확인으로 미납 처리', '시스템')
+          `).run(c.sched.id, plan.id, plan.debtor_id,
+            c.sched.due_date || c.sched.due_month);
+        }
+      }
+    }
+  })();
+
+  return updated;
+}
+
+// 서버 시작 시 1회 + 30분마다 자동 실행
+setTimeout(() => { try { const n = runInstallmentAutoSync(); if (n > 0) console.log(`[auto-sync] 분할상환 ${n}건 업데이트`); } catch(e) { console.error("[auto-sync] 오류:", e.message); } }, 5000);
+setInterval(() => { try { const n = runInstallmentAutoSync(); if (n > 0) console.log(`[auto-sync] 분할상환 ${n}건 업데이트`); } catch(e) { console.error("[auto-sync] 오류:", e.message); } }, 30 * 60 * 1000);
+
+// POST /api/installments/auto-sync - 입금내역 자동 매칭으로 상태 업데이트 (수동 호출)
+app.post("/api/installments/auto-sync", (req, res) => {
+  try {
+    const updated = runInstallmentAutoSync();
+    res.json({ ok: true, updated });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // POST /api/installments/:planId/schedules - 일정 추가
 app.post("/api/installments/:planId/schedules", (req, res) => {
   const { id, debtSource, institution, loanAmount, interestRate, dueDate, dueMonth, scheduledAmount, memo } = req.body || {};
@@ -908,6 +1390,25 @@ app.post("/api/installments/:planId/schedules", (req, res) => {
       interestRate || null, dueDate || null, dueMonth || null, scheduledAmount || 0, memo || null
     );
     res.json({ ok: true });
+  } catch(e) { res.status(400).json({ ok: false, error: e.message }); }
+});
+
+// POST /api/installments/schedules/batch - 일정 일괄 생성 (달력 추가 모달)
+app.post("/api/installments/schedules/batch", (req, res) => {
+  const { planId, schedules } = req.body || {};
+  if (!planId || !Array.isArray(schedules) || schedules.length === 0)
+    return res.status(400).json({ ok: false, error: "planId, schedules 필요" });
+  const plan = db.prepare("SELECT id FROM installment_plans WHERE id = ?").get(planId);
+  if (!plan) return res.status(404).json({ ok: false, error: "플랜 없음" });
+  try {
+    const stmt = db.prepare(
+      "INSERT INTO installment_schedules (id, plan_id, due_date, due_month, scheduled_amount, paid_amount, status, memo, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, datetime('now','localtime'))"
+    );
+    const insertMany = db.transaction((rows) => {
+      for (const s of rows) stmt.run(s.id, planId, s.dueDate || null, s.dueMonth || null, s.scheduledAmount || 0, s.status || "예정", s.memo || null);
+    });
+    insertMany(schedules);
+    res.json({ ok: true, created: schedules.length });
   } catch(e) { res.status(400).json({ ok: false, error: e.message }); }
 });
 
@@ -947,13 +1448,13 @@ app.post("/api/debtors", (req, res) => {
     const b = req.body;
     const id = b.id || `NPL${Date.now()}`;
     db.prepare(`
-      INSERT INTO debtors (id, brand_code, brand_name, category, assignee, name, phone,
+      INSERT INTO debtors (id, brand_code, category, assignee, name, phone,
         hub_code, hub_name, debt_cause, collection_status, exec_title, exec_title_url,
         loan_date, subrogation_month, birth_date, resident_number, sales_rep, key_notes,
         principal_balance, adjustment, collected_amount)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
-      id, b.brand || "B", b.brandName || "", b.category || "", b.assignee || "",
+      id, b.brand || "B", b.category || "", b.assignee || "",
       b.name || "", b.phone || "", b.hubCode || "", b.hubName || "",
       b.debtCause || "", b.collectionStatus || "", b.execTitle ? 1 : 0, b.execTitleUrl || "",
       b.loanDate || "", b.subrogationMonth || "", b.birthDate || "", b.residentNumber || "",
@@ -987,6 +1488,8 @@ app.delete("/api/debtors/:id", (req, res) => {
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
+    const _userName = req.body._userName || '관리자';
+
     const fieldMap = {
       category:"category",assignee:"assignee",name:"name",phone:"phone",
       hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
@@ -998,16 +1501,60 @@ app.patch("/api/debtors/:id", (req, res) => {
       salesRep:"sales_rep",keyNotes:"key_notes",
       principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
     };
-    const fields = [], vals = [];
+    const fieldLabels = {
+      category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
+      hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
+      execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
+      subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
+      creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
+      residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
+      birthDate:"생년월일",residentNumber:"주민등록번호",
+      salesRep:"영업담당자",keyNotes:"주요사항",
+      principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
+    };
+
+    const fields = [], vals = [], changedJsKeys = [];
     for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
-      if (req.body[jsKey] !== undefined) { fields.push(`${dbCol} = ?`); vals.push(req.body[jsKey]); }
+      if (jsKey === '_userName') continue;
+      if (req.body[jsKey] !== undefined) {
+        fields.push(`${dbCol} = ?`);
+        vals.push(req.body[jsKey]);
+        changedJsKeys.push(jsKey);
+      }
     }
     if (fields.length === 0 && req.body.guarantors === undefined) return res.json({ ok: true });
+
+    // 수정 전 현재 값 조회 (로그 기록용)
+    let oldRow = null;
+    if (fields.length > 0) {
+      const selectParts = Object.entries(fieldMap).map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
+      oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
+    }
+
     if (fields.length > 0) {
       fields.push("updated_at = datetime('now','localtime')");
       vals.push(id);
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
     }
+
+    // 변경 항목을 debtor_edit_log에 기록
+    if (oldRow && changedJsKeys.length > 0) {
+      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
+      const insLog = db.prepare(
+        "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      );
+      const logTx = db.transaction(() => {
+        for (const jsKey of changedJsKeys) {
+          const oldVal = String(oldRow[jsKey] ?? '');
+          const newVal = String(req.body[jsKey] ?? '');
+          if (oldVal !== newVal) {
+            insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
+          }
+        }
+      });
+      logTx();
+    }
+
     // 연대보증인 업데이트 (기존 삭제 후 재삽입)
     if (req.body.guarantors !== undefined) {
       const guarantors = Array.isArray(req.body.guarantors) ? req.body.guarantors : [];
@@ -1015,6 +1562,63 @@ app.patch("/api/debtors/:id", (req, res) => {
       const insG = db.prepare("INSERT INTO debtor_guarantors (debtor_id, name) VALUES (?, ?)");
       for (const g of guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
+
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ─── 수정 로그 조회 ──────────────────────────────
+app.get("/api/edit-logs", (req, res) => {
+  try {
+    const { debtorId, from, to, changedBy } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 1000, 5000);
+    const where = [];
+    const params = {};
+    if (debtorId)  { where.push("debtor_id = @debtorId");  params.debtorId = debtorId; }
+    if (from)      { where.push("changed_at >= @from");     params.from = from; }
+    if (to)        { where.push("changed_at <= @to");       params.to = to + " 23:59:59"; }
+    if (changedBy) { where.push("changed_by = @changedBy"); params.changedBy = changedBy; }
+    params.limit = limit;
+    const rows = db.prepare(`
+      SELECT id, debtor_id AS debtorId, debtor_name AS debtorName,
+             changed_by AS changedBy, changed_at AS changedAt,
+             field_name AS fieldName, field_label AS fieldLabel,
+             old_value AS oldValue, new_value AS newValue
+      FROM debtor_edit_log
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY changed_at DESC, id DESC
+      LIMIT @limit
+    `).all(params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ─── 월별 회수채널 조회 ──────────────────────────
+app.get("/api/collection-channels", (req, res) => {
+  try {
+    const { year } = req.query;
+    const rows = db.prepare(
+      year
+        ? "SELECT year, month, brand, channel, amount, updated_at AS updatedAt, updated_by AS updatedBy FROM collection_channels WHERE year = ? ORDER BY month, brand, channel"
+        : "SELECT year, month, brand, channel, amount, updated_at AS updatedAt, updated_by AS updatedBy FROM collection_channels ORDER BY year, month, brand, channel"
+    ).all(...(year ? [parseInt(year)] : []));
+    res.json(rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ─── 월별 회수채널 수정 (upsert) ─────────────────
+app.put("/api/collection-channels", (req, res) => {
+  try {
+    const { year, month, brand = 'all', channel, amount, updatedBy = '관리자' } = req.body;
+    if (!year || !month || !channel || amount === undefined) return res.status(400).json({ ok: false, error: "필수 파라미터 누락" });
+    db.prepare(`
+      INSERT INTO collection_channels (year, month, brand, channel, amount, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(year, month, brand, channel) DO UPDATE SET
+        amount = excluded.amount,
+        updated_at = datetime('now','localtime'),
+        updated_by = excluded.updated_by
+    `).run(parseInt(year), parseInt(month), brand, channel, parseInt(amount) || 0, updatedBy);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1253,7 +1857,7 @@ app.delete("/api/pending-payments/:id", (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── AI 문건생성 ─────────────────────────────────
+// ─── 문건 자동 생성 ─────────────────────────────────
 app.post("/api/documents/generate-hwpx", async (req, res) => {
   try {
     const docData = req.body;

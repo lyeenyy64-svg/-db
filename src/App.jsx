@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
@@ -20,12 +20,12 @@ const uid = (prefix) => `${prefix}${Date.now()}${rand(100, 999)}`;
 // ─── Default Config (editable via admin) ──────────────────
 const DEFAULT_CONFIG = {
   brands: [
-    { code: "B", name: "바로고",   color: "#3b82f6" },
-    { code: "D", name: "딜버",     color: "#8b5cf6" },
-    { code: "M", name: "모아라인", color: "#f59e0b" },
+    { code: "B", name: "바로고",   color: "#f59e0b" },
+    { code: "D", name: "딜버",     color: "#3b82f6" },
+    { code: "M", name: "모아라인", color: "#8b5cf6" },
     { code: "G", name: "그라이더", color: "#10b981" },
   ],
-  categories: ["장기채권", "추심의뢰", "회생/파산", "협의소송", "분할상환", "캐쉬상환", "완료", "대손채권"],
+  categories: ["장기채권", "추심의뢰", "회생/파산", "협의/소송", "분할상환", "캐쉬상환", "완료", "대손채권"],
   collStatuses: ["추심진행", "추심보류", "완료", "대손채권"],
   assignees: ["준원", "덕진"],
   debtCauses: ["본사", "웰컴", "어뷰징", "물품대금"],
@@ -67,7 +67,7 @@ function pickW(items, w) {
 // 대시보드 분류별 현황
 const DASHBOARD_GROUPS = [
   { label: "추심진행중", color: "#3b82f6", cats: ["장기채권"] },
-  { label: "협의소송",   color: "#f97316", cats: ["협의소송"] },
+  { label: "협의소송",   color: "#f97316", cats: ["협의/소송"] },
   { label: "회생/파산",  color: "#7c3aed", cats: ["회생/파산"] },
   { label: "추심의뢰",   color: "#f59e0b", cats: ["추심의뢰"] },
   { label: "분할상환",   color: "#06b6d4", cats: ["분할상환"] },
@@ -338,6 +338,112 @@ function applyThirdsOv(cases) {
   return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
 }
 
+// ─── 제3채무자 편집 섹션 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
+const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
+  const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
+  const [isEditing, setIsEditing] = useState(false);
+
+  const setRow = useCallback((i, k, v) => {
+    setRows(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
+  }, []);
+
+  const startEdit = useCallback(() => {
+    setRows(thirds.map(t => ({ ...t })));
+    setIsEditing(true);
+  }, [thirds]);
+
+  const handleSave = useCallback(() => {
+    const cleaned = rows.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
+    saveThirdsOv(caseId, cleaned);
+    onSave(cleaned);
+    setRows(cleaned);
+    setIsEditing(false);
+  }, [rows, caseId, onSave]);
+
+  const handleCancel = useCallback(() => {
+    setRows(thirds.map(t => ({ ...t })));
+    setIsEditing(false);
+  }, [thirds]);
+
+  const addRow = useCallback(() => {
+    setRows(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }]);
+  }, []);
+
+  const removeRow = useCallback((i) => {
+    setRows(prev => prev.filter((_, ri) => ri !== i));
+  }, []);
+
+  const display = isEditing ? rows : thirds;
+  const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
+  const numInpS = { ...inpS, textAlign: "right", width: 90 };
+
+  return (
+    <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 (압류 은행)</div>
+        <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>{display.length}건</span>
+        {!isEditing && (
+          <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
+            잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {!isEditing ? (
+          <button onClick={startEdit} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={addRow} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 행 추가</button>
+            <button onClick={handleSave} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+            <button onClick={handleCancel} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          </div>
+        )}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid var(--brd)" }}>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>잔액</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
+              {isEditing && <th style={{ padding: "4px 8px" }} />}
+            </tr>
+          </thead>
+          <tbody>
+            {display.map((t, i) => isEditing ? (
+              <tr key={i} style={{ borderBottom: "1px solid var(--brd)" }}>
+                <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.claimAmount || "")} onChange={v => setRow(i, "claimAmount", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.balance || "")} onChange={v => setRow(i, "balance", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.collected || "")} onChange={v => setRow(i, "collected", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
+                <td style={{ padding: "4px 6px" }}>
+                  <button onClick={() => removeRow(i)} style={{ padding: "2px 7px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
+                <td style={{ padding: "5px 8px", color: "var(--ts)" }}>{t.seqNo}</td>
+                <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.bankName}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: "var(--tm)" }}>{t.claimAmount > 0 ? fmt(t.claimAmount) : "-"}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: t.balance > 0 ? "var(--ok)" : "var(--tp)" }}>{t.balance > 0 ? fmt(t.balance) : "-"}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: t.collected > 0 ? "#3b82f6" : "var(--tm)" }}>{t.collected > 0 ? fmt(t.collected) : "-"}</td>
+                <td style={{ padding: "5px 8px", color: "var(--ts)", whiteSpace: "nowrap" }}>{t.responseDate || "-"}</td>
+                <td style={{ padding: "5px 8px", color: "var(--ts)", fontSize: 11, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.remarks || ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+});
+
 // ─── 강화된 이름 정규화 (전자소송 피고명용) ────────────────
 function normLegalName(raw) {
   return String(raw || "")
@@ -534,6 +640,7 @@ const I = ({ name, size = 18 }) => {
     refresh: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
     fileText: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
     download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+    sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75z"/></svg>,
   };
   return s[name] || null;
 };
@@ -557,6 +664,62 @@ const Field = ({ label, children, span }) => (
 );
 const inp = { width: "100%", padding: "8px 10px", fontSize: 13 };
 
+// 한글 IME 버그 방지 — uncontrolled + ref 방식으로 React가 DOM value를 건드리지 않게 함
+// controlled input(value prop)은 조합 중 React가 value attribute를 덮어써서 IME를 끊어버림
+const KoreanInput = ({ value, onChange, ...rest }) => {
+  const ref = useRef(null);
+  const composing = useRef(false);
+  useEffect(() => {
+    if (ref.current && !composing.current && ref.current.value !== (value ?? ""))
+      ref.current.value = value ?? "";
+  }, [value]);
+  return (
+    <input
+      ref={ref}
+      {...rest}
+      defaultValue={value ?? ""}
+      onChange={e => { if (!composing.current && onChange) onChange(e); }}
+      onCompositionStart={() => { composing.current = true; }}
+      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); }}
+    />
+  );
+};
+const KoreanTextarea = ({ value, onChange, ...rest }) => {
+  const ref = useRef(null);
+  const composing = useRef(false);
+  useEffect(() => {
+    if (ref.current && !composing.current && ref.current.value !== (value ?? ""))
+      ref.current.value = value ?? "";
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      {...rest}
+      defaultValue={value ?? ""}
+      onChange={e => { if (!composing.current && onChange) onChange(e); }}
+      onCompositionStart={() => { composing.current = true; }}
+      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); }}
+    />
+  );
+};
+
+// 천단위 쉼표 금액 입력 컴포넌트
+// value: 숫자 문자열 (쉼표 없음), onChange: raw 숫자 문자열 반환 → Number() 그대로 사용 가능
+const MoneyInput = ({ value, onChange, style, placeholder }) => {
+  const display = value !== "" && value !== undefined && !isNaN(Number(value)) && value !== null
+    ? Number(value).toLocaleString("ko-KR")
+    : (value || "");
+  return (
+    <input
+      value={display}
+      onChange={e => { const raw = e.target.value.replace(/[^0-9]/g, ""); onChange(raw); }}
+      inputMode="numeric"
+      style={style}
+      placeholder={placeholder || ""}
+    />
+  );
+};
+
 // ─── Autocomplete Component ──────────────────────────────
 const AutoComplete = ({ value, onChange, options, placeholder, displayFn, style: extraStyle }) => {
   const [text, setText] = useState(displayFn ? (displayFn(value) || "") : (value || ""));
@@ -575,7 +738,7 @@ const AutoComplete = ({ value, onChange, options, placeholder, displayFn, style:
   });
   return (
     <div ref={ref} style={{ position: "relative", ...extraStyle }}>
-      <input
+      <KoreanInput
         value={text}
         onChange={e => { setText(e.target.value); setOpen(true); }}
         onFocus={() => { setOpen(true); setFocused(true); }}
@@ -614,11 +777,11 @@ const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
   }, []);
   const filtered = debtors.filter(d => {
     const q = text.toLowerCase();
-    return d.name.includes(q) || d.id.toLowerCase().includes(q) || d.hubName.includes(q) || d.brandName.includes(q);
+    return (d.name || "").toLowerCase().includes(q) || (d.id || "").toLowerCase().includes(q) || (d.hubName || "").toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q);
   }).slice(0, 20);
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <input value={text} onChange={e => { setText(e.target.value); setOpen(true); if (!e.target.value) onChange(""); }} onFocus={() => setOpen(true)} placeholder="채무자명, ID, 허브명으로 검색..." style={inp} />
+      <KoreanInput value={text} onChange={e => { setText(e.target.value); setOpen(true); if (!e.target.value) onChange(""); }} onFocus={() => setOpen(true)} placeholder="채무자명, ID, 허브명으로 검색..." style={inp} />
       {open && filtered.length > 0 && (
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, maxHeight: 220, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
           {filtered.map(d => (
@@ -635,6 +798,110 @@ const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
         </div>
       )}
     </div>
+  );
+};
+
+// ─── Rematch Modal (module-level to prevent state reset on parent re-render) ──
+const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showToast }) => {
+  const [newDebtorId, setNewDebtorId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const currentDebtor = debtors.find(d => d.id === pay?.debtorId);
+  const selectedNewDebtor = debtors.find(d => d.id === newDebtorId);
+  const doRematch = async () => {
+    if (!newDebtorId) { showToast("새 채무자를 선택하세요"); return; }
+    setSaving(true);
+    try {
+      const r = await fetch("/api/payments/" + pay.id + "/rematch", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newDebtorId, userName: "관리자" }),
+      });
+      const result = await r.json();
+      if (!result.ok) { showToast(result.error || "재매칭 실패"); setSaving(false); return; }
+      await onReload();
+      showToast(`재매칭 완료: ${result.oldDebtorName} → ${result.newDebtorName}`);
+      onClose();
+    } catch (e) { showToast("재매칭 실패: " + (e.message || "네트워크 오류")); setSaving(false); }
+  };
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title="입금 재매칭" onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+          <div style={{ marginBottom: 6, color: "var(--tm)", fontWeight: 600, fontSize: 11 }}>현재 매칭 정보</div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span><span style={{ color: "var(--tm)" }}>입금일:</span> {fmtDate(pay?.paymentDate)}</span>
+            <span><span style={{ color: "var(--tm)" }}>금액:</span> <b>{fmt(pay?.totalAmount)}</b></span>
+            <span><span style={{ color: "var(--tm)" }}>입금자:</span> {pay?.payerName || "-"}</span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <span style={{ color: "var(--tm)" }}>현재 채무자: </span>
+            <b style={{ color: "#ef4444" }}>{currentDebtor?.name || pay?.debtorName}</b>
+            <span style={{ color: "var(--tm)", marginLeft: 4, fontSize: 11 }}>({pay?.debtorId})</span>
+          </div>
+        </div>
+        <Field label="새 채무자 선택">
+          <DebtorAutoComplete value={newDebtorId} onChange={setNewDebtorId} debtors={debtors} brands={brands} />
+        </Field>
+        {selectedNewDebtor && (
+          <div style={{ background: "#10b98112", border: "1px solid #10b98140", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#10b981", display: "flex", alignItems: "center", gap: 6 }}>
+            <b>선택됨:</b> {selectedNewDebtor.name} <span style={{ color: "var(--tm)", fontSize: 11 }}>({selectedNewDebtor.id}) · {selectedNewDebtor.hubName}</span>
+          </div>
+        )}
+      </div>
+      <ModalFooter onCancel={onClose} onSave={doRematch} saveLabel={saving ? "처리중…" : "재매칭"} />
+    </Overlay>
+  );
+};
+
+// ─── RolloverModal ────────────────────────────────────────
+const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
+  const [newDate, setNewDate] = useState("");
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+  const doRollover = async () => {
+    if (!newDate) { showToast("이월 날짜를 선택하세요"); return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/installments/schedules/${sched.id}/rollover`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newDate, memo, userName: "관리자" }),
+      });
+      const result = await r.json();
+      if (!result.ok) { showToast(result.error || "이월 실패"); setSaving(false); return; }
+      await onReload();
+      const [, m, d] = newDate.split("-");
+      showToast(`이월 완료 → ${parseInt(m)}월 ${parseInt(d)}일`);
+      onClose();
+    } catch(e) { showToast("이월 실패: " + (e.message || "네트워크 오류")); setSaving(false); }
+  };
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title="납부일 이월" onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+          <div style={{ marginBottom: 6, color: "var(--tm)", fontWeight: 600, fontSize: 11 }}>현재 납부 일정</div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+            <span><span style={{ color: "var(--tm)" }}>채무자:</span> <b>{sched?.debtorName}</b></span>
+            <span><span style={{ color: "var(--tm)" }}>예정일:</span> <b className="mono">{sched?.dueDate || sched?.dueMonth}</b></span>
+            <span><span style={{ color: "var(--tm)" }}>금액:</span> <b className="mono" style={{ color: "var(--acc)" }}>{fmt(sched?.scheduledAmount)}</b></span>
+          </div>
+        </div>
+        <Field label="이월 날짜 (필수)">
+          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} min={todayStr} style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
+        </Field>
+        <Field label="메모 (채무자와 통화 내용 등)">
+          <KoreanInput value={memo} onChange={e => setMemo(e.target.value)} placeholder="예: 월급 후 3일 뒤 입금하겠다고 함" style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
+        </Field>
+        {newDate && (
+          <div style={{ background: "#8b5cf610", border: "1px solid #8b5cf640", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7c3aed" }}>
+            기존 일정은 <b>이월</b> 처리되고, <b>{newDate}</b>에 새 납부 일정이 생성됩니다.
+          </div>
+        )}
+      </div>
+      <ModalFooter onCancel={onClose} onSave={doRollover} saveLabel={saving ? "처리중…" : "이월 처리"} />
+    </Overlay>
   );
 };
 
@@ -742,14 +1009,14 @@ const LoginScreen = ({ onLogin, loginError }) => {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 5, fontWeight: 500 }}>이름 또는 이메일</div>
-            <input value={id} onChange={e => setId(e.target.value)} placeholder="이름 또는 이메일 주소"
+            <KoreanInput value={id} onChange={e => setId(e.target.value)} placeholder="이름 또는 이메일 주소"
               style={{ width: "100%", padding: "11px 13px", borderRadius: 10, fontSize: 14, border: `1px solid ${brd}`, background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }}
               onKeyDown={e => e.key === "Enter" && doLogin()} />
           </div>
           <div>
             <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 5, fontWeight: 500 }}>비밀번호</div>
             <div style={{ position: "relative" }}>
-              <input value={pw} type={showPw ? "text" : "password"} onChange={e => setPw(e.target.value)} placeholder="비밀번호"
+              <KoreanInput value={pw} type={showPw ? "text" : "password"} onChange={e => setPw(e.target.value)} placeholder="비밀번호"
                 style={{ width: "100%", padding: "11px 40px 11px 13px", borderRadius: 10, fontSize: 14, border: `1px solid ${brd}`, background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }}
                 onKeyDown={e => e.key === "Enter" && doLogin()} />
               <button onClick={() => setShowPw(p => !p)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}>
@@ -902,7 +1169,7 @@ function SlackIngestView({ showToast, reloadFromBackend, currentUser }) {
           📌 메시지에 <b>국민#1812</b> 헤더가 포함된 경우에만 입금건으로 채택됩니다 (법무실 추심 계좌).<br />
           📌 IT팀에서 Slack 봇 설치 완료되면 이 작업이 자동으로 수행됩니다 — 지금은 데모입니다.
         </div>
-        <textarea
+        <KoreanTextarea
           value={text}
           onChange={e => setText(e.target.value)}
           placeholder={"예시:\n국민#1812\n05/20\n서병택   500,000\n주식회사 슈퍼메이커   247,940"}
@@ -1051,6 +1318,8 @@ export default function App() {
   const [adminEditingRule, setAdminEditingRule] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  const [adminEditLogs, setAdminEditLogs] = useState(null); // null=미로드, []~=로드됨
+  const [adminEditLogsLoading, setAdminEditLogsLoading] = useState(false);
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   const [legalSubTab, setLegalSubTab] = useState("지급명령");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
@@ -1059,9 +1328,32 @@ export default function App() {
   const [residentRevealed, setResidentRevealed] = useState(() => new Set());
   const [autoCreditScores, setAutoCreditScores] = useState({});
   const [autoSubrogationDates, setAutoSubrogationDates] = useState({});
+  const [prevTab, setPrevTab] = useState(null);
+  const [prevLegalSubTab, setPrevLegalSubTab] = useState(null);
+  const [chartYear, setChartYear] = useState(new Date().getFullYear());
+  const [legalSearchInit, setLegalSearchInit] = useState(null);
+  const [minsaSearchInit, setMinsaSearchInit] = useState(null);
+  const [collectionChannels, setCollectionChannels] = useState({});
+  const [collectionChannelsLoading, setCollectionChannelsLoading] = useState(false);
   const PP = 25;
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const navigateToDebtor = (debtor, detailTabName = "히스토리") => {
+    setPrevTab(tab);
+    setPrevLegalSubTab(legalSubTab);
+    setSel(debtor);
+    setTab("debtors");
+    setDetailTab(detailTabName);
+  };
+  const goBack = () => {
+    setSel(null);
+    if (prevTab) {
+      setTab(prevTab);
+      if (prevTab === "legal" && prevLegalSubTab) setLegalSubTab(prevLegalSubTab);
+      setPrevTab(null);
+      setPrevLegalSubTab(null);
+    }
+  };
   const [backendStatus, setBackendStatus] = useState("loading"); // loading / connected / failed
   const [isRefreshing, setIsRefreshing] = useState(false);
   const loadingRef = useRef(false);
@@ -1216,6 +1508,35 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // 월별 회수 채널 데이터 로드 (대시보드 접속 시)
+  useEffect(() => {
+    if (collectionChannelsLoading) return;
+    setCollectionChannelsLoading(true);
+    const _curY = new Date().getFullYear();
+    const _years = Array.from({ length: _curY - 2023 }, (_, i) => 2024 + i);
+    Promise.all(_years.map(y => fetch(`/api/collection-channels?year=${y}`).then(r => r.ok ? r.json() : [])))
+    .then(results => {
+      const map = {};
+      results.flat().forEach(r => {
+        const key = `${r.year}_${r.month}_${r.brand}_${r.channel}`;
+        map[key] = r.amount;
+      });
+      setCollectionChannels(map);
+      setCollectionChannelsLoading(false);
+    }).catch(() => setCollectionChannelsLoading(false));
+  }, []); // eslint-disable-line
+
+  // 수정 로그 탭 활성화 시 DB에서 자동 로드
+  useEffect(() => {
+    if (adminMainTab !== "logs") return;
+    if (adminEditLogs !== null && !adminEditLogsLoading) return; // 이미 로드됨
+    setAdminEditLogsLoading(true);
+    fetch("/api/edit-logs")
+      .then(r => r.ok ? r.json() : [])
+      .then(rows => { setAdminEditLogs(rows); setAdminEditLogsLoading(false); })
+      .catch(() => { setAdminEditLogs([]); setAdminEditLogsLoading(false); });
+  }, [adminMainTab]);
+
   // ─── Audit Log (with user) ──────────────────────────────
   const [auditLogs, setAuditLogs] = useState([]);
   const addLog = (action, target, detail, changes) => {
@@ -1246,7 +1567,7 @@ export default function App() {
   };
   const exportDebtors = (list) => {
     downloadCSV(`채권관리_${today()}.csv`,
-      ["ID","브랜드","분류","담당","채무자명","연락처","코드","허브/지점","채무발생원인","추심상태","원금잔액","조정액","회수액","최종잔액(재무)","최종잔액(법무)","집행권원","대여일자","주요사항"],
+      ["ID","브랜드","분류","담당","채무자명","연락처","코드","허브/지점","채무발생원인","추심상태","원채무액","추가법무비용","회수액","재무기준잔액","법무기준잔액","집행권원","대여일자","주요사항"],
       list.map(d => [d.id, d.brandName, d.category, d.assignee, d.name, d.phone, d.hubCode, d.hubName, d.debtCause, d.collectionStatus, d.principalBalance, d.adjustment, d.collectedAmount, d.finalBalanceFinance, d.finalBalanceLegal, d.execTitle ? "O" : "X", d.loanDate, d.keyNotes])
     );
   };
@@ -1272,7 +1593,7 @@ export default function App() {
 
   // ─── Data Mutation Helpers ──────────────────────────────
   // #2,#3 채무자 수정 — 이름/브랜드 변경 시 관련 데이터 연쇄 ���신
-  const updateDebtor = (id, changes) => {
+  const updateDebtor = async (id, changes) => {
     setData(prev => {
       const old = prev.debtors.find(d => d.id === id);
       if (!old) return prev;
@@ -1306,8 +1627,22 @@ export default function App() {
       };
     });
     if (sel && sel.id === id) setSel(prev => ({ ...prev, ...changes }));
-    // DB에 영구 저장
-    fetch(`/api/debtors/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(changes) }).catch(() => {});
+    // DB에 영구 저장 (에러 시 토스트로 즉시 알림)
+    try {
+      const res = await fetch(`/api/debtors/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...changes, _userName: currentUser?.name || "관리자" }),
+      });
+      const result = await res.json();
+      if (!result.ok) {
+        showToast(`저장 실패: ${result.error || "서버 오류"} — 새로고침 후 다시 시도해주세요`);
+        await reloadFromBackend();
+      }
+    } catch (e) {
+      showToast("서버 연결 실패 — 변경사항이 저장되지 않았습니다. 새로고침 후 다시 시도해주세요.");
+      await reloadFromBackend();
+    }
   };
   const addDebtor = async (debtor) => {
     setData(prev => ({ ...prev, debtors: [debtor, ...prev.debtors] }));
@@ -1344,8 +1679,8 @@ export default function App() {
   // 채무자 잔액 재계산 헬퍼
   const recalcDebtor = (d, collectedDelta, paymentDate) => {
     const newCollected = d.collectedAmount + collectedDelta;
-    const newFinFinance = d.principalBalance - newCollected;
-    const newFinLegal = newFinFinance + d.adjustment;
+    const newFinFinance = (d.principalBalance || 0) - newCollected;
+    const newFinLegal = (d.principalBalance || 0) + (d.adjustment || 0) - newCollected;
     const month = paymentDate ? new Date(paymentDate).getMonth() + 1 : null;
     const newMonthly = month ? { ...d.monthlyCollected, [month]: Math.max(0, (d.monthlyCollected[month] || 0) + collectedDelta) } : d.monthlyCollected;
     // #6 잔액 0 이하 시 추심보류로 자동 변경
@@ -1386,6 +1721,13 @@ export default function App() {
       );
       setData(prev => ({ ...prev, installmentPlans: plans, installmentSchedules: schedules }));
     } catch(e) { showToast("분할상환 로드 실패"); }
+  };
+  const addInstallmentMemo = async (schedId, memo, eventType = "메모") => {
+    await fetch(`/api/installments/schedules/${schedId}/memo`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memo, eventType, userName: "관리자" }),
+    });
+    await reloadInstallments();
   };
 
   // 회생파산 회차 문자열 +1 증가: "33회차" → "34회차" (범위 형식은 변경 안 함)
@@ -1574,7 +1916,23 @@ export default function App() {
     const byStatus = {}; config.collStatuses.forEach(s => { byStatus[s] = d.filter(x => x.collectionStatus === s).length; });
     const byAssignee = {}; config.assignees.forEach(a => { byAssignee[a] = d.filter(x => x.assignee === a).length; });
     const monthlyPayments = {};
-    for (let m = 1; m <= 12; m++) monthlyPayments[m] = data.payments.filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === 2026 && pd.getMonth() + 1 === m; }).reduce((s, p) => s + p.totalAmount, 0);
+    const monthlyByChannel = {};
+    const _thisYear = new Date().getFullYear();
+    for (let m = 1; m <= 12; m++) {
+      const ps = data.payments.filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === _thisYear && pd.getMonth() + 1 === m; });
+      monthlyPayments[m] = ps.reduce((s, p) => s + p.totalAmount, 0);
+      const companyAccount = ps.reduce((s, p) => s + (p.companyAccount || 0), 0);
+      monthlyByChannel[m] = {
+        companyAccount,
+        cashCharge: ps.reduce((s, p) => s + (p.cashCharge || 0), 0),
+        welcomeDirect: ps.reduce((s, p) => s + (p.welcomeDirect || 0), 0),
+        byBrand: {
+          B: ps.filter(p => p.brand === 'B').reduce((s, p) => s + (p.totalAmount || 0), 0),
+          D: ps.filter(p => p.brand === 'D').reduce((s, p) => s + (p.totalAmount || 0), 0),
+          M: ps.filter(p => p.brand === 'M').reduce((s, p) => s + (p.totalAmount || 0), 0),
+        },
+      };
+    }
     const lc = data.legalCases || [];
     const ad = data.assetDisclosures || [];
     const cmp = data.complaints || [];
@@ -1586,7 +1944,7 @@ export default function App() {
     };
     const totalLegal = lc.length + ad.length + cmp.length;
     const totalSeizures = lc.filter(c => c.type === "압류").length;
-    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
+    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
   }, [data, config]);
 
   const alertList = useMemo(() => {
@@ -1699,7 +2057,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const isEdit = modal.data;
     const [f, setF] = useState(isEdit ? { ...modal.data } : {
       brand: config.brands[0]?.code || "B", category: config.categories[0], assignee: config.assignees[0],
-      name: "", phone: "", hubCode: "", hubName: config.hubNames[0] || "", debtCause: config.debtCauses[0] || "",
+      name: "", phone: "", hubCode: "", hubName: "", debtCause: config.debtCauses[0] || "",
       collectionStatus: config.collStatuses[0], execTitle: false, execTitleType: "", execTitleUrl: "",
       loanDate: today(), principalBalance: 0, adjustment: 0, collectedAmount: 0,
       salesRep: "", residentNumber: "",
@@ -1719,7 +2077,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         phone: phoneItems.filter(p => p.trim()).join("\n"),
         brandName: brandObj.name, brandColor: brandObj.color,
         finalBalanceFinance: (f.principalBalance || 0) - (f.collectedAmount || 0),
-        finalBalanceLegal: (f.principalBalance || 0) - (f.collectedAmount || 0) + (f.adjustment || 0),
+        finalBalanceLegal: (f.principalBalance || 0) + (f.adjustment || 0) - (f.collectedAmount || 0),
         monthlyCollected: f.monthlyCollected || {},
         phoneHistory: f.phoneHistory || [], guarantors: f.guarantors || [],
       };
@@ -1743,21 +2101,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="브랜드"><select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>
           <Field label="분류"><select value={f.category} onChange={e => set("category", e.target.value)} style={inp}>{config.categories.map(c => <option key={c}>{c}</option>)}</select></Field>
           <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
-          <Field label="채무자명"><input value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
-          <Field label="연대보증인" span={2}><input value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
+          <Field label="채무자명"><KoreanInput value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
+          <Field label="연대보증인" span={2}><KoreanInput value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
           <Field label="연락처" span={3}>
             <div>
               {phoneItems.map((p, i) => (
                 <div key={i} style={{ display: "flex", gap: 6, marginBottom: 5 }}>
-                  <input value={p} onChange={e => setPhoneItems(prev => prev.map((x, xi) => xi === i ? e.target.value : x))} style={{ ...inp, flex: 1 }} placeholder={`연락처 ${i + 1} (예: 이름 010-0000-0000)`} />
+                  <KoreanInput value={p} onChange={e => setPhoneItems(prev => prev.map((x, xi) => xi === i ? e.target.value : x))} style={{ ...inp, flex: 1 }} placeholder={`연락처 ${i + 1} (예: 이름 010-0000-0000)`} />
                   <button type="button" onClick={() => setPhoneItems(prev => prev.filter((_, xi) => xi !== i))} style={{ padding: "0 10px", borderRadius: 8, background: "#ef444418", color: "#ef4444", border: "1px solid #ef444430", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>×</button>
                 </div>
               ))}
               <button type="button" onClick={() => setPhoneItems(prev => [...prev, ""])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 7, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer", fontSize: 12, marginTop: 2 }}>+ 연락처 추가</button>
             </div>
           </Field>
-          <Field label="코드"><input value={f.hubCode} onChange={e => set("hubCode", e.target.value)} style={inp} placeholder="허브 코드" /></Field>
-          <Field label="허브/지점"><AutoComplete value={f.hubName} onChange={v => set("hubName", v)} options={config.hubNames} placeholder="허브/지점 검색..." /></Field>
+          <Field label="코드"><KoreanInput value={f.hubCode} onChange={e => set("hubCode", e.target.value)} style={inp} placeholder="허브 코드" /></Field>
+          <Field label="허브/지점"><KoreanInput value={f.hubName || ""} onChange={e => set("hubName", e.target.value)} style={inp} placeholder="허브/지점 직접 입력" /></Field>
           <Field label="채무발생원인"><select value={f.debtCause} onChange={e => set("debtCause", e.target.value)} style={inp}>{config.debtCauses.map(c => <option key={c}>{c}</option>)}</select></Field>
           <Field label="추심상태"><select value={f.collectionStatus} onChange={e => set("collectionStatus", e.target.value)} style={inp}>{config.collStatuses.map(s => <option key={s}>{s}</option>)}</select></Field>
           <Field label="원금 잔액"><input type="text" value={f.principalBalance === 0 || f.principalBalance == null ? "" : Number(f.principalBalance).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("principalBalance", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
@@ -1765,12 +2123,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="회수액"><input type="text" value={f.collectedAmount === 0 || f.collectedAmount == null ? "" : Number(f.collectedAmount).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("collectedAmount", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
           <Field label="대여일자"><input type="date" value={f.loanDate} onChange={e => set("loanDate", e.target.value)} style={inp} /></Field>
           <Field label="집행권원 종류"><select value={f.execTitleType || ""} onChange={e => { set("execTitleType", e.target.value); set("execTitle", !!e.target.value); }} style={inp}><option value="">없음</option><option value="공정증서+집행문">공정증서+집행문</option><option value="지급명령결정정본">지급명령결정정본</option><option value="판결정본+집행문+송달증명원+확정증명원">판결정본+집행문+송달증명원+확정증명원</option></select></Field>
-          <Field label="집행권원 PDF (OneDrive)"><input value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
-          <Field label="대위변제일"><input value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
-          <Field label="신용점수"><input value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
-          <Field label="영업담당자"><input value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
-          <Field label="주민등록번호" span={2}><input value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
-          <Field label="주요사항" span={3}><textarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
+          <Field label="집행권원 PDF (OneDrive)"><KoreanInput value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
+          <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
+          <Field label="신용점수"><KoreanInput value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
+          <Field label="영업담당자"><KoreanInput value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
+          <Field label="주민등록번호" span={2}><KoreanInput value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
+          <Field label="주요사항" span={3}><KoreanTextarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
         </div>
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel={isEdit ? "수정" : "등록"} />
       </Overlay>
@@ -1811,63 +2169,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               : <DebtorAutoComplete value={f.debtorId} onChange={v => set("debtorId", v)} debtors={data.debtors} brands={config.brands} />}
           </Field>
           <Field label="입금일"><input type="date" value={f.paymentDate} onChange={e => set("paymentDate", e.target.value)} style={inp} /></Field>
-          <Field label="입금자명"><input value={f.payerName} onChange={e => set("payerName", e.target.value)} style={inp} /></Field>
-          <Field label="입금액"><input type="number" value={f.totalAmount} onChange={e => set("totalAmount", e.target.value)} style={inp} placeholder="금액 입력" /></Field>
+          <Field label="입금자명"><KoreanInput value={f.payerName} onChange={e => set("payerName", e.target.value)} style={inp} /></Field>
+          <Field label="입금액"><MoneyInput value={f.totalAmount} onChange={v => set("totalAmount", v)} style={inp} placeholder="금액 입력" /></Field>
           <Field label="입금 채널"><select value={f.channel} onChange={e => set("channel", e.target.value)} style={inp}>{config.paymentChannels.map(c => <option key={c}>{c}</option>)}</select></Field>
-          <Field label="비고" span={2}><input value={f.note} onChange={e => set("note", e.target.value)} style={inp} placeholder="비고 사항" /></Field>
+          <Field label="비고" span={2}><KoreanInput value={f.note} onChange={e => set("note", e.target.value)} style={inp} placeholder="비고 사항" /></Field>
         </div>
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="등록" />
       </Overlay>
     );
   };
 
-  // ─── Rematch Modal ──────────────────────────────────────
-  const RematchModal = () => {
-    const pay = modal.payment;
-    const [newDebtorId, setNewDebtorId] = useState("");
-    const [saving, setSaving] = useState(false);
-    const currentDebtor = data.debtors.find(d => d.id === pay?.debtorId);
-    const doRematch = async () => {
-      if (!newDebtorId) { showToast("새 채무자를 선택하세요"); return; }
-      setSaving(true);
-      try {
-        const r = await fetch("/api/payments/" + pay.id + "/rematch", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ newDebtorId, userName: "관리자" }),
-        });
-        const result = await r.json();
-        if (!result.ok) { showToast(result.error || "재매칭 실패"); setSaving(false); return; }
-        await reloadFromBackend();
-        showToast("재매칭 완료");
-        setModal(null);
-      } catch (e) { showToast("재매칭 실패"); setSaving(false); }
-    };
-    return (
-      <Overlay onClose={() => setModal(null)}>
-        <ModalHeader title="입금 재매칭" onClose={() => setModal(null)} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
-            <div style={{ marginBottom: 6, color: "var(--tm)", fontWeight: 600, fontSize: 11 }}>현재 매칭 정보</div>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <span><span style={{ color: "var(--tm)" }}>입금일:</span> {fmtDate(pay?.paymentDate)}</span>
-              <span><span style={{ color: "var(--tm)" }}>금액:</span> <b>{fmt(pay?.totalAmount)}</b></span>
-              <span><span style={{ color: "var(--tm)" }}>입금자:</span> {pay?.payerName || "-"}</span>
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <span style={{ color: "var(--tm)" }}>현재 채무자: </span>
-              <b style={{ color: "#ef4444" }}>{currentDebtor?.name || pay?.debtorName}</b>
-              <span style={{ color: "var(--tm)", marginLeft: 4, fontSize: 11 }}>({pay?.debtorId})</span>
-            </div>
-          </div>
-          <Field label="새 채무자 선택">
-            <DebtorAutoComplete value={newDebtorId} onChange={setNewDebtorId} debtors={data.debtors} brands={config.brands} />
-          </Field>
-        </div>
-        <ModalFooter onCancel={() => setModal(null)} onSave={doRematch} saveLabel={saving ? "처리중…" : "재매칭"} />
-      </Overlay>
-    );
-  };
+  // RematchModal → RematchModalStandalone (module-level) 사용
 
   // ─── Activity Add Modal ─────────────────────────────────
   const ActivityFormModal = () => {
@@ -1897,7 +2209,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="활동일"><input type="date" value={f.activityDate} onChange={e => set("activityDate", e.target.value)} style={inp} /></Field>
           <Field label="활동 유형"><select value={f.activityType} onChange={e => set("activityType", e.target.value)} style={inp}>{config.activityTypes.map(t => <option key={t}>{t}</option>)}</select></Field>
           <Field label="담당자"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
-          <Field label="활동 내용" span={2}><textarea value={f.content} onChange={e => set("content", e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="통화 내용, 결과, 약속 등" /></Field>
+          <Field label="활동 내용" span={2}><KoreanTextarea value={f.content} onChange={e => set("content", e.target.value)} rows={4} style={{ ...inp, resize: "vertical" }} placeholder="통화 내용, 결과, 약속 등" /></Field>
         </div>
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="기록" />
       </Overlay>
@@ -1932,12 +2244,104 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
         </div>
-        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>2026년 월별 회수실적</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 120 }}>
-            {Array.from({ length: 12 }, (_, i) => { const m = i + 1, val = stats.monthlyPayments[m] || 0, maxVal = Math.max(...Object.values(stats.monthlyPayments)); const h = maxVal > 0 ? (val / maxVal) * 100 : 0; return (<div key={m} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}><div className="mono" style={{ fontSize: 9, color: "var(--tm)" }}>{val > 0 ? `${(val / 10000).toFixed(0)}만` : ""}</div><div style={{ width: "100%", height: `${Math.max(h, 4)}%`, background: m <= 4 ? "linear-gradient(180deg,var(--acc),#ff5f0088)" : "var(--bg)", borderRadius: 4, minHeight: 4 }} /><div style={{ fontSize: 10, color: "var(--tm)" }}>{m}월</div></div>); })}
-          </div>
-        </div>
+        {/* ── 월별 회수실적 차트 ── */}
+        {(() => {
+          const fmtBar = (v) => { if (!v) return ""; if (v >= 100000000) return `${(v/100000000).toFixed(1)}억`; return `${Math.round(v/10000)}만`; };
+          const CHART_H = 180;
+          const nowMonth = new Date().getMonth() + 1;
+          const nowYear = new Date().getFullYear();
+          const CHART_BRANDS = [{ code: 'B', name: '바로고' }, { code: 'D', name: '딜버' }, { code: 'M', name: '모아라인' }];
+
+          const getCC = (year, month, brand, channel) =>
+            collectionChannels[`${year}_${month}_${brand}_${channel}`] || 0;
+
+          const monthlyData = Array.from({ length: 12 }, (_, i) => {
+            const m = i + 1;
+            if (chartYear === nowYear) {
+              const total = stats.monthlyByChannel?.[m]?.companyAccount || 0;
+              const brands = { B: stats.monthlyByChannel?.[m]?.byBrand?.B || 0, D: stats.monthlyByChannel?.[m]?.byBrand?.D || 0, M: stats.monthlyByChannel?.[m]?.byBrand?.M || 0 };
+              return { m, total, brands };
+            }
+            const total = getCC(chartYear, m, 'all', 'total') || 0;
+            const brands = { B: getCC(chartYear, m, 'B', 'total'), D: getCC(chartYear, m, 'D', 'total'), M: getCC(chartYear, m, 'M', 'total') };
+            return { m, total, brands };
+          });
+
+          const maxVal = Math.max(...monthlyData.map(d => d.total), 1);
+          const totalAnnual = monthlyData.reduce((s, d) => s + d.total, 0);
+
+          return (
+            <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+              <style>{`.chart-bc-col .chart-bc-tip{opacity:0;transition:opacity 0.12s;}.chart-bc-col:hover .chart-bc-tip{opacity:1;}.chart-bc-col:hover .chart-bc-bar{opacity:0.75;}`}</style>
+              {/* 헤더 */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>월별 회수실적</div>
+                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 11, color: "var(--ts)", marginTop: 2 }}>{chartYear}년 합계 {fmt(totalAnnual)}</div>}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <button onClick={() => setChartYear(y => y - 1)} disabled={chartYear <= 2024}
+                    style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear <= 2024 ? "var(--brd)" : "var(--tp)", cursor: chartYear <= 2024 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>‹</button>
+                  <span style={{ fontSize: 13, fontWeight: 700, minWidth: 44, textAlign: "center", color: "var(--tp)" }}>{chartYear}년</span>
+                  <button onClick={() => setChartYear(y => y + 1)} disabled={chartYear >= nowYear + 1}
+                    style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear >= nowYear + 1 ? "var(--brd)" : "var(--tp)", cursor: chartYear >= nowYear + 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>›</button>
+                </div>
+              </div>
+              {/* 차트 바 */}
+              <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: CHART_H + 52 }}>
+                {monthlyData.map(({ m, total, brands }) => {
+                  const totalH = total > 0 ? Math.max((total / maxVal) * CHART_H, 8) : 4;
+                  const isCurMonth = chartYear === nowYear && m === nowMonth;
+                  const isFuture = chartYear === nowYear && m > nowMonth;
+                  const hasBrands = CHART_BRANDS.some(b => brands[b.code] > 0);
+                  return (
+                    <div key={m} className="chart-bc-col"
+                      style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: "default", position: "relative" }}>
+                      {/* CSS hover 툴팁 — JS state 없이 렌더링 */}
+                      {total > 0 && (
+                        <div className="chart-bc-tip" style={{
+                          position: "absolute", bottom: "calc(100% + 6px)", left: "50%", transform: "translateX(-50%)",
+                          zIndex: 50, pointerEvents: "none",
+                          background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8,
+                          padding: "8px 10px", boxShadow: "0 4px 16px rgba(0,0,0,.18)", minWidth: 96, whiteSpace: "nowrap",
+                        }}>
+                          {hasBrands ? CHART_BRANDS.map(b => (
+                            <div key={b.code} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                              <span style={{ fontSize: 10, color: "var(--tm)", flex: 1 }}>{b.name}</span>
+                              <span className="mono" style={{ fontSize: 10, fontWeight: 700, color: brands[b.code] > 0 ? "var(--tp)" : "var(--ts)" }}>
+                                {brands[b.code] > 0 ? fmtBar(brands[b.code]) : "—"}
+                              </span>
+                            </div>
+                          )) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontSize: 10, color: "var(--tm)" }}>합계</span>
+                              <span className="mono" style={{ fontSize: 10, fontWeight: 700 }}>{fmtBar(total)}</span>
+                            </div>
+                          )}
+                          <div style={{ position: "absolute", bottom: -5, left: "50%", width: 8, height: 8,
+                            background: "var(--card)", border: "1px solid var(--brd)", borderTop: "none", borderLeft: "none",
+                            transform: "translateX(-50%) rotate(45deg)" }} />
+                        </div>
+                      )}
+                      <div className="mono" style={{ fontSize: 10, color: isCurMonth ? "var(--acc)" : "var(--ts)", fontWeight: isCurMonth ? 700 : 500, textAlign: "center", lineHeight: 1.2, minHeight: 28, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end" }}>
+                        {total > 0 ? fmtBar(total) : ""}
+                      </div>
+                      <div className="chart-bc-bar" style={{ width: "100%", height: totalH, borderRadius: "4px 4px 0 0",
+                        transition: "height 0.35s ease, opacity 0.12s",
+                        background: isFuture || total === 0 ? "var(--bg)"
+                          : (chartYear % 3 === 0) ? "linear-gradient(180deg,#60a5fa,#2563eb)"
+                          : (chartYear % 3 === 1) ? "linear-gradient(180deg,#a78bfa,#7c3aed)"
+                          : "linear-gradient(180deg,#34d399,#059669)" }} />
+                      <div style={{ width: "100%", height: 1, background: "var(--brd)" }} />
+                      <div style={{ fontSize: 11, color: isCurMonth ? "var(--acc)" : "var(--tm)", fontWeight: isCurMonth ? 700 : 400, marginTop: 2 }}>{m}월</div>
+                      {isCurMonth && <div style={{ width: 4, height: 4, borderRadius: "50%", background: "var(--acc)" }} />}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", justifyContent: "space-around" }}>
           {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (<div key={i} style={{ textAlign: "center" }}><div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{x.v}</div></div>))}
         </div>
@@ -1956,7 +2360,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, [q]);
     return (
       <div style={{ position: "relative" }}>
-        <input value={q} onChange={e => { setQ(e.target.value); setOpen(true); onChange(null); }}
+        <KoreanInput value={q} onChange={e => { setQ(e.target.value); setOpen(true); onChange(null); }}
           onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)}
           placeholder="채무자명 검색 (선택 시 연결)"
           style={{ ...inp, borderColor: value ? "var(--ok)" : undefined }} />
@@ -1984,48 +2388,201 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // ─── 분할상환 추가 모달 ────────────────────────────────────
   const InstallmentAddModal = () => {
     const initDebtorId = modal?.debtorId || "";
-    const [f, setF] = useState({ debtorId: initDebtorId, paymentTiming: "월말", monthlyAmount: "", startDate: today(), status: "진행중", memo: "" });
-    const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-    const debtor = data.debtors.find(d => d.id === f.debtorId);
+    const [debtorId, setDebtorId] = useState(initDebtorId);
+    const [firstDueDate, setFirstDueDate] = useState(today());
+    const [amountStr, setAmountStr] = useState("");
+    const [repeat, setRepeat] = useState(false);
+    const [repeatInterval, setRepeatInterval] = useState("매월");
+    const [endDate, setEndDate] = useState("");
+    const [useEndOfMonth, setUseEndOfMonth] = useState(false);
+    const [memo, setMemo] = useState("");
     const [saving, setSaving] = useState(false);
+
+    // 로컬 날짜 포맷 — toISOString()은 UTC 기준이라 UTC+9에서 하루 밀림
+    const localStr = (d) => {
+      if (!d || isNaN(d.getTime())) return "";
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+
+    const debtor = data.debtors.find(d => d.id === debtorId);
+    const parsedAmount = Number(amountStr.replace(/,/g, "")) || 0;
+    const totalClaim = debtor?.finalBalanceLegal || 0;
+    const count = totalClaim > 0 && parsedAmount > 0 ? Math.ceil(totalClaim / parsedAmount) : 0;
+
+    const firstDay = firstDueDate ? new Date(firstDueDate + "T00:00:00").getDate() : 0;
+    const showEndOfMonthToggle = repeatInterval === "매월" && firstDay >= 28;
+
+    const addNIntervals = (dateStr, interval, n, endOfMonth = false) => {
+      if (!dateStr || n <= 0) return dateStr;
+      const d = new Date(dateStr + "T00:00:00");
+      if (isNaN(d.getTime())) return "";
+      if (interval === "매주") d.setDate(d.getDate() + 7 * n);
+      else if (interval === "격주") d.setDate(d.getDate() + 14 * n);
+      else if (interval === "매월") {
+        const origDay = endOfMonth ? 31 : d.getDate();
+        const ny = d.getFullYear() + Math.floor((d.getMonth() + n) / 12);
+        const nm = (d.getMonth() + n) % 12;
+        const lastDay = new Date(ny, nm + 1, 0).getDate();
+        d.setFullYear(ny, nm, Math.min(origDay, lastDay));
+      } else if (interval === "매년") {
+        d.setFullYear(d.getFullYear() + n);
+      }
+      if (isNaN(d.getTime())) return "";
+      return localStr(d);
+    };
+
+    const cappedCount = Math.min(count, 1200);
+    const suggestedEndDate = cappedCount > 1 && firstDueDate ? addNIntervals(firstDueDate, repeatInterval, cappedCount - 1, useEndOfMonth) : "";
+
+    const generateDates = () => {
+      if (!firstDueDate) return [];
+      if (!repeat || !endDate) return [firstDueDate];
+      const endD = new Date(endDate + "T00:00:00");
+      if (isNaN(endD.getTime())) return [firstDueDate];
+      const dates = [];
+      const MAX = 1200;
+      if (repeatInterval === "매월") {
+        const origDay = useEndOfMonth ? 31 : new Date(firstDueDate + "T00:00:00").getDate();
+        let cur = new Date(firstDueDate + "T00:00:00");
+        while (dates.length < MAX) {
+          if (isNaN(cur.getTime()) || cur > endD) break;
+          dates.push(localStr(cur));
+          const nm = (cur.getMonth() + 1) % 12;
+          const ny = cur.getMonth() === 11 ? cur.getFullYear() + 1 : cur.getFullYear();
+          const lastDay = new Date(ny, nm + 1, 0).getDate();
+          cur = new Date(ny, nm, Math.min(origDay, lastDay));
+        }
+      } else if (repeatInterval === "매년") {
+        const origDay = new Date(firstDueDate + "T00:00:00").getDate();
+        const origMonth = new Date(firstDueDate + "T00:00:00").getMonth();
+        let cur = new Date(firstDueDate + "T00:00:00");
+        while (dates.length < MAX) {
+          if (isNaN(cur.getTime()) || cur > endD) break;
+          dates.push(localStr(cur));
+          cur = new Date(cur.getFullYear() + 1, origMonth, origDay);
+        }
+      } else {
+        const iv = repeatInterval === "매주" ? 7 : 14;
+        let cur = new Date(firstDueDate + "T00:00:00");
+        while (dates.length < MAX) {
+          if (isNaN(cur.getTime()) || cur > endD) break;
+          dates.push(localStr(cur));
+          cur.setDate(cur.getDate() + iv);
+        }
+      }
+      return dates;
+    };
+
+    const previewDates = generateDates();
+
     const handleSave = async () => {
-      if (!f.debtorId) return showToast("채무자를 선택하세요");
-      const existingPlan = data.installmentPlans.find(p => p.debtorId === f.debtorId);
+      if (!debtorId) return showToast("채무자를 선택하세요");
+      if (!firstDueDate) return showToast("첫 납부 예정일을 입력하세요");
+      const existingPlan = data.installmentPlans.find(p => p.debtorId === debtorId);
       if (existingPlan) return showToast("이미 분할상환 플랜이 있습니다. 일정을 직접 추가하세요.");
       setSaving(true);
       try {
-        const id = uid("INS");
-        const r = await fetch("/api/installments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, debtorId: f.debtorId, paymentTiming: f.paymentTiming, monthlyAmount: Number(f.monthlyAmount) || 0, startDate: f.startDate, status: f.status, memo: f.memo }),
+        const planId = uid("INS");
+        const pr = await fetch("/api/installments", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: planId, debtorId, paymentTiming: useEndOfMonth ? "말일" : "", monthlyAmount: parsedAmount, startDate: firstDueDate, status: "진행중", memo }),
         });
-        const result = await r.json();
-        if (!result.ok) { showToast(result.error || "저장 실패"); setSaving(false); return; }
+        const pResult = await pr.json();
+        if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
+        if (previewDates.length > 0) {
+          const schedules = previewDates.map((d, idx) => {
+            let amt = parsedAmount;
+            if (totalClaim > 0 && parsedAmount > 0 && previewDates.length > 1 && idx === previewDates.length - 1) {
+              const remainder = totalClaim - (previewDates.length - 1) * parsedAmount;
+              if (remainder > 0 && remainder < parsedAmount) amt = remainder;
+            }
+            return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amt, status: "예정", memo: "" };
+          });
+          const sr = await fetch("/api/installments/schedules/batch", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ planId, schedules }),
+          });
+          const sResult = await sr.json();
+          if (!sResult.ok) showToast(sResult.error || "일정 생성 오류");
+        }
         await reloadInstallments();
         setModal(null);
-        showToast("분할상환 플랜 추가 완료");
+        showToast(`플랜 추가 완료${previewDates.length > 1 ? ` (일정 ${previewDates.length}건)` : ""}`);
       } catch(e) { showToast("저장 실패"); setSaving(false); }
     };
+
     return (
       <Overlay onClose={() => setModal(null)}>
         <ModalHeader title="분할상환 플랜 추가" onClose={() => setModal(null)} />
         <div style={{ display: "grid", gap: 12 }}>
-          <Field label="채무자 연결"><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
-          <Field label="납부시기">
-            <div style={{ display: "flex", gap: 6 }}>
-              {config.installmentTimings.map(t => <button key={t} onClick={() => set("paymentTiming", t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.paymentTiming === t ? "var(--acc)" : "var(--bg2)", color: f.paymentTiming === t ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t}</button>)}
-            </div>
-          </Field>
+          <Field label="채무자 연결"><DebtorSearchField value={debtorId} onChange={setDebtorId} /></Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <Field label="기본 월 납부액(원)"><input type="number" value={f.monthlyAmount} onChange={e => set("monthlyAmount", e.target.value)} style={inp} placeholder="예: 300000" /></Field>
-            <Field label="시작일"><input type="date" value={f.startDate} onChange={e => set("startDate", e.target.value)} style={inp} /></Field>
+            <Field label="첫 납부 예정일">
+              <input type="date" value={firstDueDate} onChange={e => { setFirstDueDate(e.target.value); setUseEndOfMonth(false); }} style={inp} />
+            </Field>
+            <Field label="1회 납부액(원)">
+              <MoneyInput value={amountStr} onChange={setAmountStr} style={inp} placeholder="예: 300,000" />
+            </Field>
           </div>
-          {debtor && <div style={{ padding: "8px 12px", background: "var(--bg2)", borderRadius: 8, fontSize: 12, color: "var(--ts)" }}>총 채권액: <b style={{ color: "var(--tp)" }}>{fmt(debtor.finalBalanceLegal)}</b> (채무자 데이터 기준)</div>}
-          <Field label="상태"><select value={f.status} onChange={e => set("status", e.target.value)} style={inp}>{["진행중", "완료", "중단"].map(s => <option key={s}>{s}</option>)}</select></Field>
-          <Field label="메모"><textarea value={f.memo} onChange={e => set("memo", e.target.value)} style={{ ...inp, height: 60, resize: "vertical" }} /></Field>
+          {showEndOfMonthToggle && (
+            <div style={{ padding: "8px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ color: "#92400e", fontWeight: 600 }}>매월 납부일:</span>
+              {[false, true].map(eom => (
+                <button key={String(eom)} onClick={() => setUseEndOfMonth(eom)}
+                  style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: useEndOfMonth === eom ? "#f97316" : "var(--brd)", background: useEndOfMonth === eom ? "#f97316" : "var(--bg)", color: useEndOfMonth === eom ? "#fff" : "var(--tp)" }}>
+                  {eom ? "말일" : `${firstDay}일 고정`}
+                </button>
+              ))}
+              <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth ? "매달 마지막 날에 납부" : `매달 ${firstDay}일에 납부 (짧은 달은 말일)`}</span>
+            </div>
+          )}
+          {debtor && (
+            <div style={{ padding: "8px 12px", background: "var(--bg2)", borderRadius: 8, fontSize: 12, color: "var(--ts)" }}>
+              총 채권액: <b style={{ color: "var(--tp)" }}>{fmt(debtor.finalBalanceLegal)}</b>
+              {count > 0 && (() => {
+                const lastAmt = totalClaim - (count - 1) * parsedAmount;
+                return <span> · 예상 <b style={{ color: "var(--acc)" }}>{count}회</b> 납부{lastAmt > 0 && lastAmt < parsedAmount ? <span style={{ color: "var(--tm)" }}> (마지막 {fmt(lastAmt)}원)</span> : ""}</span>;
+              })()}
+            </div>
+          )}
+          <div style={{ borderRadius: 8, border: "1px solid var(--brd)", overflow: "hidden" }}>
+            <div onClick={() => setRepeat(p => !p)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", cursor: "pointer", background: repeat ? "#3b82f610" : "var(--bg2)", userSelect: "none" }}>
+              <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${repeat ? "var(--acc)" : "var(--brd)"}`, background: repeat ? "var(--acc)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {repeat && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--tp)" }}>되풀이 일정 등록</span>
+              {repeat && endDate && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatInterval}{useEndOfMonth ? " (말일)" : ""} · {previewDates.length}건</span>}
+            </div>
+            {repeat && (
+              <div style={{ padding: "12px", borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "flex", gap: 5 }}>
+                  {["매주", "격주", "매월", "매년"].map(t => (
+                    <button key={t} onClick={() => setRepeatInterval(t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer", background: repeatInterval === t ? "var(--acc)" : "var(--bg2)", color: repeatInterval === t ? "#fff" : "var(--tp)" }}>{t}</button>
+                  ))}
+                </div>
+                <Field label="종료일">
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} />
+                </Field>
+                {suggestedEndDate && (
+                  <div style={{ padding: "7px 10px", background: "#3b82f612", borderRadius: 6, fontSize: 11, color: "var(--acc)", display: "flex", alignItems: "center", gap: 6 }}>
+                    <span>자동 추천: <b>{suggestedEndDate}</b> (총 {cappedCount}회)</span>
+                    <button onClick={() => setEndDate(suggestedEndDate)} style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 5, fontSize: 11, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>적용</button>
+                  </div>
+                )}
+                {previewDates.length > 1 && (
+                  <div style={{ fontSize: 11, color: "var(--tm)", lineHeight: 1.7 }}>
+                    <b>총 {previewDates.length}건</b> 생성 예정: {previewDates.slice(0, 5).map(d => d.slice(5).replace("-", "/")).join(", ")}{previewDates.length > 5 ? ` … 외 ${previewDates.length - 5}건` : ""}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <Field label="메모"><KoreanTextarea value={memo} onChange={e => setMemo(e.target.value)} style={{ ...inp, height: 60, resize: "vertical" }} placeholder="메모 (선택)" /></Field>
         </div>
-        <ModalFooter onCancel={() => setModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : "저장"} />
+        <ModalFooter onCancel={() => setModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : repeat && previewDates.length > 1 ? `플랜 추가 (일정 ${previewDates.length}건)` : "플랜 추가"} />
       </Overlay>
     );
   };
@@ -2073,14 +2630,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {["회생", "파산/면책"].map(t => <button key={t} onClick={() => set("type", t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.type === t ? "var(--acc)" : "var(--bg2)", color: f.type === t ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t}</button>)}
             </div>
           </Field>
-          <Field label="채권자번호"><input value={f.creditorNumber} onChange={e => set("creditorNumber", e.target.value)} style={inp} placeholder="예: 18" /></Field>
-          <Field label="법원"><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 수원회생법원" /></Field>
-          <Field label="사건번호"><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2024개회12345" /></Field>
-          <Field label="채무액(원)"><input type="number" value={f.debtAmount} onChange={e => set("debtAmount", e.target.value)} style={inp} /></Field>
-          <Field label="인가액(원)"><input type="number" value={f.approvedAmount} onChange={e => set("approvedAmount", e.target.value)} style={inp} /></Field>
-          <Field label="월 납부액(원)"><input type="number" value={f.monthlyPayment} onChange={e => set("monthlyPayment", e.target.value)} style={inp} /></Field>
-          <Field label="현재 회차"><input value={f.currentRound} onChange={e => set("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></Field>
-          <Field label="비고" span={2}><textarea value={f.repaymentNote} onChange={e => set("repaymentNote", e.target.value)} style={{ ...inp, height: 64, resize: "vertical" }} /></Field>
+          <Field label="채권자번호"><KoreanInput value={f.creditorNumber} onChange={e => set("creditorNumber", e.target.value)} style={inp} placeholder="예: 18" /></Field>
+          <Field label="법원"><KoreanInput value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 수원회생법원" /></Field>
+          <Field label="사건번호"><KoreanInput value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2024개회12345" /></Field>
+          <Field label="채무액(원)"><MoneyInput value={f.debtAmount} onChange={v => set("debtAmount", v)} style={inp} /></Field>
+          <Field label="인가액(원)"><MoneyInput value={f.approvedAmount} onChange={v => set("approvedAmount", v)} style={inp} /></Field>
+          <Field label="월 납부액(원)"><MoneyInput value={f.monthlyPayment} onChange={v => set("monthlyPayment", v)} style={inp} /></Field>
+          <Field label="현재 회차"><KoreanInput value={f.currentRound} onChange={e => set("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></Field>
+          <Field label="비고" span={2}><KoreanTextarea value={f.repaymentNote} onChange={e => set("repaymentNote", e.target.value)} style={{ ...inp, height: 64, resize: "vertical" }} /></Field>
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
@@ -2149,18 +2706,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {["채권자","원고","피고"].map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>}
-          <Field label="법원" span={isAD ? 2 : 1}><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
-          <Field label="사건번호" span={2}><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026타채125019" /></Field>
+          <Field label="법원" span={isAD ? 2 : 1}><KoreanInput value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
+          <Field label="사건번호" span={2}><KoreanInput value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026타채125019" /></Field>
           <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
-          {!f.debtorId && <Field label={isAD ? "대상자명" : "피고/채무자명"} span={2}><input value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
+          {!f.debtorId && <Field label={isAD ? "대상자명" : "피고/채무자명"} span={2}><KoreanInput value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
           {!isAD && <>
             <Field label="접수일"><input type="date" value={f.filingDate} onChange={e => set("filingDate", e.target.value)} style={inp} /></Field>
-            <Field label="진행상황"><input value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} /></Field>
+            <Field label="진행상황"><KoreanInput value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} /></Field>
           </>}
           {isAD && <>
             <Field label="신청일"><input type="date" value={f.applicationDate} onChange={e => set("applicationDate", e.target.value)} style={inp} /></Field>
             <Field label="결정일"><input type="date" value={f.decisionDate} onChange={e => set("decisionDate", e.target.value)} style={inp} /></Field>
-            <Field label="결과 상태"><input value={f.status} onChange={e => set("status", e.target.value)} style={inp} placeholder="예: 취하, 각하" /></Field>
+            <Field label="결과 상태"><KoreanInput value={f.status} onChange={e => set("status", e.target.value)} style={inp} placeholder="예: 취하, 각하" /></Field>
             <Field label="재산조회 명령">
               <div style={{ display: "flex", gap: 6 }}>
                 {[true, false].map(v => <button key={String(v)} onClick={() => set("hasInquiryOrder", v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: f.hasInquiryOrder === v ? (v ? "#10b981" : "#64748b") : "var(--bg2)", color: f.hasInquiryOrder === v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{v ? "O (조회명령 있음)" : "X (없음)"}</button>)}
@@ -2212,13 +2769,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {["원고","피고","채권자"].map(s => <option key={s}>{s}</option>)}
             </select>
           </Field>
-          <Field label="법원"><input value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
-          <Field label="사건번호"><input value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026가단51603" /></Field>
-          <Field label="원고(채권자)"><input value={f.plaintiff} onChange={e => set("plaintiff", e.target.value)} style={inp} placeholder="자동 입력 (브랜드명)" /></Field>
+          <Field label="법원"><KoreanInput value={f.court} onChange={e => set("court", e.target.value)} style={inp} placeholder="예: 서울중앙지법" /></Field>
+          <Field label="사건번호"><KoreanInput value={f.caseNumber} onChange={e => set("caseNumber", e.target.value)} style={inp} placeholder="예: 2026가단51603" /></Field>
+          <Field label="원고(채권자)"><KoreanInput value={f.plaintiff} onChange={e => set("plaintiff", e.target.value)} style={inp} placeholder="자동 입력 (브랜드명)" /></Field>
           <Field label="접수일"><input type="date" value={f.filingDate} onChange={e => set("filingDate", e.target.value)} style={inp} /></Field>
           <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
-          {!f.debtorId && <Field label="피고(채무자명)" span={2}><input value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
-          <Field label="진행상황" span={2}><input value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} placeholder="예: 진행, 확정, 취하" /></Field>
+          {!f.debtorId && <Field label="피고(채무자명)" span={2}><KoreanInput value={f.defendant} onChange={e => set("defendant", e.target.value)} style={inp} placeholder="채무자 연결 없이 이름만 입력" /></Field>}
+          <Field label="진행상황" span={2}><KoreanInput value={f.progressStatus} onChange={e => set("progressStatus", e.target.value)} style={inp} placeholder="예: 진행, 확정, 취하" /></Field>
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
@@ -2260,16 +2817,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </select>
           </Field>
           <Field label="죄명">
-            <input value={f.charge || ""} onChange={e => set("charge", e.target.value)} style={inp} placeholder="예: 사기, 횡령, 배임 등" />
+            <KoreanInput value={f.charge || ""} onChange={e => set("charge", e.target.value)} style={inp} placeholder="예: 사기, 횡령, 배임 등" />
           </Field>
           <Field label="채무자 연결" span={2}><DebtorSearchField value={f.debtorId} onChange={v => set("debtorId", v)} /></Field>
-          {!f.debtorId && <Field label="채무자명" span={2}><input value={f.debtorName} onChange={e => set("debtorName", e.target.value)} style={inp} /></Field>}
-          <Field label="고소인"><input value={f.complainant} onChange={e => set("complainant", e.target.value)} style={inp} placeholder="예: 주식회사 바로고" /></Field>
-          <Field label="경찰서"><input value={f.policeStation} onChange={e => set("policeStation", e.target.value)} style={inp} placeholder="예: 광진경찰서" /></Field>
+          {!f.debtorId && <Field label="채무자명" span={2}><KoreanInput value={f.debtorName} onChange={e => set("debtorName", e.target.value)} style={inp} /></Field>}
+          <Field label="고소인"><KoreanInput value={f.complainant} onChange={e => set("complainant", e.target.value)} style={inp} placeholder="예: 주식회사 바로고" /></Field>
+          <Field label="경찰서"><KoreanInput value={f.policeStation} onChange={e => set("policeStation", e.target.value)} style={inp} placeholder="예: 광진경찰서" /></Field>
           <Field label="고소일"><input type="date" value={f.complaintDate} onChange={e => set("complaintDate", e.target.value)} style={inp} /></Field>
-          <Field label="진행상황"><input value={f.statusNote} onChange={e => set("statusNote", e.target.value)} style={inp} placeholder="수사중, 기소, 불기소 등" /></Field>
-          <Field label="물품대(원)"><input type="number" value={f.goodsAmount} onChange={e => set("goodsAmount", e.target.value)} style={inp} /></Field>
-          <Field label="대여금(원)"><input type="number" value={f.loanAmount} onChange={e => set("loanAmount", e.target.value)} style={inp} /></Field>
+          <Field label="진행상황"><KoreanInput value={f.statusNote} onChange={e => set("statusNote", e.target.value)} style={inp} placeholder="수사중, 기소, 불기소 등" /></Field>
+          <Field label="물품대(원)"><MoneyInput value={f.goodsAmount} onChange={v => set("goodsAmount", v)} style={inp} /></Field>
+          <Field label="대여금(원)"><MoneyInput value={f.loanAmount} onChange={v => set("loanAmount", v)} style={inp} /></Field>
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
           <button onClick={() => setModal(null)} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
@@ -2282,8 +2839,28 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // ─── Debtor List ────────────────────────────────────────
   const debtorListView = (
     <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* 분류별 현황 카드 */}
+      {(() => {
+        const CC = { "전체":"#6366f1","장기채권":"#f59e0b","추심의뢰":"#3b82f6","회생/파산":"#8b5cf6","협의/소송":"#ef4444","분할상환":"#06b6d4","캐쉬상환":"#10b981","완료":"#6b7280","대손채권":"#ec4899" };
+        const cats = ["전체", ...config.categories];
+        return (
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
+            {cats.map(k => {
+              const color = CC[k] || "#6b7280";
+              const cnt = k === "전체" ? data.debtors.length : data.debtors.filter(d => d.category === k).length;
+              const active = catFilter === k;
+              return (
+                <div key={k} onClick={() => setCatFilter(k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 95, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: active ? color : "var(--tm)", whiteSpace: "nowrap", marginBottom: 5 }}>{k}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}</div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
         <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
@@ -2305,8 +2882,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 { k: "hubName", l: "허브/지점", w: 130 },
                 { k: "debtCause", l: "채무발생원인", w: 90 },
                 { k: "collectionStatus", l: "추심상태", w: 80 },
-                { k: "principalBalance", l: "채무잔액", w: 120 },
-                { k: "finalBalanceLegal", l: "법무잔액", w: 120 },
+                { k: "principalBalance",   l: "원채무액",      w: 105 },
+                { k: "adjustment",         l: "추가법무비용",  w: 100 },
+                { k: "collectedAmount",    l: "회수액",        w: 100 },
+                { k: "finalBalanceFinance",l: "재무기준잔액",   w: 110 },
+                { k: "finalBalanceLegal",  l: "법무기준잔액",   w: 110 },
                 { k: "execTitle", l: "집행권원", w: 65 },
               ].map(c => (
                 <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
@@ -2343,7 +2923,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.debtCause || "-"}</td>
                     <td style={{ padding: "10px 10px" }}><Badge status={d.collectionStatus} small /></td>
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12 }}>{fmt(d.principalBalance)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "var(--ok)" }}>{fmt(d.collectedAmount)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "#8b5cf6" }}>{fmt(d.finalBalanceFinance)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(d.finalBalanceLegal)}</td>
                     <ExecCell rec={d} rs={1} />
                   </tr>
                 );
@@ -2387,7 +2970,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.debtCause || "-"}</td>
                     <td style={{ padding: "8px 10px" }}><Badge status={sub.collectionStatus} small /></td>
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12 }}>{fmt(sub.principalBalance || 0)}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, fontWeight: 600 }}>{fmt(subLegal)}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "var(--ok)" }}>{fmt(sub.collectedAmount || 0)}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "#8b5cf6" }}>{fmt(sub.finalBalanceFinance ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0)))}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(subLegal)}</td>
                     <ExecCell rec={sub} rs={1} />
                   </tr>
                 );
@@ -2473,6 +3059,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     ];
     const debtorInstPlan = (data.installmentPlans || []).find(p => p.debtorId === d.id);
     const debtorInstScheds = debtorInstPlan ? (debtorInstPlan.schedules || []) : [];
+    const debtorInstHistory = debtorInstPlan ? (debtorInstPlan.history || []) : [];
+    const [instMemoSchedId, setInstMemoSchedId] = useState(null);
+    const [instMemoText, setInstMemoText] = useState("");
     const [linkedDocs, setLinkedDocs] = useState(null);
     const [scanResult, setScanResult] = useState(null);
     const [scanning, setScanning] = useState(false);
@@ -2578,13 +3167,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate } });
             }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
-            <button onClick={() => setSel(null)} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
+            <button onClick={goBack} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
           </div>
         </div>
 
         {/* Financial */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-          {[{ l: "원금잔액", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "재무기준잔액", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "법무기준잔액", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
+          {[{ l: "원채무액", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "추가법무비용", v: d.adjustment ? fmt(d.adjustment) : "-", c: "#f59e0b" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "재무기준잔액", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "법무기준잔액", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
         </div>
 
         {/* Info cards */}
@@ -2763,7 +3352,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <input type="date" value={histDateToInput(histForm.date)} onChange={e => setHistForm(f => ({ ...f, date: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
                 <span style={{ fontSize: 11, color: "var(--tm)", marginLeft: 8 }}>{histForm.mode === "add" ? "새 항목 추가" : "항목 수정"}</span>
               </div>
-              <textarea
+              <KoreanTextarea
                 value={histForm.content}
                 onChange={e => setHistForm(f => ({ ...f, content: e.target.value }))}
                 rows={4}
@@ -2802,35 +3391,98 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
         </div>}
 
-        <div style={{ display: detailTab === "분할상환" ? "flex" : "none", flexDirection: "column", gap: 10 }}>
+        <div style={{ display: detailTab === "분할상환" ? "flex" : "none", flexDirection: "column", gap: 12 }}>
           {!debtorInstPlan && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>분할상환 플랜 없음 — 위 버튼으로 추가하세요</div>}
-          {debtorInstPlan && <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 14px", border: "1px solid var(--brd)", display: "flex", gap: 20, fontSize: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ color: "var(--tm)" }}>납부시기:</span><b>{debtorInstPlan.paymentTiming}</b>
-            <span style={{ color: "var(--tm)" }}>총 채권액:</span><b className="mono" style={{ color: "var(--acc)" }}>{fmt(d.finalBalanceLegal)}</b>
-            <span style={{ color: "var(--tm)" }}>상태:</span><Badge status={debtorInstPlan.status} small />
-            {debtorInstPlan.memo && <span style={{ color: "var(--ts)" }}>{debtorInstPlan.memo}</span>}
-          </div>}
-          {debtorInstScheds.length > 0 && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "var(--bg2)" }}>{["채무원", "기관", "상환일", "금액", "상태"].map(h => <th key={h} style={{ padding: "7px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
-              <tbody>{debtorInstScheds.map(s => {
-                const sc = s.status === "완납" ? { bg: "#10b98110", t: "#047857" } : s.status === "지연" ? { bg: "#f59e0b10", t: "#b45309" } : { bg: "#ef444410", t: "#b91c1c" };
-                return (<tr key={s.id} style={{ borderBottom: "1px solid var(--brd)", background: s.status === "완납" ? "#10b98106" : "transparent" }}>
-                  <td style={{ padding: "7px 10px" }}>{s.debtSource || "-"}</td>
-                  <td style={{ padding: "7px 10px", fontSize: 11, color: "var(--ts)" }}>{s.institution || "-"}</td>
-                  <td className="mono" style={{ padding: "7px 10px", fontSize: 12 }}>{s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b" }}>{s.dueMonth || "?"}(미정)</span>}</td>
-                  <td className="mono" style={{ padding: "7px 10px", fontWeight: 600 }}>{fmt(s.scheduledAmount)}</td>
-                  <td style={{ padding: "7px 10px" }}><span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span></td>
-                </tr>);
-              })}</tbody>
-            </table>
-          </div>}
+          {debtorInstPlan && <>
+            {/* 플랜 개요 */}
+            <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 14px", border: "1px solid var(--brd)", display: "flex", gap: 20, fontSize: 12, alignItems: "center", flexWrap: "wrap" }}>
+              {debtorInstPlan.startDate && <><span style={{ color: "var(--tm)" }}>시작일:</span><b className="mono">{debtorInstPlan.startDate}</b></>}
+              <span style={{ color: "var(--tm)" }}>1회 납부:</span><b className="mono" style={{ color: "var(--acc)" }}>{fmt(debtorInstPlan.monthlyAmount)}</b>
+              <span style={{ color: "var(--tm)" }}>총 채권액:</span><b className="mono">{fmt(d.finalBalanceLegal)}</b>
+              {debtorInstPlan.memo && <span style={{ color: "var(--ts)" }}>{debtorInstPlan.memo}</span>}
+            </div>
+            {/* 현재 납부 일정 */}
+            {debtorInstScheds.filter(s => s.status !== "이월").length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 6 }}>납부 일정</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {debtorInstScheds.filter(s => s.status !== "이월").map(s => {
+                    const sc = s.status === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : s.status === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
+                    return (
+                      <div key={s.id} style={{ background: "var(--card)", borderRadius: 8, border: `1px solid ${sc.b}`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span className="mono" style={{ fontSize: 12, minWidth: 90 }}>{s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b" }}>{s.dueMonth}(미정)</span>}</span>
+                        <span className="mono" style={{ fontWeight: 700 }}>{fmt(s.scheduledAmount)}</span>
+                        {s.debtSource && <span style={{ fontSize: 11, color: "var(--ts)" }}>{s.debtSource}</span>}
+                        <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span>
+                        {canEdit && s.status !== "완납" && s.status !== "이월" && (
+                          <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                            <button onClick={async () => { await fetch(`/api/installments/schedules/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완납", userName: "관리자" }) }); await reloadInstallments(); showToast("완납 처리됨"); }} style={{ padding: "2px 10px", borderRadius: 5, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>
+                            <button onClick={() => setModal({ type: "rollover", sched: { ...s, debtorName: d.name } })} style={{ padding: "2px 10px", borderRadius: 5, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>이월</button>
+                            <button onClick={() => { setInstMemoSchedId(s.id); setInstMemoText(""); }} style={{ padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 11, cursor: "pointer" }}>메모</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {/* 메모 입력 영역 */}
+            {instMemoSchedId && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <KoreanInput value={instMemoText} onChange={e => setInstMemoText(e.target.value)} placeholder="통화 내용 기록 (예: 다음달 10일 입금 약속)" style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)" }} onKeyDown={async e => { if (e.key === "Enter" && instMemoText.trim()) { await addInstallmentMemo(instMemoSchedId, instMemoText.trim()); setInstMemoSchedId(null); setInstMemoText(""); showToast("메모 저장됨"); } }} />
+                <button onClick={async () => { if (instMemoText.trim()) { await addInstallmentMemo(instMemoSchedId, instMemoText.trim()); setInstMemoSchedId(null); setInstMemoText(""); showToast("메모 저장됨"); } }} style={{ padding: "7px 14px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
+                <button onClick={() => setInstMemoSchedId(null)} style={{ padding: "7px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+              </div>
+            )}
+            {/* 히스토리 타임라인 */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 8 }}>납부 히스토리 ({debtorInstHistory.length}건)</div>
+              {debtorInstHistory.length === 0 && <div style={{ padding: "20px 0", textAlign: "center", color: "var(--tm)", fontSize: 12 }}>기록 없음 — 완납/이월/메모 시 자동으로 쌓입니다</div>}
+              <div style={{ position: "relative", paddingLeft: 20 }}>
+                {debtorInstHistory.length > 0 && <div style={{ position: "absolute", left: 7, top: 6, bottom: 6, width: 2, background: "var(--brd)", borderRadius: 2 }} />}
+                {debtorInstHistory.map((h) => {
+                  const evtColor = h.eventType === "완납" ? "#047857" : h.eventType === "이월" ? "#6d28d9" : h.eventType === "지연" ? "#b45309" : h.eventType === "메모" ? "#3b82f6" : h.eventType === "미납" ? "#b91c1c" : h.eventType === "예정" ? "#1d4ed8" : "var(--tm)";
+                  const evtBg = h.eventType === "완납" ? "#10b98118" : h.eventType === "이월" ? "#8b5cf618" : h.eventType === "지연" ? "#f59e0b18" : h.eventType === "메모" ? "#3b82f618" : h.eventType === "미납" ? "#ef444418" : h.eventType === "예정" ? "#3b82f618" : "var(--bg2)";
+                  const [dt, tm] = (h.createdAt || "").split(" ");
+                  return (
+                    <div key={h.id} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
+                      <div style={{ width: 14, height: 14, borderRadius: "50%", background: evtColor, border: "2px solid var(--card)", flexShrink: 0, marginTop: 2, position: "relative", zIndex: 1 }} />
+                      <div style={{ flex: 1, background: "var(--card)", borderRadius: 8, padding: "8px 10px", border: "1px solid var(--brd)" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: h.memo ? 4 : 0 }}>
+                          <span style={{ padding: "1px 8px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: evtBg, color: evtColor }}>{h.eventType}</span>
+                          {h.fromDate && <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{h.fromDate}</span>}
+                          {h.toDate && <><span style={{ fontSize: 11, color: "var(--tm)" }}>→</span><span className="mono" style={{ fontSize: 11, color: evtColor, fontWeight: 600 }}>{h.toDate}</span></>}
+                          {h.amount && <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{fmt(h.amount)}</span>}
+                          <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--ts)" }}>{dt} {tm?.slice(0,5)}</span>
+                        </div>
+                        {h.memo && <div style={{ fontSize: 12, color: "var(--tp)", marginTop: 2, lineHeight: 1.5 }}>"{h.memo}"</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </>}
         </div>
 
         {detailTab === "법적절차내역" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {debtorLegalAll.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>법적절차 내역 없음</div>}
-          {debtorLegalAll.map((c, i) => (
-            <div key={c.id || i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}>
+          {debtorLegalAll.map((c, i) => {
+            const _typeToSubTab = { "지급명령": "지급명령", "압류": "압류", "재산명시": "재산명시·재산조회", "형사고소": "형사고소" };
+            const _handleCardNav = () => {
+              if (c.type === "민사소송") {
+                setMinsaSearchInit(d.name); setPrevTab(tab); setSel(null); setTab("minsa");
+              } else {
+                const sub = _typeToSubTab[c.type];
+                if (sub) { setLegalSearchInit(d.name); setPrevLegalSubTab(legalSubTab); setPrevTab(tab); setSel(null); setLegalSubTab(sub); setTab("legal"); }
+              }
+            };
+            return (
+            <div key={c.id || i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)", cursor: "pointer" }}
+              onClick={_handleCardNav}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+              onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <Badge status={c.type} />
@@ -2848,7 +3500,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {c.caseStatus && <span>지위: {c.caseStatus}</span>}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>}
 
         {detailTab === "회생파산" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -3061,7 +3714,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={pq} onChange={e => { setPq(e.target.value); setPPage(1); }} placeholder="채무자명, 입금자명, 허브명 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+            <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={pq} onChange={e => { setPq(e.target.value); setPPage(1); }} placeholder="채무자명, 입금자명, 허브명 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
             <select value={pBrand} onChange={e => { setPBrand(e.target.value); setPPage(1); }} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
             <button onClick={() => setModal({ type: "payment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />입금 등록</button>
             <button onClick={() => exportPayments(pFiltered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
@@ -3079,7 +3732,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("입금"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","브랜드","담당","허브/지점","코드","채무자","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -3103,37 +3756,49 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const now = new Date();
     const [viewMonth, setViewMonth] = useState(now.toISOString().slice(0, 7));
     const [stFilter, setStFilter] = useState("전체");
-    const [instSearch, setInstSearch] = useState("");
     const [importing, setImporting] = useState(false);
     const [editDateId, setEditDateId] = useState(null);
     const [editDateVal, setEditDateVal] = useState("");
+    const [dayPopup, setDayPopup] = useState(null);
+    const [dragSchedId, setDragSchedId] = useState(null);
+    const [dragOverDate, setDragOverDate] = useState(null);
+    const [cardSearch, setCardSearch] = useState("");
+    const [planSearch, setPlanSearch] = useState("");
+    const [addSchedModal, setAddSchedModal] = useState(null); // null | { date: "YYYY-MM-DD", planId?: string }
+    const [planPopup, setPlanPopup] = useState(null); // null | plan object
+    const [pPlanEditing, setPPlanEditing] = useState(false);
+    const [pPlanEditMonthly, setPPlanEditMonthly] = useState("");
+    const [pPlanEditMemo, setPPlanEditMemo] = useState("");
+    const [pPlanSaving, setPPlanSaving] = useState(false);
+    const [pSchedEditId, setPSchedEditId] = useState(null);
+    const [pSchedEditDate, setPSchedEditDate] = useState("");
+    const [pSchedEditAmt, setPSchedEditAmt] = useState("");
+    const [pSchedEditMemo, setPSchedEditMemo] = useState("");
+    const [pSchedEditStatus, setPSchedEditStatus] = useState("예정");
+
+
+    const thisMonthSchedsAll = useMemo(() => {
+      return (data.installmentSchedules || []).filter(s =>
+        (s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))) && s.status !== "이월"
+      );
+    }, [data.installmentSchedules, viewMonth]);
 
     const thisMonthScheds = useMemo(() => {
-      let list = (data.installmentSchedules || []).filter(s =>
-        s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))
-      );
-      if (stFilter !== "전체") list = list.filter(s => s.status === stFilter);
-      return list;
-    }, [data.installmentSchedules, viewMonth, stFilter]);
-
-    const allScheds = useMemo(() => {
-      let list = data.installmentSchedules || [];
-      if (stFilter !== "전체") list = list.filter(s => s.status === stFilter);
-      if (instSearch) {
-        const q = instSearch.toLowerCase();
-        list = list.filter(s => (s.debtorName || "").toLowerCase().includes(q) || (s.debtSource || "").toLowerCase().includes(q) || (s.institution || "").toLowerCase().includes(q));
-      }
-      return list;
-    }, [data.installmentSchedules, stFilter, instSearch]);
+      if (stFilter === "전체") return thisMonthSchedsAll;
+      return thisMonthSchedsAll.filter(s => s.status === stFilter);
+    }, [thisMonthSchedsAll, stFilter]);
 
     const monthStats = useMemo(() => ({
-      total: thisMonthScheds.length,
-      done: thisMonthScheds.filter(s => s.status === "완납").length,
-      unpaid: thisMonthScheds.filter(s => s.status === "미납").length,
-      overdue: thisMonthScheds.filter(s => s.status === "지연").length,
-      totalAmt: thisMonthScheds.reduce((a, s) => a + (s.scheduledAmount || 0), 0),
-      doneAmt: thisMonthScheds.filter(s => s.status === "완납").reduce((a, s) => a + (s.scheduledAmount || 0), 0),
-    }), [thisMonthScheds]);
+      total: thisMonthSchedsAll.length,
+      done: thisMonthSchedsAll.filter(s => s.status === "완납").length,
+      partial: thisMonthSchedsAll.filter(s => s.status === "일부납").length,
+      unpaid: thisMonthSchedsAll.filter(s => s.status === "미납").length,
+      overdue: thisMonthSchedsAll.filter(s => s.status === "지연").length,
+      scheduled: thisMonthSchedsAll.filter(s => s.status === "예정").length,
+      totalAmt: thisMonthSchedsAll.reduce((a, s) => a + (s.scheduledAmount || 0), 0),
+      doneAmt: thisMonthSchedsAll.filter(s => s.status === "완납").reduce((a, s) => a + (s.scheduledAmount || 0), 0),
+      partialAmt: thisMonthSchedsAll.filter(s => s.status === "일부납").reduce((a, s) => a + (s.paidAmount || 0), 0),
+    }), [thisMonthSchedsAll]);
 
     const monthLabel = (ym) => {
       const [y, m] = ym.split("-");
@@ -3156,6 +3821,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setEditDateId(null);
       await reloadInstallments();
       showToast("날짜 지정 완료");
+    };
+    const dropOnDate = async (targetDate) => {
+      if (!dragSchedId || !targetDate) return;
+      setDragSchedId(null);
+      setDragOverDate(null);
+      await fetch(`/api/installments/schedules/${dragSchedId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dueDate: targetDate, dueMonth: targetDate.slice(0, 7) }),
+      });
+      await reloadInstallments();
+      showToast("날짜 변경 완료");
     };
     const deleteSchedule = async (schedId) => {
       if (!confirm("이 일정을 삭제하시겠습니까?")) return;
@@ -3188,135 +3864,935 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       showToast(result.sent ? "Slack 알림 전송 완료" : (result.reason || "알림 없음"));
     };
 
-    const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
+    const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#8b5cf610", t: "#6d28d9", b: "#8b5cf640" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
 
-    const SchedRow = ({ s }) => {
-      const c = scColor(s.status);
-      const isEditingDate = editDateId === s.id;
+    const calCells = useMemo(() => {
+      const [y, m] = viewMonth.split("-").map(Number);
+      const firstDow = new Date(y, m - 1, 1).getDay();
+      const daysInMonth = new Date(y, m, 0).getDate();
+      const cells = [];
+      for (let i = 0; i < firstDow; i++) cells.push(null);
+      for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+      while (cells.length % 7 !== 0) cells.push(null);
+      return cells;
+    }, [viewMonth]);
+
+    const schedsByDate = useMemo(() => {
+      const map = {};
+      thisMonthScheds.filter(s => s.dueDate).forEach(s => {
+        if (!map[s.dueDate]) map[s.dueDate] = [];
+        map[s.dueDate].push(s);
+      });
+      return map;
+    }, [thisMonthScheds]);
+
+    const undatedScheds = useMemo(() => {
+      const cq = cardSearch.toLowerCase();
+      let list = thisMonthScheds.filter(s => !s.dueDate);
+      if (cardSearch) list = list.filter(s => (s.debtorName || "").toLowerCase().includes(cq));
+      return list;
+    }, [thisMonthScheds, cardSearch]);
+    const datedScheds = useMemo(() => {
+      const cq = cardSearch.toLowerCase();
+      let list = thisMonthScheds.filter(s => s.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+      if (cardSearch) list = list.filter(s => (s.debtorName || "").toLowerCase().includes(cq));
+      return list;
+    }, [thisMonthScheds, cardSearch]);
+
+    const todayStr = now.toISOString().slice(0, 10);
+    const cellDate = (day) => `${viewMonth}-${String(day).padStart(2, "0")}`;
+    const calRows = calCells.length / 7;
+    const calBodyH = calRows * 82;
+    const undatedSectionH = undatedScheds.length > 0 ? 66 : 0;
+    const calPanelH = 37 + calBodyH + undatedSectionH;
+
+    // ── 일정 추가 모달 (달력 + 버튼) ──────────────────────────
+    const AddSchedModal = () => {
+      const initDate = addSchedModal?.date || "";
+      const initPlanId = addSchedModal?.planId || null;
+      const initDebtorId = initPlanId ? (data.installmentPlans.find(p => p.id === initPlanId)?.debtorId || "") : "";
+      const [debtorId, setDebtorId] = useState(initDebtorId);
+      const [date, setDate] = useState(initDate);
+      const [amountStr, setAmountStr] = useState("");
+      const [status, setStatus] = useState("예정");
+      const [newPlanTiming] = useState("");
+      const [memo, setMemo] = useState("");
+      const [repeatType, setRepeatType] = useState("없음");
+      const [repeatEnd, setRepeatEnd] = useState("");
+      const [useEndOfMonth, setUseEndOfMonth] = useState(false);
+      const [saving, setSaving] = useState(false);
+
+      const debtor = data.debtors.find(d => d.id === debtorId);
+      const plan = data.installmentPlans.find(p => p.debtorId === debtorId);
+      const totalClaim = plan?.totalClaim || debtor?.finalBalanceLegal || 0;
+      const parsedAmount = parseInt(amountStr.replace(/,/g, ""), 10) || 0;
+      const firstDay = date ? new Date(date + "T00:00:00").getDate() : 0;
+      const showEndOfMonthToggle = repeatType === "월간" && firstDay >= 28;
+
+      // 추천 계산 (월간: 횟수, 주간/격주: 주 수)
+      const suggestedCount = totalClaim > 0 && parsedAmount > 0 ? Math.ceil(totalClaim / parsedAmount) : 0;
+      const applySuggestion = () => {
+        if (!date || !suggestedCount) return;
+        const d = new Date(date + "T00:00:00");
+        if (repeatType === "월간") {
+          const origDay = useEndOfMonth ? 31 : d.getDate();
+          const ny = d.getFullYear() + Math.floor((d.getMonth() + suggestedCount - 1) / 12);
+          const nm = (d.getMonth() + suggestedCount - 1) % 12;
+          const lastDay = new Date(ny, nm + 1, 0).getDate();
+          d.setFullYear(ny, nm, Math.min(origDay, lastDay));
+        } else if (repeatType === "주간") {
+          d.setDate(d.getDate() + (suggestedCount - 1) * 7);
+        } else if (repeatType === "격주") {
+          d.setDate(d.getDate() + (suggestedCount - 1) * 14);
+        }
+        setRepeatEnd(localStr(d));
+      };
+      const suggestionLabel = repeatType === "월간" ? `약 ${suggestedCount}개월` : repeatType === "주간" ? `약 ${suggestedCount}주` : repeatType === "격주" ? `약 ${suggestedCount}회(격주)` : "";
+
+      const localStr = (d) => {
+        if (!d || isNaN(d.getTime())) return "";
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+      };
+
+      const generateDates = () => {
+        if (!date) return [];
+        if (repeatType === "없음" || !repeatEnd) return [date];
+        const dates = [];
+        const end = new Date(repeatEnd + "T00:00:00");
+        if (isNaN(end.getTime())) return [date];
+        const MAX = 1200;
+        if (repeatType === "월간") {
+          const origDay = useEndOfMonth ? 31 : new Date(date + "T00:00:00").getDate();
+          let cur = new Date(date + "T00:00:00");
+          while (dates.length < MAX) {
+            if (isNaN(cur.getTime()) || cur > end) break;
+            dates.push(localStr(cur));
+            const nm = cur.getMonth() === 11 ? 0 : cur.getMonth() + 1;
+            const ny = cur.getMonth() === 11 ? cur.getFullYear() + 1 : cur.getFullYear();
+            const daysInNm = new Date(ny, nm + 1, 0).getDate();
+            cur = new Date(ny, nm, Math.min(origDay, daysInNm));
+          }
+        } else {
+          const interval = repeatType === "주간" ? 7 : 14;
+          let cur = new Date(date + "T00:00:00");
+          while (dates.length < MAX) {
+            if (isNaN(cur.getTime()) || cur > end) break;
+            dates.push(localStr(cur));
+            cur.setDate(cur.getDate() + interval);
+          }
+        }
+        return dates;
+      };
+
+      const previewDates = generateDates();
+
+      const handleSave = async () => {
+        if (!debtorId) return showToast("채무자를 선택하세요");
+        if (!date) return showToast("날짜를 입력하세요");
+        setSaving(true);
+        try {
+          let targetPlanId = plan?.id;
+          // 플랜 없으면 자동 생성
+          if (!targetPlanId) {
+            const newPlanId = uid("INS");
+            const pr = await fetch("/api/installments", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: newPlanId, debtorId, paymentTiming: newPlanTiming, monthlyAmount: parsedAmount, startDate: date, status: "진행중", memo: "" }),
+            });
+            const pResult = await pr.json();
+            if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
+            targetPlanId = newPlanId;
+          }
+          const schedules = previewDates.map((d, idx) => {
+            let amt = parsedAmount;
+            if (totalClaim > 0 && parsedAmount > 0 && previewDates.length > 1 && idx === previewDates.length - 1) {
+              const remainder = totalClaim - (previewDates.length - 1) * parsedAmount;
+              if (remainder > 0 && remainder < parsedAmount) amt = remainder;
+            }
+            return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amt, status, memo };
+          });
+          const r = await fetch("/api/installments/schedules/batch", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ planId: targetPlanId, schedules }),
+          });
+          const result = await r.json();
+          if (!result.ok) { showToast(result.error || "저장 실패"); setSaving(false); return; }
+          await reloadInstallments();
+          setAddSchedModal(null);
+          showToast(`일정 ${schedules.length}건 추가 완료`);
+        } catch(e) { showToast("저장 실패"); }
+        setSaving(false);
+      };
+
       return (
-        <tr style={{ borderBottom: "1px solid var(--brd)", background: s.status === "완납" ? "#10b98106" : s.status === "지연" ? "#f59e0b06" : "transparent" }}>
-          <td style={{ padding: "8px 10px" }}><BrandBadge code={s.brand} brands={config.brands} /></td>
-          <td style={{ padding: "8px 10px", fontWeight: 600, cursor: "pointer", color: "var(--acc)" }} onClick={() => { const d = data.debtors.find(x => x.id === s.debtorId); if (d) { setSel(d); setTab("debtors"); setDetailTab("분할상환"); } }}>{s.debtorName}</td>
-          <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)" }}>{s.assignee}</td>
-          <td style={{ padding: "8px 10px", fontSize: 11 }}>{s.debtSource || "-"}<br /><span style={{ color: "var(--tm)", fontSize: 10 }}>{s.institution || ""}</span></td>
-          <td style={{ padding: "8px 10px" }}>
-            {isEditingDate ? (
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                <input type="date" value={editDateVal} onChange={e => setEditDateVal(e.target.value)} style={{ ...inp, padding: "3px 6px", fontSize: 11, width: 120 }} />
-                <button onClick={() => saveDate(s.id)} style={{ padding: "2px 8px", background: "var(--acc)", color: "#fff", borderRadius: 5, fontSize: 11, border: "none", cursor: "pointer" }}>확인</button>
-                <button onClick={() => setEditDateId(null)} style={{ padding: "2px 6px", background: "var(--bg2)", color: "var(--tm)", borderRadius: 5, fontSize: 11, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
-              </div>
-            ) : (
-              <span className="mono" style={{ fontSize: 12 }}>
-                {s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b", fontSize: 11 }}>{s.dueMonth} (날짜미정)</span>}
-                {canEdit && !s.dueDate && s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ marginLeft: 4, padding: "1px 6px", background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", borderRadius: 4, fontSize: 10, cursor: "pointer" }}>지정</button>}
-              </span>
-            )}
-          </td>
-          <td className="mono" style={{ padding: "8px 10px", fontWeight: 700 }}>{fmt(s.scheduledAmount)}</td>
-          <td style={{ padding: "8px 10px" }}>
-            <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
-          </td>
-          <td style={{ padding: "8px 10px" }}>
-            <div style={{ display: "flex", gap: 3 }}>
-              {canEdit && s.status !== "완납" && <button onClick={() => markComplete(s.id)} title="완납처리" style={{ padding: "3px 8px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>완납</button>}
-              {canEdit && s.status === "완납" && <button onClick={() => markUnpaid(s.id)} title="미납으로 되돌리기" style={{ padding: "3px 8px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>취소</button>}
-              {canEdit && <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 6px", borderRadius: 6, background: "none", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={12} /></button>}
+        <Overlay onClose={() => setAddSchedModal(null)}>
+          <ModalHeader title={`일정 추가${initDate ? ` — ${initDate.slice(5).replace("-", "/")}` : ""}`} onClose={() => setAddSchedModal(null)} />
+          <div style={{ display: "grid", gap: 12 }}>
+            <Field label="채무자">
+              <DebtorSearchField value={debtorId} onChange={setDebtorId} />
+              {plan && totalClaim > 0 && <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 3 }}>잔여채권: <b>{fmt(totalClaim)}</b></div>}
+              {debtorId && !plan && (
+                <div style={{ marginTop: 6, padding: "7px 10px", background: "#eff6ff", borderRadius: 7, border: "1px solid #bfdbfe", fontSize: 11, color: "#1d4ed8", fontWeight: 600 }}>+ 분할상환 플랜을 새로 생성합니다</div>
+              )}
+            </Field>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Field label="날짜"><input type="date" value={date} onChange={e => setDate(e.target.value)} style={inp} /></Field>
+              <Field label="금액(원)"><MoneyInput value={amountStr} onChange={setAmountStr} style={inp} placeholder="예: 300,000" /></Field>
             </div>
-          </td>
-        </tr>
+            <Field label="상태">
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                {["예정", "미납", "일부납", "완납", "이월"].map(s => {
+                  const c = scColor(s);
+                  return (
+                    <button key={s} onClick={() => setStatus(s)} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: status === s ? c.bg : "var(--bg2)", color: status === s ? c.t : "var(--tm)", border: `1px solid ${status === s ? c.b : "var(--brd)"}`, cursor: "pointer" }}>{s}</button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="특이사항 메모">
+              <KoreanTextarea value={memo} onChange={e => setMemo(e.target.value)} style={{ ...inp, height: 52, resize: "vertical" }} placeholder="메모 (선택)" />
+            </Field>
+            <div style={{ borderRadius: 8, border: "1px solid var(--brd)", overflow: "hidden" }}>
+              <div onClick={() => setRepeatType(p => p === "없음" ? "월간" : "없음")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", cursor: "pointer", background: repeatType !== "없음" ? "#3b82f610" : "var(--bg2)", userSelect: "none" }}>
+                <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${repeatType !== "없음" ? "var(--acc)" : "var(--brd)"}`, background: repeatType !== "없음" ? "var(--acc)" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {repeatType !== "없음" && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--tp)" }}>되풀이 일정 등록</span>
+                {repeatType !== "없음" && repeatEnd && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatType} · {previewDates.length}건</span>}
+              </div>
+              {repeatType !== "없음" && (
+                <div style={{ padding: "12px", borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {["주간", "격주", "월간"].map(t => (
+                      <button key={t} onClick={() => { setRepeatType(t); setUseEndOfMonth(false); }} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer", background: repeatType === t ? "var(--acc)" : "var(--bg2)", color: repeatType === t ? "#fff" : "var(--tp)" }}>{t}</button>
+                    ))}
+                  </div>
+                  {showEndOfMonthToggle && (
+                    <div style={{ padding: "8px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ color: "#92400e", fontWeight: 600 }}>매월 납부일:</span>
+                      {[false, true].map(eom => (
+                        <button key={String(eom)} onClick={() => setUseEndOfMonth(eom)}
+                          style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: useEndOfMonth === eom ? "#f97316" : "var(--brd)", background: useEndOfMonth === eom ? "#f97316" : "var(--bg)", color: useEndOfMonth === eom ? "#fff" : "var(--tp)" }}>
+                          {eom ? "말일" : `${firstDay}일 고정`}
+                        </button>
+                      ))}
+                      <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth ? "매달 마지막 날" : `매달 ${firstDay}일 (짧은 달은 말일)`}</span>
+                    </div>
+                  )}
+                  <Field label="종료일"><input type="date" value={repeatEnd} onChange={e => setRepeatEnd(e.target.value)} style={inp} /></Field>
+                  {suggestedCount > 0 && (
+                    <div style={{ padding: "7px 10px", background: "#3b82f612", borderRadius: 6, fontSize: 11, color: "var(--acc)", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span>자동 추천: <b>{suggestionLabel}</b></span>
+                      {(() => {
+                        const lastAmt = totalClaim - (suggestedCount - 1) * parsedAmount;
+                        return lastAmt > 0 && lastAmt < parsedAmount ? <span style={{ color: "var(--tm)" }}>(마지막 {fmt(lastAmt)}원)</span> : null;
+                      })()}
+                      {date && <button onClick={applySuggestion} style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 5, fontSize: 11, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>적용</button>}
+                    </div>
+                  )}
+                  {previewDates.length > 1 && (
+                    <div style={{ fontSize: 11, color: "var(--tm)", lineHeight: 1.7 }}>
+                      <b>총 {previewDates.length}건</b> 생성 예정: {previewDates.slice(0, 5).map(d => d.slice(5).replace("-", "/")).join(", ")}{previewDates.length > 5 ? ` … 외 ${previewDates.length - 5}건` : ""}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <ModalFooter onCancel={() => setAddSchedModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : `일정 ${previewDates.length}건 추가`} />
+        </Overlay>
       );
     };
 
-    const tableHead = ["브랜드", "채무자", "담당", "채무원/기관", "상환일", "금액", "상태", ""];
+    // ── PlanDetailPopup 핸들러 (InstallmentsView 스코프 — 리렌더 시 참조 안정) ──
+    const onPlanClose = () => { setPlanPopup(null); setPPlanEditing(false); setPSchedEditId(null); };
+    const onPlanStartEdit = () => {
+      const plan = data.installmentPlans.find(p => p.id === planPopup?.id) || planPopup;
+      setPPlanEditMonthly(plan?.monthlyAmount ? String(plan.monthlyAmount) : "");
+      setPPlanEditMemo(plan?.memo || "");
+      setPPlanEditing(true);
+    };
+    const onPlanSave = async () => {
+      setPPlanSaving(true);
+      await fetch(`/api/installments/${planPopup?.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ monthlyAmount: Number(pPlanEditMonthly) || 0, memo: pPlanEditMemo }),
+      });
+      await reloadInstallments();
+      setPPlanEditing(false);
+      setPPlanSaving(false);
+      showToast("플랜 정보 수정 완료");
+    };
+    const onPlanDelete = async () => {
+      const plan = data.installmentPlans.find(p => p.id === planPopup?.id) || planPopup;
+      if (!confirm(`${plan?.debtorName} 플랜 및 모든 일정(${(plan?.schedules || []).length}건)을 삭제하시겠습니까?`)) return;
+      await fetch(`/api/installments/${planPopup?.id}`, { method: "DELETE" });
+      await reloadInstallments();
+      onPlanClose();
+      showToast("삭제 완료");
+    };
+    const onSchedStartEdit = (s) => {
+      setPSchedEditId(s.id);
+      setPSchedEditDate(s.dueDate || "");
+      setPSchedEditAmt(s.scheduledAmount ? String(s.scheduledAmount) : "");
+      setPSchedEditMemo(s.memo || "");
+      setPSchedEditStatus(s.status || "예정");
+    };
+    const onSchedSave = async (schedId) => {
+      await fetch(`/api/installments/schedules/${schedId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dueDate: pSchedEditDate || null, dueMonth: pSchedEditDate ? pSchedEditDate.slice(0, 7) : null, scheduledAmount: parseInt(pSchedEditAmt.replace(/,/g, ""), 10) || 0, memo: pSchedEditMemo, status: pSchedEditStatus }),
+      });
+      await reloadInstallments();
+      setPSchedEditId(null);
+      showToast("일정 수정 완료");
+    };
+    const onSchedDelete = async (schedId) => {
+      if (!confirm("이 일정을 삭제하시겠습니까?")) return;
+      await fetch(`/api/installments/schedules/${schedId}`, { method: "DELETE" });
+      await reloadInstallments();
+      showToast("일정 삭제 완료");
+    };
+
+    // ── 플랜 상세 팝업 (hook 없음 → 함수 직접 호출로 remount 방지) ──
+    const PlanDetailPopup = () => {
+      const plan = data.installmentPlans.find(p => p.id === planPopup?.id) || planPopup;
+      if (!plan) return null;
+      const d = data.debtors.find(x => x.id === plan.debtorId);
+      const scheds = (plan.schedules || []).slice().sort((a, b) => (a.dueDate || a.dueMonth || "").localeCompare(b.dueDate || b.dueMonth || ""));
+      const overdue = scheds.filter(s => s.status === "지연").length;
+
+      // 금액 기반 스택 진행 바
+      const totalClaim = plan.totalClaim || d?.finalBalanceLegal || 0;
+      const plannedTotal = scheds.reduce((sum, s) => sum + (s.scheduledAmount || 0), 0);
+      const paidTotal = scheds.filter(s => s.status === "완납").reduce((sum, s) => sum + (s.paidAmount || s.scheduledAmount || 0), 0);
+      const paidPct = totalClaim > 0 ? Math.min(100, (paidTotal / totalClaim) * 100) : 0;
+      const plannedPct = totalClaim > 0 ? Math.min(100 - paidPct, Math.max(0, (plannedTotal - paidTotal) / totalClaim * 100)) : 0;
+
+      return (
+        <Overlay onClose={onPlanClose}>
+          <ModalHeader title={`${plan.debtorName} — 분할상환 플랜`} onClose={onPlanClose} />
+
+          {/* 요약 헤더 */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+            <BrandBadge code={plan.brand} brands={config.brands} />
+            {plan.hubName && <span style={{ fontSize: 12, color: "var(--ts)" }}>{plan.hubName}</span>}
+            {plan.startDate && <span style={{ fontSize: 12, color: "var(--tm)" }}>시작 {plan.startDate.slice(5).replace("-", "/")}</span>}
+            <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: "auto" }}>총채권 <b className="mono">{fmt(totalClaim)}</b></span>
+          </div>
+
+          {/* 진행 바 */}
+          <div style={{ marginBottom: 14 }}>
+            {overdue > 0 && <div style={{ fontSize: 11, color: "#b45309", marginBottom: 4 }}>⚠ 지연 {overdue}건</div>}
+            {/* 회색 배경(미예정 잔여) + 주황 점선 윤곽(예정 합계) + 초록 실선(실제 상환) */}
+            <div style={{ height: 12, background: "var(--bg2)", borderRadius: 6, marginBottom: 6, position: "relative" }}>
+              {/* 예정 합계 — 주황 점선 윤곽만 */}
+              {(paidPct + plannedPct) > 0 && (
+                <div style={{
+                  position: "absolute", left: 0, top: 0, height: "100%",
+                  width: `${Math.min(100, paidPct + plannedPct)}%`,
+                  borderRadius: paidPct + plannedPct >= 100 ? 6 : "6px 0 0 6px",
+                  border: "2px dashed #f97316",
+                  boxSizing: "border-box",
+                  transition: "width .3s",
+                }} />
+              )}
+              {/* 실제 상환 — 초록 채움 */}
+              {paidPct > 0 && (
+                <div style={{
+                  position: "absolute", left: 0, top: 0, height: "100%",
+                  width: `${paidPct}%`,
+                  background: "#10b981",
+                  borderRadius: paidPct >= 100 ? 6 : "6px 0 0 6px",
+                  transition: "width .3s",
+                }} />
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 10, fontSize: 11, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ width: 10, height: 8, borderRadius: 2, background: "#10b981", flexShrink: 0 }} />
+                <span style={{ color: "var(--tm)" }}>실제 상환</span>
+                <b className="mono" style={{ color: "#047857" }}>{fmt(paidTotal)}</b>
+                {totalClaim > 0 && <span style={{ color: "var(--ts)" }}>({Math.round(paidPct)}%)</span>}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ width: 10, height: 8, borderRadius: 2, border: "2px dashed #f97316", boxSizing: "border-box", flexShrink: 0 }} />
+                <span style={{ color: "var(--tm)" }}>예정 합계</span>
+                <b className="mono" style={{ color: "#ea580c" }}>{fmt(plannedTotal)}</b>
+                {totalClaim > 0 && <span style={{ color: "var(--ts)" }}>({Math.round(plannedTotal / totalClaim * 100)}%)</span>}
+              </div>
+              {totalClaim > plannedTotal && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 10, height: 8, borderRadius: 2, background: "var(--bg2)", border: "1px solid var(--brd)", flexShrink: 0 }} />
+                  <span style={{ color: "var(--tm)" }}>미예정 잔여</span>
+                  <b className="mono" style={{ color: "var(--ts)" }}>{fmt(totalClaim - plannedTotal)}</b>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 편집 폼 or 메모 */}
+          {pPlanEditing ? (
+            <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", marginBottom: 12, border: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", marginBottom: 10 }}>플랜 정보 수정</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 11, color: "var(--tm)", width: 60, flexShrink: 0 }}>월 납부액</span>
+                  <MoneyInput value={pPlanEditMonthly} onChange={setPPlanEditMonthly} style={{ ...inp, flex: 1, fontSize: 12 }} placeholder="0" />
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 11, color: "var(--tm)", width: 60, flexShrink: 0, paddingTop: 4 }}>메모</span>
+                  <KoreanTextarea value={pPlanEditMemo} onChange={e => setPPlanEditMemo(e.target.value)} rows={2} style={{ ...inp, flex: 1, fontSize: 12, resize: "vertical" }} />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => setPPlanEditing(false)} style={{ padding: "5px 14px", borderRadius: 7, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer" }}>취소</button>
+                <button onClick={onPlanSave} disabled={pPlanSaving} style={{ padding: "5px 14px", borderRadius: 7, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{pPlanSaving ? "저장중…" : "저장"}</button>
+              </div>
+            </div>
+          ) : (
+            plan.memo && <div style={{ background: "#eff6ff", borderRadius: 8, padding: "6px 12px", marginBottom: 10, fontSize: 12, color: "#1d4ed8", borderLeft: "3px solid #93c5fd" }}>{plan.memo}</div>
+          )}
+
+          {/* 액션 버튼 */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {canEdit && !pPlanEditing && (
+              <button onClick={onPlanStartEdit} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✏ 정보 수정</button>
+            )}
+            {canEdit && (
+              <button onClick={() => setAddSchedModal({ date: new Date().toISOString().slice(0, 10), planId: plan.id })}
+                style={{ padding: "5px 12px", borderRadius: 7, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>+ 일정 추가</button>
+            )}
+            {d && (
+              <button onClick={() => { navigateToDebtor(d, "분할상환"); onPlanClose(); }}
+                style={{ padding: "5px 12px", borderRadius: 7, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>채무자 페이지 ↗</button>
+            )}
+            {canEdit && (
+              <button onClick={onPlanDelete}
+                style={{ padding: "5px 12px", borderRadius: 7, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 12, fontWeight: 600, cursor: "pointer", marginLeft: "auto" }}>삭제</button>
+            )}
+          </div>
+
+          {/* 납부 일정 목록 */}
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", marginBottom: 8 }}>납부 일정 ({scheds.length}건)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {scheds.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>일정 없음 — 위 '+ 일정 추가'로 추가하세요</div>}
+            {scheds.map((s, i) => {
+              const c = scColor(s.status);
+              const isEditRow = pSchedEditId === s.id;
+              return (
+                <div key={s.id} style={{ background: "var(--bg2)", borderRadius: 7, border: `1px solid ${isEditRow ? "var(--acc)" : c.b}`, overflow: "hidden" }}>
+                  {isEditRow ? (
+                    <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input type="date" value={pSchedEditDate} onChange={e => setPSchedEditDate(e.target.value)} style={{ ...inp, flex: 1, fontSize: 12 }} />
+                        <MoneyInput value={pSchedEditAmt} onChange={setPSchedEditAmt} style={{ ...inp, flex: 1, fontSize: 12 }} placeholder="금액" />
+                      </div>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                        {["예정", "미납", "일부납", "완납", "이월"].map(st => {
+                          const sc = scColor(st);
+                          return <button key={st} onClick={() => setPSchedEditStatus(st)} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", background: pSchedEditStatus === st ? sc.bg : "var(--bg)", color: pSchedEditStatus === st ? sc.t : "var(--tm)", border: `1px solid ${pSchedEditStatus === st ? sc.b : "var(--brd)"}` }}>{st}</button>;
+                        })}
+                      </div>
+                      <KoreanInput value={pSchedEditMemo} onChange={e => setPSchedEditMemo(e.target.value)} style={{ ...inp, fontSize: 12 }} placeholder="메모 (선택)" />
+                      <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                        <button onClick={() => setPSchedEditId(null)} style={{ padding: "4px 14px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                        <button onClick={() => onSchedSave(s.id)} style={{ padding: "4px 14px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 10px" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 10, color: "var(--ts)", minWidth: 20 }}>#{i + 1}</span>
+                        <span className="mono" style={{ fontSize: 12 }}>{s.dueDate ? fmtDate(s.dueDate) : (s.dueMonth ? s.dueMonth.slice(5) + "월 (미정)" : "날짜미정")}</span>
+                        {s.memo && <span style={{ fontSize: 10, color: "var(--ts)", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.memo}</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                        <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{fmt(s.scheduledAmount)}</span>
+                        <span style={{ padding: "1px 7px", borderRadius: 8, fontSize: 10, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
+                        {canEdit && <>
+                          <button onClick={() => onSchedStartEdit(s)} title="수정" style={{ width: 24, height: 24, borderRadius: 5, background: "var(--acc)12", border: "1px solid var(--acc)30", color: "var(--acc)", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✏</button>
+                          <button onClick={() => onSchedDelete(s.id)} title="삭제" style={{ width: 24, height: 24, borderRadius: 5, background: "#ef444412", border: "1px solid #ef444430", color: "var(--err)", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                        </>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Overlay>
+      );
+    };
+
+    const DayPopup = ({ date, onClose }) => {
+      const scheds = schedsByDate[date] || [];
+      const parts = date.split("-");
+      const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(date + "T00:00:00").getDay()];
+      const [cardMemos, setCardMemos] = useState({});
+      const [savingMemoId, setSavingMemoId] = useState(null);
+      const [patchingId, setPatchingId] = useState(null);
+      const [editingId, setEditingId] = useState(null);
+      const [editDate, setEditDate] = useState("");
+      const [editAmount, setEditAmount] = useState("");
+
+      const patchStatus = async (schedId, status) => {
+        setPatchingId(schedId);
+        await fetch(`/api/installments/schedules/${schedId}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status, userName: "관리자" }),
+        });
+        await reloadInstallments();
+        setPatchingId(null);
+      };
+
+      const saveEdit = async (schedId) => {
+        const body = {};
+        if (editDate) { body.dueDate = editDate; body.dueMonth = editDate.slice(0, 7); }
+        if (editAmount !== "") { body.scheduledAmount = parseInt(editAmount.replace(/,/g, ""), 10) || 0; }
+        if (Object.keys(body).length === 0) { setEditingId(null); return; }
+        await fetch(`/api/installments/schedules/${schedId}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        setEditingId(null);
+        await reloadInstallments();
+        showToast("수정 완료");
+      };
+
+      const parseAmountFromText = (text) => {
+        if (!text) return null;
+        const manMatches = [...text.matchAll(/(\d+(?:\.\d+)?)만\s*원?/g)];
+        if (manMatches.length) return Math.round(parseFloat(manMatches[manMatches.length - 1][1]) * 10000);
+        const wonMatches = [...text.matchAll(/([\d,]+)원/g)];
+        if (wonMatches.length) return parseInt(wonMatches[wonMatches.length - 1][1].replace(/,/g, ""), 10) || null;
+        return null;
+      };
+
+      const saveMemo = async (schedId) => {
+        const text = (cardMemos[schedId] || "").trim();
+        if (!text) return;
+        setSavingMemoId(schedId);
+        await fetch(`/api/installments/schedules/${schedId}/memo`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ memo: text, eventType: "메모", userName: "관리자" }),
+        });
+        setCardMemos(prev => ({ ...prev, [schedId]: "" }));
+        // 메모에서 금액 자동 감지
+        const detectedAmt = parseAmountFromText(text);
+        const sched = scheds.find(x => x.id === schedId);
+        if (detectedAmt && detectedAmt > 0 && sched && detectedAmt !== sched.scheduledAmount) {
+          await fetch(`/api/installments/schedules/${schedId}`, {
+            method: "PATCH", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ scheduledAmount: detectedAmt }),
+          });
+          setSavingMemoId(null);
+          await reloadInstallments();
+          showToast(`메모 금액 자동 적용: ${detectedAmt.toLocaleString("ko-KR")}원`);
+        } else {
+          setSavingMemoId(null);
+          await reloadInstallments();
+          showToast("특이사항 저장");
+        }
+      };
+
+      return (
+        <Overlay onClose={onClose}>
+          <ModalHeader title={`${parseInt(parts[1])}월 ${parseInt(parts[2])}일 (${dow}) 납부 일정`} onClose={onClose} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {scheds.length === 0 && <div style={{ padding: 28, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>이 날짜에 납부 일정이 없습니다</div>}
+            {(() => {
+              const unpaid = scheds.filter(s => s.status !== "완납");
+              const paid   = scheds.filter(s => s.status === "완납");
+              const mkDivider = (label, color, bg, brd) => (
+                <div style={{ display:"flex", alignItems:"center", gap:8, margin:"4px 0 6px" }}>
+                  <div style={{ flex:1, height:1, background:"var(--brd)" }} />
+                  <span style={{ fontSize:11, fontWeight:700, color, whiteSpace:"nowrap", padding:"2px 10px", background:bg, borderRadius:10, border:"1px solid "+brd }}>{label}</span>
+                  <div style={{ flex:1, height:1, background:"var(--brd)" }} />
+                </div>
+              );
+              const renderCard = (s) => {
+              const c = scColor(s.status);
+              const isRolledOver = s.status === "이월";
+              const shortfall = s.scheduledAmount > 0 && s.paidAmount > 0 && s.paidAmount < s.scheduledAmount ? s.scheduledAmount - s.paidAmount : 0;
+              return (
+                <div key={s.id} style={{ background: "var(--bg2)", borderRadius: 12, padding: "14px 16px", border: `1px solid ${c.b}` }}>
+                  {/* 헤더 */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <BrandBadge code={s.brand} brands={config.brands} />
+                      <button onClick={() => { const d = data.debtors.find(x => x.id === s.debtorId); if (d) { navigateToDebtor(d, "분할상환"); onClose(); } }}
+                        style={{ fontWeight: 700, fontSize: 14, background: "none", border: "none", cursor: "pointer", color: "var(--acc)", padding: 0 }}>
+                        {s.debtorName} ↗
+                      </button>
+                      {s.assignee && <span style={{ fontSize: 11, color: "var(--tm)" }}>{s.assignee}</span>}
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      {canEdit && editingId !== s.id && (
+                        <button onClick={() => { setEditingId(s.id); setEditDate(s.dueDate || ""); setEditAmount(s.scheduledAmount ? String(s.scheduledAmount) : ""); }}
+                          style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid var(--acc)60", background: "var(--acc)12", color: "var(--acc)" }}>
+                          ✏ 날짜/금액 수정
+                        </button>
+                      )}
+                      <span style={{ padding: "2px 10px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status || "예정"}</span>
+                    </div>
+                  </div>
+                  {/* 금액 */}
+                  <div style={{ fontSize: 13, marginBottom: 8, display: "flex", gap: 12, alignItems: "center" }}>
+                    <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>{fmt(s.scheduledAmount)}</span>
+                    {s.paidAmount > 0 && <span style={{ fontSize: 12, color: "#047857" }}>입금 {fmt(s.paidAmount)}</span>}
+                    {shortfall > 0 && <span style={{ fontSize: 12, color: "#c2410c" }}>미납 {fmt(shortfall)}</span>}
+                  </div>
+                  {/* 날짜/금액 수정 폼 */}
+                  {editingId === s.id && (
+                    <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap", alignItems: "center", background: "var(--bg)", borderRadius: 8, padding: "10px 12px", border: "1px solid var(--brd)" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 120 }}>
+                        <span style={{ fontSize: 11, color: "var(--tm)" }}>날짜</span>
+                        <input type="date" value={editDate} onChange={e => setEditDate(e.target.value)}
+                          style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", fontSize: 12, padding: "5px 8px" }} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 120 }}>
+                        <span style={{ fontSize: 11, color: "var(--tm)" }}>금액</span>
+                        <MoneyInput value={editAmount} onChange={v => setEditAmount(v)}
+                          placeholder="0"
+                          style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", fontSize: 12, padding: "5px 8px" }} />
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignSelf: "flex-end" }}>
+                        <button onClick={() => saveEdit(s.id)}
+                          style={{ padding: "5px 14px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                          저장
+                        </button>
+                        <button onClick={() => setEditingId(null)}
+                          style={{ padding: "5px 10px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer", fontSize: 12 }}>
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {/* 기존 메모 */}
+                  {s.memo && (() => {
+                    const memoAmt = parseAmountFromText(s.memo);
+                    const amtMismatch = canEdit && memoAmt && memoAmt > 0 && memoAmt !== s.scheduledAmount;
+                    return (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: "var(--tm)", background: "var(--bg)", borderRadius: 6, padding: "6px 10px", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{s.memo.slice(0, 120)}{s.memo.length > 120 ? "…" : ""}</div>
+                        {amtMismatch && (
+                          <button onClick={async () => {
+                            await fetch(`/api/installments/schedules/${s.id}`, {
+                              method: "PATCH", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ scheduledAmount: memoAmt }),
+                            });
+                            await reloadInstallments();
+                            showToast(`금액 적용: ${memoAmt.toLocaleString("ko-KR")}원`);
+                          }} style={{ marginTop: 4, padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", background: "#fef3c7", color: "#b45309", border: "1px solid #fcd34d", display: "flex", alignItems: "center", gap: 4 }}>
+                            ⚡ 메모 금액 적용 ({memoAmt.toLocaleString("ko-KR")}원)
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {/* 특이사항 입력 */}
+                  {canEdit && (
+                    <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                      <KoreanInput value={cardMemos[s.id] || ""} onChange={e => setCardMemos(p => ({ ...p, [s.id]: e.target.value }))}
+                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveMemo(s.id); } }}
+                        placeholder="특이사항 메모 (Enter로 저장)…"
+                        style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)", fontSize: 12, padding: "5px 8px" }} />
+                      <button onClick={() => saveMemo(s.id)} disabled={savingMemoId === s.id}
+                        style={{ padding: "5px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, opacity: savingMemoId === s.id ? 0.6 : 1 }}>
+                        {savingMemoId === s.id ? "…" : "저장"}
+                      </button>
+                    </div>
+                  )}
+                  {/* 상태 버튼 */}
+                  {canEdit && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {!isRolledOver && (
+                        <>
+                          <button onClick={() => patchStatus(s.id, "완납")} disabled={patchingId === s.id}
+                            style={{ padding: "5px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #10b98140", background: s.status === "완납" ? "#10b981" : "#10b98118", color: s.status === "완납" ? "#fff" : "#047857" }}>
+                            완납
+                          </button>
+                          <button onClick={() => patchStatus(s.id, "일부납")} disabled={patchingId === s.id}
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #fb923c40", background: s.status === "일부납" ? "#fb923c" : "#fb923c18", color: s.status === "일부납" ? "#fff" : "#c2410c" }}>
+                            일부납
+                          </button>
+                          <button onClick={() => patchStatus(s.id, "미납")} disabled={patchingId === s.id}
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #ef444440", background: s.status === "미납" ? "#ef4444" : "#ef444418", color: s.status === "미납" ? "#fff" : "#b91c1c" }}>
+                            미납
+                          </button>
+                          <button onClick={() => { onClose(); setModal({ type: "rollover", sched: { ...s } }); }}
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #8b5cf640", background: "#8b5cf618", color: "#6d28d9" }}>
+                            이월
+                          </button>
+                        </>
+                      )}
+                      {isRolledOver && <span style={{ fontSize: 12, color: "#6d28d9", padding: "5px 0" }}>이월 처리됨</span>}
+                      <button onClick={() => deleteSchedule(s.id)}
+                        style={{ padding: "5px 8px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
+                        <I name="trash" size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+              };
+              return (<>
+                {unpaid.length > 0 && mkDivider("미납 · "+unpaid.length+"건", "#b91c1c", "#ef444414", "#ef444430")}
+                {unpaid.map(s => renderCard(s))}
+                {paid.length > 0 && mkDivider("완납 · "+paid.length+"건", "#047857", "#10b98114", "#10b98130")}
+                {paid.map(s => renderCard(s))}
+              </>);
+            })()}
+          </div>
+        </Overlay>
+      );
+    };
 
     return (
-      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {/* 탭 바 */}
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-          {[{ k: "이번달", l: "이번달 예정" }, { k: "전체", l: "전체 일정" }, { k: "플랜관리", l: "플랜 관리" }].map(t => (
+          {[{ k: "이번달", l: "월간 달력" }, { k: "플랜관리", l: "플랜 관리" }].map(t => (
             <button key={t.k} onClick={() => setInstTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: instTab === t.k ? "var(--bg)" : "transparent", color: instTab === t.k ? "var(--tp)" : "var(--tm)", border: "none", cursor: "pointer" }}>{t.l}</button>
           ))}
         </div>
 
-        {/* ── 이번달 예정 탭 ── */}
-        <div style={{ display: instTab === "이번달" ? "flex" : "none", flexDirection: "column", gap: 14 }}>
-          {/* 월 이동 + KPI */}
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <button onClick={() => setViewMonth(prevMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="back" size={14} /></button>
-              <span style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{monthLabel(viewMonth)}</span>
-              <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} ><I name="arrowDown" size={14} /></button>
-              {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
-            </div>
-            {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
-              <div key={x.l} style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", textAlign: "center" }}>
-                <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
-                <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
+        {/* ── 월간 달력 탭 ── */}
+        {instTab === "이번달" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* 컨트롤 헤더 */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => setViewMonth(prevMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="back" size={14} /></button>
+                <span style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{monthLabel(viewMonth)}</span>
+                <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="arrowDown" size={14} /></button>
+                {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
               </div>
-            ))}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
               <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
-                {["전체", "미납", "완납", "지연"].map(s => <option key={s}>{s}</option>)}
+                {["전체", "예정", "미납", "일부납", "완납", "지연", "이월"].map(s => <option key={s}>{s}</option>)}
               </select>
-              {isAdmin && <button onClick={checkOverdue} style={{ padding: "6px 10px", borderRadius: 8, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b30", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>지연확인</button>}
-              {isAdmin && <button onClick={sendMonthlyNotify} style={{ padding: "6px 10px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Slack</button>}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={13} />플랜 추가</button>}
+                {canEdit && <button onClick={async () => { const r = await (await fetch("/api/installments/auto-sync", { method: "POST" })).json(); showToast(`입금 동기화: ${r.updated}건 업데이트`); await reloadInstallments(); }} style={{ padding: "6px 10px", borderRadius: 8, background: "#10b98118", color: "#047857", border: "1px solid #10b98140", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>입금동기화</button>}
+              </div>
             </div>
-          </div>
-          {/* 이번달 금액 요약 */}
-          <div style={{ display: "flex", gap: 12, padding: "10px 14px", background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", fontSize: 12 }}>
-            <span style={{ color: "var(--tm)" }}>이번달 예정 총액:</span><b className="mono">{fmt(monthStats.totalAmt)}</b>
-            <span style={{ color: "var(--tm)", marginLeft: 16 }}>완납 합계:</span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b>
-            <span style={{ color: "var(--tm)", marginLeft: 16 }}>미완납:</span><b className="mono" style={{ color: "#b91c1c" }}>{fmt(monthStats.totalAmt - monthStats.doneAmt)}</b>
-          </div>
-          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: "var(--bg2)" }}>{tableHead.map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {thisMonthScheds.length === 0 && <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>이번달 예정 없음</td></tr>}
-                  {thisMonthScheds.map(s => <SchedRow key={s.id} s={s} />)}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
 
-        {/* ── 전체 일정 탭 ── */}
-        <div style={{ display: instTab === "전체" ? "flex" : "none", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input value={instSearch} onChange={e => setInstSearch(e.target.value)} placeholder="채무자 / 채무원 / 기관 검색" style={{ ...inp, flex: 1 }} />
-            <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
-              {["전체", "미납", "완납", "지연"].map(s => <option key={s}>{s}</option>)}
-            </select>
-            <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap" }}>총 {allScheds.length}건</span>
-          </div>
-          <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: "var(--bg2)" }}>{tableHead.map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {allScheds.length === 0 && <tr><td colSpan={8} style={{ padding: 28, textAlign: "center", color: "var(--tm)" }}>일정 없음</td></tr>}
-                  {allScheds.slice(0, 200).map(s => <SchedRow key={s.id} s={s} />)}
-                </tbody>
-              </table>
+            {/* KPI 요약 */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
+                <div key={x.l} style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", textAlign: "center" }}>
+                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
+                  <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
+                </div>
+              ))}
+              <div style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
+                <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
+                <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
+              </div>
+            </div>
+
+            {/* 달력 + 카드 분할 */}
+            <div style={{ display: "flex", gap: 12 }}>
+              {/* 왼쪽: 달력 (고정) */}
+              <div style={{ flex: "0 0 55%", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "var(--bg2)", borderBottom: "1px solid var(--brd)" }}>
+                  {["일", "월", "화", "수", "목", "금", "토"].map((d, i) => (
+                    <div key={d} style={{ padding: "7px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: i === 0 ? "#ef4444" : i === 6 ? "#3b82f6" : "var(--tm)" }}>{d}</div>
+                  ))}
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+                  {calCells.map((day, idx) => {
+                    if (!day) return (
+                      <div key={`e${idx}`} style={{ minHeight: 82, borderRight: idx % 7 !== 6 ? "1px solid var(--brd)" : "none", borderBottom: "1px solid var(--brd)", background: "var(--bg2)", opacity: 0.4 }} />
+                    );
+                    const ds = cellDate(day);
+                    const dayScheds = schedsByDate[ds] || [];
+                    const isToday = ds === todayStr;
+                    const hasOverdue = dayScheds.some(s => s.status === "지연");
+                    const allDone = dayScheds.length > 0 && dayScheds.every(s => s.status === "완납");
+                    const col = idx % 7;
+                    const isDragOver = dragOverDate === ds && dragSchedId;
+                    return (
+                      <div key={ds}
+                        onClick={() => { if (dayScheds.length > 0 && !dragSchedId) setDayPopup(ds); }}
+                        onDragOver={e => { e.preventDefault(); setDragOverDate(ds); }}
+                        onDragLeave={() => setDragOverDate(null)}
+                        onDrop={e => { e.preventDefault(); dropOnDate(ds); }}
+                        style={{
+                          minHeight: 82, padding: "4px 3px 3px",
+                          borderRight: col !== 6 ? "1px solid var(--brd)" : "none",
+                          borderBottom: "1px solid var(--brd)",
+                          background: isDragOver ? "var(--acc)18" : hasOverdue ? "#f59e0b06" : allDone ? "#10b98106" : "transparent",
+                          cursor: dragSchedId ? "copy" : dayScheds.length > 0 ? "pointer" : "default",
+                          outline: isDragOver ? "2px solid var(--acc)" : "none",
+                          outlineOffset: -2,
+                          transition: "background 0.1s",
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                          <div style={{
+                            width: 22, height: 22, borderRadius: "50%",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 11, fontWeight: isToday ? 700 : 500,
+                            background: isToday ? "var(--acc)" : "transparent",
+                            color: isToday ? "#fff" : col === 0 ? "#ef4444" : col === 6 ? "#3b82f6" : "var(--tp)",
+                          }}>{day}</div>
+                          {canEdit && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setAddSchedModal({ date: ds }); }}
+                              style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
+                          )}
+                        </div>
+                        {dayScheds.slice(0, 4).map((s) => {
+                          const c = scColor(s.status);
+                          return (
+                            <div key={s.id}
+                              draggable={canEdit}
+                              onDragStart={e => { e.stopPropagation(); setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
+                              onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
+                              onClick={e => { e.stopPropagation(); setDayPopup(ds); }}
+                              style={{
+                                fontSize: 9, lineHeight: "14px", padding: "0 4px",
+                                borderRadius: 3, marginBottom: 2,
+                                background: c.bg, color: c.t, border: `1px solid ${c.b}`,
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                display: "flex", justifyContent: "space-between", gap: 2,
+                                cursor: canEdit ? "grab" : "pointer",
+                                opacity: dragSchedId === s.id ? 0.4 : 1,
+                              }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.debtorName}</span>
+                              <span style={{ flexShrink: 0, opacity: 0.8 }}>{(s.scheduledAmount / 10000).toFixed(0)}만</span>
+                            </div>
+                          );
+                        })}
+                        {dayScheds.length > 4 && <div style={{ fontSize: 9, color: "var(--tm)", paddingLeft: 4 }}>+{dayScheds.length - 4}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+                {undatedScheds.length > 0 && (
+                  <div style={{ padding: "8px 10px", borderTop: "1px solid var(--brd)", background: "#f59e0b08" }}>
+                    <div style={{ fontSize: 10, color: "#b45309", fontWeight: 600, marginBottom: 4 }}>날짜 미정 {undatedScheds.length}건</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                      {undatedScheds.map(s => (
+                        <span key={s.id} style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b30" }}>{s.debtorName}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 오른쪽: 검색 + 스크롤 카드 */}
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                <KoreanInput value={cardSearch} onChange={e => setCardSearch(e.target.value)} placeholder="이름 검색…" style={{ ...inp, padding: "5px 9px", fontSize: 12, border: "1px solid var(--brd)", borderRadius: 7, background: "var(--bg)", color: "var(--tp)", flexShrink: 0 }} />
+                <div style={{ overflowY: "auto", height: calPanelH - 38, display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
+                  {datedScheds.length === 0 && undatedScheds.length === 0 && (
+                    <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>{cardSearch ? "검색 결과 없음" : "이번달 예정 없음"}</div>
+                  )}
+                  {datedScheds.map(s => {
+                    const c = scColor(s.status);
+                    return (
+                      <div key={s.id}
+                        draggable={canEdit}
+                        onDragStart={e => { setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
+                        onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
+                        onClick={() => s.dueDate && setDayPopup(s.dueDate)}
+                        style={{
+                          background: s.status === "완납" ? "#10b98108" : s.status === "지연" ? "#f59e0b08" : "var(--card)",
+                          borderRadius: 10, border: `1px solid ${c.b}`, padding: "10px 12px", flexShrink: 0,
+                          cursor: canEdit ? "grab" : "pointer",
+                          opacity: dragSchedId === s.id ? 0.4 : 1,
+                        }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <BrandBadge code={s.brand} brands={config.brands} />
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)" }}>{s.debtorName}</span>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--ts)", flexWrap: "wrap" }}>
+                          <span className="mono">{fmtDate(s.dueDate)}</span>
+                          <span className="mono" style={{ fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</span>
+                          {s.debtSource && <span>{s.debtSource}</span>}
+                          {s.institution && <span style={{ color: "var(--tm)" }}>{s.institution}</span>}
+                          {s.assignee && <span style={{ marginLeft: "auto", color: "var(--tm)" }}>{s.assignee}</span>}
+                          {canEdit && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>⠿ 드래그</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {undatedScheds.length > 0 && (
+                    <div style={{ flexShrink: 0 }}>
+                      <div style={{ borderTop: "2px dashed var(--brd)", margin: "4px 0 8px", opacity: 0.5 }} />
+                      <div style={{ fontSize: 11, color: "#b45309", fontWeight: 600, marginBottom: 6 }}>날짜 미정 {undatedScheds.length}건</div>
+                      {undatedScheds.map(s => {
+                      const c = scColor(s.status);
+                      const isEditingDate = editDateId === s.id;
+                      return (
+                        <div key={s.id}
+                          draggable={canEdit}
+                          onDragStart={e => { setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
+                          onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
+                          style={{ background: "var(--card)", borderRadius: 10, border: "1px dashed #f59e0b60", padding: "10px 12px", marginBottom: 6, cursor: canEdit ? "grab" : "default", opacity: dragSchedId === s.id ? 0.4 : 1 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <BrandBadge code={s.brand} brands={config.brands} />
+                              <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)" }}>{s.debtorName}</span>
+                              {canEdit && <span style={{ fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>⠿ 달력에 드래그</span>}
+                            </div>
+                            <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--ts)", marginBottom: 7 }}>
+                            <span className="mono" style={{ color: "#f59e0b" }}>{s.dueMonth} (미정)</span>
+                            <span className="mono" style={{ fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</span>
+                          </div>
+                          {canEdit && (
+                            <div style={{ display: "flex", gap: 4 }}>
+                              {isEditingDate ? (
+                                <>
+                                  <input type="date" value={editDateVal} onChange={e => setEditDateVal(e.target.value)} style={{ ...inp, padding: "3px 6px", fontSize: 11, width: 120 }} />
+                                  <button onClick={() => saveDate(s.id)} style={{ padding: "2px 8px", background: "var(--acc)", color: "#fff", borderRadius: 5, fontSize: 11, border: "none", cursor: "pointer" }}>확인</button>
+                                  <button onClick={() => setEditDateId(null)} style={{ padding: "2px 6px", background: "var(--bg2)", color: "var(--tm)", borderRadius: 5, fontSize: 11, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                                </>
+                              ) : (
+                                <>
+                                  {s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ padding: "3px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>날짜지정</button>}
+                                  {s.status !== "완납" && <button onClick={() => markComplete(s.id)} style={{ padding: "3px 10px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>}
+                                  {s.status === "완납" && <button onClick={() => markUnpaid(s.id)} style={{ padding: "3px 10px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>완납취소</button>}
+                                  <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 7px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={11} /></button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  )}
+              </div>
             </div>
           </div>
         </div>
+      )}
 
         {/* ── 플랜 관리 탭 ── */}
         <div style={{ display: instTab === "플랜관리" ? "flex" : "none", flexDirection: "column", gap: 14 }}>
-          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", gap: 6 }}>
-              {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={14} />플랜 추가</button>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {isAdmin && <button onClick={doImport} disabled={importing} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: importing ? "var(--bg2)" : "#f59e0b18", color: importing ? "var(--tm)" : "#b45309", fontSize: 12, fontWeight: 600, border: "1px solid #f59e0b40", cursor: importing ? "not-allowed" : "pointer" }}><I name="upload" size={14} />{importing ? "이관중…" : "엑셀 이관"}</button>}
               <button onClick={() => exportInstallments(data.installmentPlans)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}><I name="arrowDown" size={14} />CSV</button>
             </div>
-            <span style={{ fontSize: 12, color: "var(--tm)" }}>플랜 {data.installmentPlans.length}건</span>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <KoreanInput value={planSearch} onChange={e => setPlanSearch(e.target.value)} placeholder="채무자명 검색…" style={{ ...inp, padding: "6px 10px", fontSize: 12, border: "1px solid var(--brd)", borderRadius: 7, background: "var(--bg)", color: "var(--tp)", width: 180 }} />
+              <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap" }}>플랜 {data.installmentPlans.length}건</span>
+            </div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {data.installmentPlans.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>플랜 없음 — 플랜 추가 또는 엑셀 이관으로 시작하세요</div>}
-            {data.installmentPlans.map(plan => {
+            {data.installmentPlans.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>플랜 없음 — 월간 달력에서 <b>+ 플랜 추가</b> 버튼으로 시작하세요</div>}
+            {data.installmentPlans.filter(plan => !planSearch || (plan.debtorName || "").toLowerCase().includes(planSearch.toLowerCase())).map(plan => {
               const d = data.debtors.find(x => x.id === plan.debtorId);
               const scheds = plan.schedules || [];
               const done = scheds.filter(s => s.status === "완납").length;
@@ -3324,11 +4800,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               return (
                 <div key={plan.id} style={{ background: "var(--card)", borderRadius: 10, border: overdue > 0 ? "1px solid #f59e0b80" : "1px solid var(--brd)", overflow: "hidden" }}>
                   <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}
-                    onClick={() => { if (d) { setSel(d); setTab("debtors"); setDetailTab("분할상환"); } }}>
+                    onClick={() => setPlanPopup(plan)}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                       <BrandBadge code={plan.brand} brands={config.brands} />
                       <span style={{ fontWeight: 600 }}>{plan.debtorName}</span>
-                      <span style={{ fontSize: 11, color: "var(--tm)" }}>{plan.paymentTiming}</span>
+                      {plan.startDate && <span style={{ fontSize: 11, color: "var(--tm)" }}>{plan.startDate.slice(0, 7)} 시작</span>}
                       <span style={{ fontSize: 11, color: "var(--ts)" }}>{plan.hubName}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -3336,7 +4812,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         총 {scheds.length}건 / 완납 <span style={{ color: "#047857", fontWeight: 600 }}>{done}</span> / 지연 <span style={{ color: "#b45309", fontWeight: 600 }}>{overdue}</span>
                       </span>
                       <span style={{ fontSize: 12, color: "var(--ts)" }}>총채권: <b className="mono">{fmt(plan.totalClaim || (d?.finalBalanceLegal ?? 0))}</b></span>
-                      <Badge status={plan.status} small />
                       {canEdit && <button onClick={async (e) => { e.stopPropagation(); if (!confirm(`${plan.debtorName} 플랜 및 모든 일정을 삭제하시겠습니까?`)) return; await fetch(`/api/installments/${plan.id}`, { method: "DELETE" }); await reloadInstallments(); showToast("삭제 완료"); }} style={{ padding: "3px 6px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "none", cursor: "pointer" }}><I name="trash" size={12} /></button>}
                     </div>
                   </div>
@@ -3353,6 +4828,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             })}
           </div>
         </div>
+
+        {planPopup && PlanDetailPopup()}
+        {addSchedModal && <AddSchedModal />}
+        {dayPopup && <DayPopup date={dayPopup} onClose={() => setDayPopup(null)} />}
       </div>
     );
   };
@@ -3363,8 +4842,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const setLegalTab = setLegalSubTab;
     const [brandF,            setBrandF]            = useState("전체");
     const [searchQ,           setSearchQ]           = useState("");
+    useEffect(() => { if (legalSearchInit) { setSearchQ(legalSearchInit); setLegalSearchInit(null); } }, [legalSearchInit]);
     const [selCase,           setSelCase]            = useState(null);
-    const [editThirds,        setEditThirds]         = useState(null); // null=보기, array=편집모드
+    // editThirds 상태는 ThirdsEditorSection 내부로 이전 (딸깍거림 방지)
     const [matchingCase,      setMatchingCase]       = useState(null);
     const [matchQ,            setMatchQ]             = useState("");
     const [selComplaint,      setSelComplaint]       = useState(null);  // 형사고소 팝업
@@ -3543,11 +5023,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>경찰서</div>
-                    <input value={cmpEdit.policeStation} onChange={e => setCmpEdit(p => ({ ...p, policeStation: e.target.value }))} placeholder="예: 광진경찰서" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    <KoreanInput value={cmpEdit.policeStation} onChange={e => setCmpEdit(p => ({ ...p, policeStation: e.target.value }))} placeholder="예: 광진경찰서" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>죄명</div>
-                    <input value={cmpEdit.charge} onChange={e => setCmpEdit(p => ({ ...p, charge: e.target.value }))} placeholder="예: 사기, 횡령, 배임 등" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    <KoreanInput value={cmpEdit.charge} onChange={e => setCmpEdit(p => ({ ...p, charge: e.target.value }))} placeholder="예: 사기, 횡령, 배임 등" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>결과/상태</div>
@@ -3557,11 +5037,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>수사관</div>
-                    <input value={cmpEdit.investigator} onChange={e => setCmpEdit(p => ({ ...p, investigator: e.target.value }))} placeholder="수사관 이름" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    <KoreanInput value={cmpEdit.investigator} onChange={e => setCmpEdit(p => ({ ...p, investigator: e.target.value }))} placeholder="수사관 이름" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>연락처</div>
-                    <input value={cmpEdit.investigatorContact} onChange={e => setCmpEdit(p => ({ ...p, investigatorContact: e.target.value }))} placeholder="전화번호" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    <KoreanInput value={cmpEdit.investigatorContact} onChange={e => setCmpEdit(p => ({ ...p, investigatorContact: e.target.value }))} placeholder="전화번호" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
                   </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
@@ -3573,7 +5053,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ts)", marginBottom: 8 }}>고소장 PDF</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <input value={cmpEdit.complaintUrl} onChange={e => setCmpEdit(p => ({ ...p, complaintUrl: e.target.value }))} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  <KoreanInput value={cmpEdit.complaintUrl} onChange={e => setCmpEdit(p => ({ ...p, complaintUrl: e.target.value }))} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
                   {cmpEdit.complaintUrl
                     ? <a href={cmpEdit.complaintUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
                     : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
@@ -3592,10 +5072,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <div style={{ background: "var(--card)", borderRadius: 8, padding: 12, border: "2px solid var(--acc)", marginBottom: 10 }}>
                     <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <input type="date" value={cmpHistForm.date} onChange={e => setCmpHistForm(f => ({ ...f, date: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12 }} />
-                      <input value={cmpHistForm.assignee} onChange={e => setCmpHistForm(f => ({ ...f, assignee: e.target.value }))} placeholder="담당자" style={{ width: 90, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12 }} />
+                      <KoreanInput value={cmpHistForm.assignee} onChange={e => setCmpHistForm(f => ({ ...f, assignee: e.target.value }))} placeholder="담당자" style={{ width: 90, padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12 }} />
                       <span style={{ fontSize: 11, color: "var(--tm)" }}>{cmpHistForm.mode === "add" ? "새 항목" : "수정"}</span>
                     </div>
-                    <textarea value={cmpHistForm.content} onChange={e => setCmpHistForm(f => ({ ...f, content: e.target.value }))} rows={3} placeholder="진행사항을 입력하세요..." style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }} />
+                    <KoreanTextarea value={cmpHistForm.content} onChange={e => setCmpHistForm(f => ({ ...f, content: e.target.value }))} rows={3} placeholder="진행사항을 입력하세요..." style={{ width: "100%", padding: "7px 9px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }} />
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 8 }}>
                       <button onClick={() => setCmpHistForm(null)} style={{ padding: "5px 12px", borderRadius: 6, background: "var(--bg)", color: "var(--tp)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer" }}>취소</button>
                       <button onClick={saveCmpHist} style={{ padding: "5px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>저장</button>
@@ -3642,7 +5122,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <div style={{ marginTop: 10 }}>
                     <div style={{ position: "relative", marginBottom: 8 }}>
                       <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
-                      <input autoFocus value={cmpMatchQ} onChange={e => setCmpMatchQ(e.target.value)} placeholder="채무자명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                      <KoreanInput autoFocus value={cmpMatchQ} onChange={e => setCmpMatchQ(e.target.value)} placeholder="채무자명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)" }} />
                     </div>
                     <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
                       {c.debtorId && <div onClick={() => saveComplaintMatch(null)} style={{ display: "flex", alignItems: "center", padding: "6px 10px", borderRadius: 7, cursor: "pointer", fontSize: 12, background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", marginBottom: 4 }}>연결 해제</div>}
@@ -3666,7 +5146,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {/* 하단 버튼 */}
             <div style={{ padding: "10px 20px", borderTop: "1px solid var(--brd)", display: "flex", gap: 8, justifyContent: "flex-end", background: "var(--bg2)", flexShrink: 0 }}>
               {debtor && (
-                <button onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차내역"); setSelComplaint(null); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
+                <button onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelComplaint(null); }} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}>
                   <I name="users" size={14} /> 채무자 페이지로 가기
                 </button>
               )}
@@ -3699,7 +5179,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ position: "relative", marginBottom: 8 }}>
           <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
-          <input value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+          <KoreanInput value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
         </div>
         <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
           {matchCandidates.length === 0 && <div style={{ fontSize: 12, color: "var(--tm)", padding: 8 }}>검색 결과 없음</div>}
@@ -3866,107 +5346,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
           {/* 제3채무자 (압류인 경우) */}
           {!isAD && selCase.thirdParties != null && (
-            (() => {
-              const thirds = selCase.thirdParties;
-              const isEditing = editThirds !== null;
-              const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
-              const numInpS = { ...inpS, textAlign: "right", width: 90 };
-              const setRow = (i, k, v) => setEditThirds(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
-              const saveEdit = () => {
-                const cleaned = editThirds.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
-                saveThirdsOv(selCase.id, cleaned);
+            <ThirdsEditorSection
+              key={selCase.id}
+              thirds={selCase.thirdParties}
+              caseId={selCase.id}
+              onSave={cleaned => {
                 setSelCase(prev => ({ ...prev, thirdParties: cleaned }));
                 setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, thirdParties: cleaned } : c) }));
-                setEditThirds(null);
-              };
-              return (
-                <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 (압류 은행)</div>
-                    <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>
-                      {isEditing ? editThirds.length : thirds.length}건
-                    </span>
-                    {!isEditing && (
-                      <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
-                        잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
-                      </span>
-                    )}
-                    <span style={{ flex: 1 }} />
-                    {!isEditing ? (
-                      <button onClick={() => setEditThirds(thirds.map(t => ({ ...t })))}
-                        style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>
-                        수정
-                      </button>
-                    ) : (
-                      <div style={{ display: "flex", gap: 6 }}>
-                        <button onClick={() => setEditThirds(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }])}
-                          style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>
-                          + 행 추가
-                        </button>
-                        <button onClick={saveEdit}
-                          style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>
-                          저장
-                        </button>
-                        <button onClick={() => setEditThirds(null)}
-                          style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>
-                          취소
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr style={{ borderBottom: "2px solid var(--brd)" }}>
-                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
-                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
-                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
-                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>잔액</th>
-                          <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
-                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
-                          <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
-                          {isEditing && <th style={{ padding: "4px 8px" }} />}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(isEditing ? editThirds : thirds).map((t, i) => isEditing ? (
-                          <tr key={i} style={{ borderBottom: "1px solid var(--brd)" }}>
-                            <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
-                            <td style={{ padding: "4px 6px" }}><input value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
-                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.claimAmount || ""} onChange={e => setRow(i, "claimAmount", Number(e.target.value) || 0)} style={numInpS} /></td>
-                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.balance || ""} onChange={e => setRow(i, "balance", Number(e.target.value) || 0)} style={numInpS} /></td>
-                            <td style={{ padding: "4px 6px" }}><input type="number" value={t.collected || ""} onChange={e => setRow(i, "collected", Number(e.target.value) || 0)} style={numInpS} /></td>
-                            <td style={{ padding: "4px 6px" }}><input value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
-                            <td style={{ padding: "4px 6px" }}><input value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
-                            <td style={{ padding: "4px 6px" }}>
-                              <button onClick={() => setEditThirds(prev => prev.filter((_, ri) => ri !== i))}
-                                style={{ padding: "2px 7px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
-                            </td>
-                          </tr>
-                        ) : (
-                          <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
-                            <td style={{ padding: "5px 8px", color: "var(--ts)" }}>{t.seqNo}</td>
-                            <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.bankName}</td>
-                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: "var(--tm)" }}>{t.claimAmount > 0 ? fmt(t.claimAmount) : "-"}</td>
-                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: t.balance > 0 ? "var(--ok)" : "var(--tp)" }}>{t.balance > 0 ? fmt(t.balance) : "-"}</td>
-                            <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: t.collected > 0 ? "#3b82f6" : "var(--tm)" }}>{t.collected > 0 ? fmt(t.collected) : "-"}</td>
-                            <td style={{ padding: "5px 8px", color: "var(--ts)", whiteSpace: "nowrap" }}>{t.responseDate || "-"}</td>
-                            <td style={{ padding: "5px 8px", color: "var(--ts)", fontSize: 11, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.remarks || ""}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              );
-            })()
+              }}
+            />
           )}
 
           {/* OneDrive 문서 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>문서 (OneDrive)</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+              <KoreanInput value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
               {docUrl
                 ? <a href={docUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
                 : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
@@ -3995,7 +5390,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             {debtor && (
               <button
-                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차"); setSelCase(null); }}
+                onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
               >
                 <I name="users" size={14} /> 채무자 페이지로 가기
@@ -4035,7 +5430,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </select>
           <div style={{ position: "relative", flex: 1 }}>
             <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
-            <input
+            <KoreanInput
               value={searchQ} onChange={e => setSearchQ(e.target.value)}
               placeholder="채무자명·사건번호·법원 검색"
               style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}
@@ -4121,7 +5516,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 ))}
               </div>
         )}
-        <ComplaintDetailModal />
+        {ComplaintDetailModal()}
       </div>
     );
   };
@@ -4223,7 +5618,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>문서 (OneDrive)</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+              <KoreanInput value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="OneDrive 공유 링크 붙여넣기..." style={{ flex: 1, padding: "7px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
               {docUrl
                 ? <a href={docUrl} target="_blank" rel="noopener noreferrer" style={{ padding: "7px 12px", borderRadius: 6, background: "#3b82f618", color: "#1d4ed8", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap" }}>열기</a>
                 : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
@@ -4234,7 +5629,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             {debtor && (
               <button
-                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("회생파산"); setSelRehab(null); }}
+                onClick={() => { navigateToDebtor(debtor, "회생파산"); setSelRehab(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
               >
                 <I name="users" size={14} /> 채무자 페이지로 가기
@@ -4270,7 +5665,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           })}
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
-          <div style={{ position: "relative", flex: 1 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><input value={rq} onChange={e => setRq(e.target.value)} placeholder="채무자명, 사건번호, 비고 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+          <div style={{ position: "relative", flex: 1 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={rq} onChange={e => setRq(e.target.value)} placeholder="채무자명, 사건번호, 비고 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
           <button onClick={() => setModal({ type: "addRehab" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}><I name="plus" size={14} />데이터 추가</button>
           <button onClick={() => exportLegal([], filtered, [])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
@@ -4298,7 +5693,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
             <div style={{ position: "relative", marginBottom: 12 }}>
               <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
-              <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 또는 ID 검색 (비워두면 회생/파산 목록 표시)..." style={{ width: "100%", paddingLeft: 32 }} />
+              <KoreanInput autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 또는 ID 검색 (비워두면 회생/파산 목록 표시)..." style={{ width: "100%", paddingLeft: 32 }} />
             </div>
             <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
               {matchCandidates.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>검색 결과 없음</div>}
@@ -4342,6 +5737,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [collSort,      setCollSort]      = useState({ f: "requestDate", d: "desc" });
     const [showAddForm,   setShowAddForm]   = useState(false);
     const [addFields,     setAddFields]     = useState({ agencyName:"", brandRaw:"B", debtorName:"", requestAmount:"", amountDetail:"", requestDate:"", condition:"", agencyPerson:"", agencyPhone:"", cost:"", activities:"", monthlyUpdates:[], recoveredAmount:"" });
+    const [recMode,       setRecMode]       = useState(() => localStorage.getItem("coll_rec_mode") || "auto");
+    const [manualRecTotal, setManualRecTotal] = useState(() => Number(localStorage.getItem("coll_rec_manual") || "0"));
+    const [editingRec,    setEditingRec]    = useState(false);
+    const [editRecInput,  setEditRecInput]  = useState("");
 
     const agencies = useMemo(() => [...new Set(orders.map(o => o.agencyName).filter(Boolean))], [orders]);
 
@@ -4437,9 +5836,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       showToast("삭제 완료");
     };
 
-    const totalReq  = orders.reduce((s, o) => s + (o.requestAmount || 0), 0);
-    const totalRec  = orders.reduce((s, o) => s + (o.recoveredAmount || 0), 0);
-    const matched   = orders.filter(o => o.debtorId).length;
+    const autoTotalRec = orders.reduce((s, o) => {
+      const d = getDebtor(o.debtorId);
+      return s + (d?.collectedAmount || 0);
+    }, 0);
+    const kpiTotalRec = recMode === "manual" ? manualRecTotal : autoTotalRec;
 
     // 팝업에서 현재 값 (편집 중이면 editFields 우선)
     const cur = (key) => editMode ? (editFields[key] !== undefined ? editFields[key] : selOrder?.[key]) : selOrder?.[key];
@@ -4457,11 +5858,46 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <>
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* KPI */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <KPI label="총 추심의뢰" value={`${orders.length}건`} sub={`추심업체 ${agencies.length}곳`} color="#3b82f6" />
-          <KPI label="채무자 연동" value={`${matched}건`} sub={`미연동 ${orders.length - matched}건`} color={matched < orders.length ? "#ef4444" : "#10b981"} />
-          <KPI label="총 추심요청 금액" value={fmt(totalReq)} sub="원금 기준" color="#8b5cf6" />
-          <KPI label="총 회수현황" value={fmt(totalRec)} sub={`회수율 ${totalReq > 0 ? ((totalRec/totalReq)*100).toFixed(1) : 0}%`} color="#10b981" />
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500 }}>
+                회수금액
+                <span style={{ marginLeft: 6, fontSize: 10, padding: "1px 6px", borderRadius: 8, background: recMode === "auto" ? "#eff6ff" : "#fefce8", color: recMode === "auto" ? "#1d4ed8" : "#92400e", border: `1px solid ${recMode === "auto" ? "#bfdbfe" : "#fde68a"}` }}>
+                  {recMode === "auto" ? "자동(슬랙)" : "수동"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {editingRec ? (
+                  <>
+                    <button onClick={() => {
+                      const v = Number(String(editRecInput).replace(/,/g, "")) || 0;
+                      setManualRecTotal(v); setRecMode("manual");
+                      localStorage.setItem("coll_rec_mode", "manual");
+                      localStorage.setItem("coll_rec_manual", String(v));
+                      setEditingRec(false);
+                    }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "#10b981", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+                    <button onClick={() => setEditingRec(false)} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { setEditRecInput(String(kpiTotalRec)); setEditingRec(true); }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+                    {recMode === "manual" && (
+                      <button onClick={() => { setRecMode("auto"); localStorage.setItem("coll_rec_mode", "auto"); }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>자동</button>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+            {editingRec ? (
+              <MoneyInput value={editRecInput} onChange={v => setEditRecInput(v)} style={{ padding: "5px 8px", fontSize: 16, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%", marginBottom: 4 }} />
+            ) : (
+              <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>{fmt(kpiTotalRec)}</div>
+            )}
+            <div style={{ fontSize: 11, color: "var(--ts)" }}>{recMode === "auto" ? "연동 채무자 입금 자동 집계" : "수동 입력값"}</div>
+          </div>
         </div>
 
         {/* 필터 */}
@@ -4478,7 +5914,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </select>
           <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
             <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
-            <input value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·업체명 검색" style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+            <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·업체명 검색" style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
           </div>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
           {canEdit && (
@@ -4495,6 +5931,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <span style={{ minWidth: 90 }}><SortBtn field="agencyName" label="추심업체" /></span>
           <span style={{ minWidth: 90 }}><SortBtn field="requestDate" label="요청일" /></span>
           <span style={{ minWidth: 110 }}><SortBtn field="requestAmount" label="요청금액" /></span>
+          <span style={{ minWidth: 100 }}>회수금액</span>
           <span style={{ flex: 1 }}>최근 현황</span>
           <span style={{ minWidth: 50 }}>연동</span>
         </div>
@@ -4520,7 +5957,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
                 <div style={{ fontSize: 11, color: "var(--ts)", minWidth: 90 }}>{o.requestDate}</div>
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", minWidth: 110 }}>{fmt(o.requestAmount)}</span>
-                {o.recoveredAmount > 0 && <span className="mono" style={{ fontSize: 11, color: "#3b82f6" }}>회수 {fmt(o.recoveredAmount)}</span>}
+                {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", minWidth: 100 }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
                 <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                   {lastUpdate && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</>}
                 </div>
@@ -4571,7 +6008,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {editMode
               ? <div style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
                   <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>소요비용</span>
-                  <textarea value={cur("cost") || ""} onChange={e => setF("cost", e.target.value)} rows={2} style={{ ...inpS, resize: "vertical" }} />
+                  <KoreanTextarea value={cur("cost") || ""} onChange={e => setF("cost", e.target.value)} rows={2} style={{ ...inpS, resize: "vertical" }} />
                 </div>
               : <DL label="소요비용" val={selOrder.cost} />
             }
@@ -4581,7 +6018,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>활동사항</div>
             {editMode
-              ? <textarea value={cur("activities") || ""} onChange={e => setF("activities", e.target.value)} rows={4} style={{ ...inpS, resize: "vertical" }} />
+              ? <KoreanTextarea value={cur("activities") || ""} onChange={e => setF("activities", e.target.value)} rows={4} style={{ ...inpS, resize: "vertical" }} />
               : <div style={{ fontSize: 13, color: "var(--tp)", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{selOrder.activities || "-"}</div>
             }
           </div>
@@ -4601,12 +6038,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {editMode
                 ? (cur("monthlyUpdates") || selOrder.monthlyUpdates || []).map((mu, i) => (
                     <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-start" }}>
-                      <input value={mu.month} onChange={e => {
+                      <KoreanInput value={mu.month} onChange={e => {
                         const arr = [...(cur("monthlyUpdates") || selOrder.monthlyUpdates)];
                         arr[i] = { ...arr[i], month: e.target.value };
                         setF("monthlyUpdates", arr);
                       }} placeholder="YYYY.MM" style={{ ...inpS, width: 90, flexShrink: 0 }} />
-                      <textarea value={mu.content} onChange={e => {
+                      <KoreanTextarea value={mu.content} onChange={e => {
                         const arr = [...(cur("monthlyUpdates") || selOrder.monthlyUpdates)];
                         arr[i] = { ...arr[i], content: e.target.value };
                         setF("monthlyUpdates", arr);
@@ -4629,12 +6066,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
           {/* 회수현황 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>회수현황</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>회수현황</div>
+              {getDebtor(selOrder.debtorId)?.collectedAmount > 0 && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>입금내역 자동</span>
+              )}
+            </div>
             {editMode
-              ? <input type="number" value={cur("recoveredAmount") ?? selOrder.recoveredAmount ?? 0} onChange={e => setF("recoveredAmount", Number(e.target.value) || 0)} style={{ ...inpS, maxWidth: 200 }} />
-              : <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: selOrder.recoveredAmount > 0 ? "#3b82f6" : "var(--tm)" }}>
-                  {selOrder.recoveredAmount > 0 ? fmt(selOrder.recoveredAmount) : "미회수"}
-                </span>
+              ? <MoneyInput value={String(cur("recoveredAmount") ?? selOrder.recoveredAmount ?? 0)} onChange={v => setF("recoveredAmount", Number(v) || 0)} style={{ ...inpS, maxWidth: 200 }} />
+              : (() => {
+                  const autoRec = getDebtor(selOrder.debtorId)?.collectedAmount || 0;
+                  const manualRec = selOrder.recoveredAmount || 0;
+                  const displayRec = autoRec || manualRec;
+                  return (
+                    <div>
+                      <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: displayRec > 0 ? "#3b82f6" : "var(--tm)" }}>
+                        {displayRec > 0 ? fmt(displayRec) : "미회수"}
+                      </span>
+                      {autoRec > 0 && manualRec > 0 && autoRec !== manualRec && (
+                        <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 4 }}>수동입력: {fmt(manualRec)}</div>
+                      )}
+                    </div>
+                  );
+                })()
             }
           </div>
 
@@ -4702,7 +6156,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
             <div style={{ position: "relative", marginBottom: 10 }}>
               <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
-              <input autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 검색…" style={{ width: "100%", paddingLeft: 32, padding: "8px 10px 8px 32px", borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+              <KoreanInput autoFocus value={matchQ} onChange={e => setMatchQ(e.target.value)} placeholder="채무자명 검색…" style={{ width: "100%", paddingLeft: 32, padding: "8px 10px 8px 32px", borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
             </div>
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
               {matchCandidates.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>검색 결과 없음</div>}
@@ -4753,23 +6207,23 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               return (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <LI label="추심업체 *"><input value={AF.agencyName} onChange={e => setAF("agencyName", e.target.value)} placeholder="추심업체명" style={fS} /></LI>
+                    <LI label="추심업체 *"><KoreanInput value={AF.agencyName} onChange={e => setAF("agencyName", e.target.value)} placeholder="추심업체명" style={fS} /></LI>
                     <LI label="브랜드">
                       <select value={AF.brandRaw} onChange={e => setAF("brandRaw", e.target.value)} style={fS}>
                         {BRAND_OPTS.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
                       </select>
                     </LI>
-                    <LI label="채무자명 *"><input value={AF.debtorName} onChange={e => setAF("debtorName", e.target.value)} placeholder="채무자 이름" style={fS} /></LI>
+                    <LI label="채무자명 *"><KoreanInput value={AF.debtorName} onChange={e => setAF("debtorName", e.target.value)} placeholder="채무자 이름" style={fS} /></LI>
                     <LI label="추심요청일"><input type="text" value={AF.requestDate} onChange={e => setAF("requestDate", e.target.value)} placeholder="YYYY.MM.DD" style={fS} /></LI>
-                    <LI label="추심요청금액 (원)"><input type="number" value={AF.requestAmount} onChange={e => setAF("requestAmount", e.target.value)} placeholder="0" style={fS} /></LI>
-                    <LI label="회수금액 (원)"><input type="number" value={AF.recoveredAmount} onChange={e => setAF("recoveredAmount", e.target.value)} placeholder="0" style={fS} /></LI>
-                    <LI label="담당자"><input value={AF.agencyPerson} onChange={e => setAF("agencyPerson", e.target.value)} placeholder="담당자명" style={fS} /></LI>
-                    <LI label="연락처"><input value={AF.agencyPhone} onChange={e => setAF("agencyPhone", e.target.value)} placeholder="전화번호" style={fS} /></LI>
+                    <LI label="추심요청금액 (원)"><MoneyInput value={AF.requestAmount} onChange={v => setAF("requestAmount", v)} placeholder="0" style={fS} /></LI>
+                    <LI label="회수금액 (원)"><MoneyInput value={AF.recoveredAmount} onChange={v => setAF("recoveredAmount", v)} placeholder="0" style={fS} /></LI>
+                    <LI label="담당자"><KoreanInput value={AF.agencyPerson} onChange={e => setAF("agencyPerson", e.target.value)} placeholder="담당자명" style={fS} /></LI>
+                    <LI label="연락처"><KoreanInput value={AF.agencyPhone} onChange={e => setAF("agencyPhone", e.target.value)} placeholder="전화번호" style={fS} /></LI>
                   </div>
-                  <LI label="조건"><input value={AF.condition} onChange={e => setAF("condition", e.target.value)} placeholder="추심 조건" style={fS} /></LI>
-                  <LI label="금액 상세"><textarea value={AF.amountDetail} onChange={e => setAF("amountDetail", e.target.value)} rows={2} placeholder="원금, 이자 등 구성 내역" style={{ ...fS, resize: "vertical" }} /></LI>
-                  <LI label="소요비용"><input value={AF.cost} onChange={e => setAF("cost", e.target.value)} placeholder="비용 내역" style={fS} /></LI>
-                  <LI label="활동사항"><textarea value={AF.activities} onChange={e => setAF("activities", e.target.value)} rows={3} placeholder="주요 활동 내역" style={{ ...fS, resize: "vertical" }} /></LI>
+                  <LI label="조건"><KoreanInput value={AF.condition} onChange={e => setAF("condition", e.target.value)} placeholder="추심 조건" style={fS} /></LI>
+                  <LI label="금액 상세"><KoreanTextarea value={AF.amountDetail} onChange={e => setAF("amountDetail", e.target.value)} rows={2} placeholder="원금, 이자 등 구성 내역" style={{ ...fS, resize: "vertical" }} /></LI>
+                  <LI label="소요비용"><KoreanInput value={AF.cost} onChange={e => setAF("cost", e.target.value)} placeholder="비용 내역" style={fS} /></LI>
+                  <LI label="활동사항"><KoreanTextarea value={AF.activities} onChange={e => setAF("activities", e.target.value)} rows={3} placeholder="주요 활동 내역" style={{ ...fS, resize: "vertical" }} /></LI>
                   <div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                       <span style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600 }}>월별 추심현황</span>
@@ -4778,8 +6232,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                     {(AF.monthlyUpdates || []).map((mu, i) => (
                       <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "flex-start" }}>
-                        <input value={mu.month} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], month: e.target.value }; setAF("monthlyUpdates", arr); }} placeholder="YYYY.MM" style={{ ...fS, width: 90, flexShrink: 0 }} />
-                        <textarea value={mu.content} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], content: e.target.value }; setAF("monthlyUpdates", arr); }} rows={2} style={{ ...fS, flex: 1, resize: "vertical" }} />
+                        <KoreanInput value={mu.month} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], month: e.target.value }; setAF("monthlyUpdates", arr); }} placeholder="YYYY.MM" style={{ ...fS, width: 90, flexShrink: 0 }} />
+                        <KoreanTextarea value={mu.content} onChange={e => { const arr = [...AF.monthlyUpdates]; arr[i] = { ...arr[i], content: e.target.value }; setAF("monthlyUpdates", arr); }} rows={2} style={{ ...fS, flex: 1, resize: "vertical" }} />
                         <button onClick={() => setAF("monthlyUpdates", AF.monthlyUpdates.filter((_, ri) => ri !== i))} style={{ padding: "4px 8px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", flexShrink: 0 }}>×</button>
                       </div>
                     ))}
@@ -5003,7 +6457,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                       <div style={{ position: "relative" }}>
-                        <input
+                        <KoreanInput
                           value={chosenDebtor ? `${chosenDebtor.name} (${chosenDebtor.id})` : srch}
                           onChange={e => {
                             setDebtorSearch(p => ({ ...p, [item.id]: e.target.value }));
@@ -5118,7 +6572,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     );
   };
 
-  // ─── AI 문건생성 ─────────────────────────────────────────
+  // ─── 문건 자동 생성 ─────────────────────────────────────────
   const PRESET_BANKS = [
     { label: "국민은행",   fullName: "주식회사 국민은행",           type: "bank" },
     { label: "농협은행",   fullName: "농협은행 주식회사",            type: "bank" },
@@ -5379,7 +6833,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>채무자 정보</div>
             <label style={labelStyle}>채무자 검색 (DB)</label>
             <div style={{ position: "relative", marginBottom: 10 }}>
-              <input
+              <KoreanInput
                 value={debtorQ}
                 onChange={e => { setDebtorQ(e.target.value); setSelDebtor(null); }}
                 placeholder="채무자명 또는 허브코드 입력..."
@@ -5409,7 +6863,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             )}
             <label style={labelStyle}>주민등록번호 (수동 입력)</label>
-            <input value={residentId} onChange={e => setResidentId(e.target.value)}
+            <KoreanInput value={residentId} onChange={e => setResidentId(e.target.value)}
               placeholder="000000-0000000" style={{ ...inputStyle, marginBottom: 0 }} />
           </div>
 
@@ -5431,36 +6885,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {execType === "공정증서" && <>
                 <div>
                   <label style={labelStyle}>공증서류명</label>
-                  <input value={notaryDoc} onChange={e => setNotaryDoc(e.target.value)}
+                  <KoreanInput value={notaryDoc} onChange={e => setNotaryDoc(e.target.value)}
                     placeholder="공증인가 법무법인 ○○ 증서 20__년 제___호" style={inputStyle} />
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                   <div>
                     <label style={labelStyle}>서류종류</label>
-                    <input value={docType} onChange={e => setDocType(e.target.value)}
+                    <KoreanInput value={docType} onChange={e => setDocType(e.target.value)}
                       placeholder="공정증서 정본" style={inputStyle} />
                   </div>
                   <div>
                     <label style={labelStyle}>조항</label>
-                    <input value={clause} onChange={e => setClause(e.target.value)}
+                    <KoreanInput value={clause} onChange={e => setClause(e.target.value)}
                       placeholder="제1조(목적)상" style={inputStyle} />
                   </div>
                 </div>
                 <div>
                   <label style={labelStyle}>차용일</label>
-                  <input value={borrowDate} onChange={e => setBorrowDate(e.target.value)}
+                  <KoreanInput value={borrowDate} onChange={e => setBorrowDate(e.target.value)}
                     placeholder="20__년 __월 __일" style={inputStyle} />
                 </div>
               </>}
               {(execType === "판결문" || execType === "지급명령") && <>
                 <div>
                   <label style={labelStyle}>법원명</label>
-                  <input value={courtName} onChange={e => setCourtName(e.target.value)}
+                  <KoreanInput value={courtName} onChange={e => setCourtName(e.target.value)}
                     placeholder="○○지방법원" style={inputStyle} />
                 </div>
                 <div>
                   <label style={labelStyle}>{execType === "판결문" ? "사건번호" : "명령번호"}</label>
-                  <input
+                  <KoreanInput
                     value={execType === "판결문" ? caseNumber : orderNumber}
                     onChange={e => execType === "판결문" ? setCaseNumber(e.target.value) : setOrderNumber(e.target.value)}
                     placeholder={execType === "판결문" ? "20__가단_____" : "20__차_____"}
@@ -5471,12 +6925,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div>
                   <label style={labelStyle}>원금</label>
-                  <input value={origPrincipal} onChange={e => setOrigPrincipal(e.target.value)}
+                  <KoreanInput value={origPrincipal} onChange={e => setOrigPrincipal(e.target.value)}
                     placeholder="123,645,678" style={inputStyle} />
                 </div>
                 <div>
                   <label style={labelStyle}>변제 후 잔액 (DB 자동)</label>
-                  <input value={remaining ? Number(remaining).toLocaleString("ko-KR") : ""}
+                  <KoreanInput value={remaining ? Number(remaining).toLocaleString("ko-KR") : ""}
                     onChange={e => setRemaining(e.target.value.replace(/,/g, ""))}
                     placeholder="12,234,567" style={inputStyle} />
                 </div>
@@ -5510,7 +6964,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               })}
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-              <input value={customName} onChange={e => setCustomName(e.target.value)}
+              <KoreanInput value={customName} onChange={e => setCustomName(e.target.value)}
                 placeholder="직접입력 (예: 주식회사 하나저축은행)" style={{ ...inputStyle, flex: 1 }} />
               <select value={customType} onChange={e => setCustomType(e.target.value)}
                 style={{ ...inputStyle, width: 80, flex: "none" }}>
@@ -5528,9 +6982,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     background: "var(--bg2)", borderRadius: 6, padding: "6px 8px",
                     borderLeft: `3px solid ${item.type === "bank" ? "#3b82f6" : "#10b981"}` }}>
                     <span style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, width: 18 }}>{idx + 1}.</span>
-                    <input value={item.name} onChange={e => updateItemName(item.id, e.target.value)}
+                    <KoreanInput value={item.name} onChange={e => updateItemName(item.id, e.target.value)}
                       style={{ ...inputStyle, flex: 1, padding: "4px 8px", fontSize: 11 }} />
-                    <input value={item.amount.toLocaleString("ko-KR")}
+                    <KoreanInput value={item.amount.toLocaleString("ko-KR")}
                       onChange={e => updateItemAmount(item.id, e.target.value.replace(/,/g, ""))}
                       style={{ ...inputStyle, width: 110, flex: "none", padding: "4px 8px", fontSize: 11,
                         textAlign: "right", fontFamily: "monospace" }} />
@@ -5614,6 +7068,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [brandF,       setBrandF]       = useState("전체");
     const [typeF,        setTypeF]        = useState("전체");
     const [searchQ,      setSearchQ]      = useState("");
+    useEffect(() => { if (minsaSearchInit) { setSearchQ(minsaSearchInit); setMinsaSearchInit(null); } }, [minsaSearchInit]);
     const [selCase,      setSelCase]      = useState(null);
     const [matchingCase, setMatchingCase] = useState(null);
     const [matchQ,       setMatchQ]       = useState("");
@@ -5682,7 +7137,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ position: "relative", marginBottom: 8 }}>
           <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={13} /></div>
-          <input value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+          <KoreanInput value={matchQ} onChange={e => setMatchQ(e.target.value)} autoFocus placeholder="채무자명·연락처·허브명 검색..." style={{ width: "100%", padding: "6px 8px 6px 26px", fontSize: 12, borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
         </div>
         <div style={{ maxHeight: 200, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 }}>
           {matchCandidates.length === 0 && <div style={{ fontSize: 12, color: "var(--tm)", padding: 8 }}>검색 결과 없음</div>}
@@ -5751,7 +7206,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             {debtor && (
               <button
-                onClick={() => { setSel(debtor); setTab("debtors"); setDetailTab("법적절차"); setSelCase(null); }}
+                onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
               >
                 <I name="users" size={14} /> 채무자 페이지로 가기
@@ -5768,7 +7223,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {selCase && <DetailModal />}
+        {selCase && DetailModal()}
 
         {/* KPI */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
@@ -5812,7 +7267,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
           </select>
           <div style={{ position: "relative", flex: 1 }}>
-            <input
+            <KoreanInput
               value={searchQ} onChange={e => setSearchQ(e.target.value)}
               placeholder="채무자명·사건번호·법원 검색"
               style={{ width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}
@@ -5901,7 +7356,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>{title}</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <input value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="새 항목 입력..." style={{ flex: 1, ...inp }} onKeyDown={e => { if (e.key === "Enter" && newItem.trim()) { onAdd(newItem.trim()); setNewItem(""); } }} />
+            <KoreanInput value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="새 항목 입력..." style={{ flex: 1, ...inp }} onKeyDown={e => { if (e.key === "Enter" && newItem.trim()) { onAdd(newItem.trim()); setNewItem(""); } }} />
             <button onClick={() => { if (newItem.trim()) { onAdd(newItem.trim()); setNewItem(""); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />추가</button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -5909,7 +7364,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "var(--bg)", borderRadius: 8, gap: 8 }}>
                 {editIdx === i ? (
                   <>
-                    <input value={editVal} onChange={e => setEditVal(e.target.value)} style={{ flex: 1, ...inp, padding: "4px 8px" }} autoFocus onKeyDown={e => { if (e.key === "Enter" && editVal.trim()) { onEdit(i, editVal.trim()); setEditIdx(-1); } if (e.key === "Escape") setEditIdx(-1); }} />
+                    <KoreanInput value={editVal} onChange={e => setEditVal(e.target.value)} style={{ flex: 1, ...inp, padding: "4px 8px" }} autoFocus onKeyDown={e => { if (e.key === "Enter" && editVal.trim()) { onEdit(i, editVal.trim()); setEditIdx(-1); } if (e.key === "Escape") setEditIdx(-1); }} />
                     <button onClick={() => { if (editVal.trim()) { onEdit(i, editVal.trim()); setEditIdx(-1); } }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--ok)", color: "#fff", fontWeight: 600 }}>저장</button>
                     <button onClick={() => setEditIdx(-1)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
                   </>
@@ -5978,7 +7433,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               예: <code style={{ background: "var(--bg)", padding: "2px 6px", borderRadius: 4 }}>C:/Users/hjbae/OneDrive - 바로고</code>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input value={rootPath} onChange={e => setRootPath(e.target.value)} placeholder="폴더 경로 입력..." style={{ flex: 1 }} />
+              <KoreanInput value={rootPath} onChange={e => setRootPath(e.target.value)} placeholder="폴더 경로 입력..." style={{ flex: 1 }} />
               <button onClick={handleSave} disabled={saving || !rootPath.trim()} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, opacity: saving ? 0.6 : 1 }}>
                 {saving ? "저장 중..." : "저장"}
               </button>
@@ -6017,8 +7472,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드 관리</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <input value={nb.code} onChange={e => setNb(p => ({ ...p, code: e.target.value }))} placeholder="코드 (1글자)" style={{ width: 80, ...inp }} maxLength={2} />
-            <input value={nb.name} onChange={e => setNb(p => ({ ...p, name: e.target.value }))} placeholder="브랜드명" style={{ flex: 1, ...inp }} />
+            <KoreanInput value={nb.code} onChange={e => setNb(p => ({ ...p, code: e.target.value }))} placeholder="코드 (1글자)" style={{ width: 80, ...inp }} maxLength={2} />
+            <KoreanInput value={nb.name} onChange={e => setNb(p => ({ ...p, name: e.target.value }))} placeholder="브랜드명" style={{ flex: 1, ...inp }} />
             <input type="color" value={nb.color} onChange={e => setNb(p => ({ ...p, color: e.target.value }))} style={{ width: 40, height: 36, border: "none", cursor: "pointer" }} />
             <button onClick={() => { if (nb.code && nb.name) { setConfig(p => ({ ...p, brands: [...p.brands, { ...nb }] })); setNb({ code: "", name: "", color: "#3b82f6" }); showToast("브랜드 추가 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 16px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />추가</button>
           </div>
@@ -6027,8 +7482,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "var(--bg)", borderRadius: 8, gap: 8 }}>
                 {editIdx === i ? (
                   <>
-                    <input value={eb.code} onChange={e => setEb(p => ({ ...p, code: e.target.value }))} style={{ width: 60, ...inp, padding: "4px 8px" }} maxLength={2} />
-                    <input value={eb.name} onChange={e => setEb(p => ({ ...p, name: e.target.value }))} style={{ flex: 1, ...inp, padding: "4px 8px" }} />
+                    <KoreanInput value={eb.code} onChange={e => setEb(p => ({ ...p, code: e.target.value }))} style={{ width: 60, ...inp, padding: "4px 8px" }} maxLength={2} />
+                    <KoreanInput value={eb.name} onChange={e => setEb(p => ({ ...p, name: e.target.value }))} style={{ flex: 1, ...inp, padding: "4px 8px" }} />
                     <input type="color" value={eb.color} onChange={e => setEb(p => ({ ...p, color: e.target.value }))} style={{ width: 32, height: 28, border: "none", cursor: "pointer" }} />
                     <button onClick={() => { if (eb.code && eb.name) { const oldBrand = config.brands[i]; setConfig(p => ({ ...p, brands: p.brands.map((x, idx) => idx === i ? { ...eb } : x) })); updateBrandInDebtors(oldBrand.code, eb); setEditIdx(-1); showToast("브랜드 수정 완료"); } }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--ok)", color: "#fff", fontWeight: 600 }}>저장</button>
                     <button onClick={() => setEditIdx(-1)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>취소</button>
@@ -6091,8 +7546,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* 상단 4탭 */}
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `변경 로그 (${auditLogs.length})` }].map(t => (
-            <button key={t.k} onClick={() => setMainTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
+          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }].map(t => (
+            <button key={t.k} onClick={() => { setMainTab(t.k); if (t.k === "logs") setAdminEditLogs(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
 
@@ -6141,7 +7596,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     {[["이름", "name", "이름"], ["이메일", "email", "이메일 주소"], ["아바타", "avatar", "1글자"], ["초기 비밀번호", "password", "비밀번호"]].map(([label, key, ph]) => (
                       <div key={key}>
                         <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{label}</div>
-                        <input type={key === "password" ? "password" : "text"} value={addUserForm[key]} onChange={e => setAddUserForm(p => ({ ...p, [key]: e.target.value }))} placeholder={ph} maxLength={key === "avatar" ? 1 : undefined}
+                        <KoreanInput type={key === "password" ? "password" : "text"} value={addUserForm[key]} onChange={e => setAddUserForm(p => ({ ...p, [key]: e.target.value }))} placeholder={ph} maxLength={key === "avatar" ? 1 : undefined}
                           style={{ width: "100%", padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }} />
                       </div>
                     ))}
@@ -6264,11 +7719,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
               {editingRule === rule.id && (
                 <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <Field label="규칙 이름"><input value={rule.name} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))} style={inp} /></Field>
+                  <Field label="규칙 이름"><KoreanInput value={rule.name} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))} style={inp} /></Field>
                   <Field label="트리거"><select value={rule.trigger} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, trigger: e.target.value } : r))} style={inp}>{TRIGGER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
-                  <Field label="조건 설명"><input value={rule.condition} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, condition: e.target.value } : r))} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
+                  <Field label="조건 설명"><KoreanInput value={rule.condition} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, condition: e.target.value } : r))} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
                   <Field label="알림 대상"><select value={rule.target} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, target: e.target.value } : r))} style={inp}><option value="channel">Slack 채널</option><option value="dm">개인 DM</option></select></Field>
-                  {rule.target === "channel" && <Field label="Slack 채널"><input value={rule.channel} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, channel: e.target.value } : r))} style={inp} placeholder="#채널명" /></Field>}
+                  {rule.target === "channel" && <Field label="Slack 채널"><KoreanInput value={rule.channel} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, channel: e.target.value } : r))} style={inp} placeholder="#채널명" /></Field>}
                   {rule.target === "dm" && <Field label="DM 대상자"><select value={rule.assignee} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, assignee: e.target.value } : r))} style={inp}><option value="">-- 선택 --</option>{users.filter(u => u.approved).map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}</select></Field>}
                 </div>
               )}
@@ -6283,50 +7738,73 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {/* Slack 수집 */}
         {mainTab === "slack" && <SlackIngestView showToast={showToast} reloadFromBackend={reloadFromBackend} currentUser={currentUser} />}
 
-        {/* 변경 로그 */}
-        {mainTab === "logs" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 14, fontWeight: 600 }}>변경 로그 ({auditLogs.length}건)</span>
-            <button onClick={() => {
-              const rows = [];
-              auditLogs.forEach(l => {
-                const time = fmtDate(l.timestamp) + " " + new Date(l.timestamp).toLocaleTimeString("ko-KR");
-                if (l.changes && l.changes.length > 0) {
-                  l.changes.forEach(c => rows.push([time, l.user, l.action, l.target, l.detail, c.field, String(c.from), String(c.to)]));
-                } else {
-                  rows.push([time, l.user, l.action, l.target, l.detail, "", "", ""]);
-                }
-              });
-              downloadCSV(`변경로그_${today()}.csv`, ["시간","사용자","작업","대상","상세","변경항목","기존값","변경값"], rows);
-            }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={12} />엑셀</button>
-          </div>
-          <div style={{ maxHeight: 600, overflow: "auto" }}>
-            {auditLogs.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>아직 기록된 로그가 없습니다</div>}
-            {auditLogs.map(log => (
-              <div key={log.id} style={{ borderBottom: "1px solid var(--brd)" }}>
-                <div style={{ display: "flex", gap: 12, padding: "10px 16px", alignItems: "center" }}>
-                  <span className="mono" style={{ fontSize: 11, color: "var(--tm)", whiteSpace: "nowrap", width: 140, flexShrink: 0 }}>{fmtDate(log.timestamp)} {new Date(log.timestamp).toLocaleTimeString("ko-KR")}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "#8b5cf618", color: "#8b5cf6", whiteSpace: "nowrap" }}>{log.user}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, whiteSpace: "nowrap", background: log.action === "등록" ? "#10b98118" : log.action === "수정" ? "#3b82f618" : "#ef444418", color: log.action === "등록" ? "#10b981" : log.action === "수정" ? "#3b82f6" : "#ef4444" }}>{log.action}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 4, background: "var(--bg)", whiteSpace: "nowrap" }}>{log.target}</span>
-                  <span style={{ fontSize: 12, color: "var(--ts)", flex: 1 }}>{log.detail}</span>
+        {/* 수정 로그 (DB 영구 보존) */}
+        {mainTab === "logs" && (() => {
+          const logs = adminEditLogs || [];
+          const loadLogs = () => {
+            setAdminEditLogs(null);
+            setAdminEditLogsLoading(true);
+            fetch("/api/edit-logs")
+              .then(r => r.ok ? r.json() : [])
+              .then(rows => { setAdminEditLogs(rows); setAdminEditLogsLoading(false); })
+              .catch(() => { setAdminEditLogs([]); setAdminEditLogsLoading(false); });
+          };
+          // 로그 항목을 채무자별로 그룹핑 (같은 시각, 같은 사람의 수정을 묶음)
+          const grouped = [];
+          logs.forEach(l => {
+            const last = grouped[grouped.length - 1];
+            const sameGroup = last && last.debtorId === l.debtorId && last.changedBy === l.changedBy
+              && Math.abs(new Date(last.changedAt) - new Date(l.changedAt)) < 5000; // 5초 이내 동일인 동일채무자
+            if (sameGroup) {
+              last.items.push(l);
+            } else {
+              grouped.push({ debtorId: l.debtorId, debtorName: l.debtorName, changedBy: l.changedBy, changedAt: l.changedAt, items: [l] });
+            }
+          });
+          return (
+            <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 14, fontWeight: 600 }}>수정 로그 ({logs.length}건)</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={loadLogs} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", fontSize: 11, fontWeight: 600, border: "1px solid #3b82f640", cursor: "pointer" }}>
+                    {adminEditLogsLoading ? "로딩중…" : "새로고침"}
+                  </button>
+                  <button onClick={() => {
+                    const rows = logs.map(l => [l.changedAt, l.changedBy, l.debtorName, l.debtorId, l.fieldLabel || l.fieldName, l.oldValue, l.newValue]);
+                    downloadCSV(`수정로그_${today()}.csv`, ["수정시각","수정자","채무자명","채무자ID","항목","변경전","변경후"], rows);
+                  }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}>
+                    <I name="arrowDown" size={12} />엑셀
+                  </button>
                 </div>
-                {log.changes && log.changes.length > 0 && (
-                  <div style={{ padding: "0 16px 10px 168px" }}>
-                    {log.changes.map((c, ci) => (
-                      <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12 }}>
-                        <span style={{ fontWeight: 600, color: "var(--tp)", minWidth: 80 }}>{c.field}</span>
-                        <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through" }}>{typeof c.from === "boolean" ? (c.from ? "O" : "X") : String(c.from)}</span>
-                        <span style={{ color: "var(--tm)" }}>→</span>
-                        <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4 }}>{typeof c.to === "boolean" ? (c.to ? "O" : "X") : String(c.to)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
-            ))}
-          </div>
-        </div>}
+              <div style={{ maxHeight: 620, overflow: "auto" }}>
+                {adminEditLogsLoading && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>로딩 중...</div>}
+                {!adminEditLogsLoading && logs.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>아직 기록된 수정 로그가 없습니다</div>}
+                {!adminEditLogsLoading && grouped.map((g, gi) => (
+                  <div key={gi} style={{ borderBottom: "1px solid var(--brd)" }}>
+                    <div style={{ display: "flex", gap: 10, padding: "10px 16px", alignItems: "center", background: "var(--bg2)" }}>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)", whiteSpace: "nowrap", flexShrink: 0 }}>{g.changedAt?.slice(0,16).replace("T"," ")}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: "#8b5cf618", color: "#8b5cf6", whiteSpace: "nowrap" }}>{g.changedBy}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{g.debtorName}</span>
+                      <span className="mono" style={{ fontSize: 10, color: "var(--ts)" }}>({g.debtorId})</span>
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>— {g.items.length}개 항목 수정</span>
+                    </div>
+                    <div style={{ padding: "8px 16px 10px 16px", display: "flex", flexDirection: "column", gap: 4 }}>
+                      {g.items.map((item, ii) => (
+                        <div key={ii} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0" }}>
+                          <span style={{ fontWeight: 600, color: "var(--tp)", minWidth: 90, flexShrink: 0 }}>{item.fieldLabel || item.fieldName}</span>
+                          <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.oldValue || "(없음)"}</span>
+                          <span style={{ color: "var(--tm)", flexShrink: 0 }}>→</span>
+                          <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.newValue || "(없음)"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   })();
@@ -6343,15 +7821,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
   ];
   const navTabs = [
-    { k: "dashboard",       l: "종합현황",     i: "dashboard" },
-    { k: "debtors",         l: "채무자 관리",  i: "users" },
-    { k: "payments",        l: "입금내역",     i: "won" },
-    { k: "installments",    l: "분할상환",     i: "calendar" },
-    { k: "collection",      l: "추심의뢰",     i: "arrowRight" },
-    { k: "legal",           l: "법적절차",     i: "gavel",   sub: legalSubItems,   subState: legalSubTab,  setSub: (v) => { setLegalSubTab(v); setTab("legal"); } },
-    { k: "rehabBankruptcy", l: "회생/파산",    i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
-    { k: "minsa",           l: "민사소송",     i: "scale" },
-    { k: "aiDocs",          l: "AI 문건생성",  i: "fileText" },
+    { k: "dashboard",       l: "대시보드",        i: "dashboard" },
+    { k: "debtors",         l: "채무자 관리",      i: "users" },
+    { k: "payments",        l: "입금내역",         i: "won" },
+    { k: "installments",    l: "분할상환",         i: "calendar" },
+    { k: "collection",      l: "추심의뢰",         i: "arrowRight" },
+    { k: "legal",           l: "법적절차",         i: "gavel",   sub: legalSubItems,   subState: legalSubTab,  setSub: (v) => { setLegalSubTab(v); setTab("legal"); } },
+    { k: "rehabBankruptcy", l: "회생/파산",        i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
+    { k: "minsa",           l: "민사소송",         i: "scale" },
+    { k: "aiDocs",          l: "문건 자동 생성",   i: "fileText" },
+    { k: "aiAnalysis",      l: "AI 종합분석",      i: "sparkles" },
     ...(isAdmin ? [{ k: "admin", l: "어드민", i: "settings" }] : []),
   ];
 
@@ -6365,7 +7844,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <style>{CSS}</style>
       {/* Sidebar */}
       <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "#3b82f6" }}>B</span><span style={{ color: "#f97316" }}>M</span><span style={{ color: "#8b5cf6" }}>D</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
+        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "#f59e0b" }}>B</span><span style={{ color: "#8b5cf6" }}>M</span><span style={{ color: "#3b82f6" }}>D</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
         <div style={{ flex: 1, padding: "8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
           {navTabs.map(t => {
             const isExpanded = t.sub && expandedNav.has(t.k);
@@ -6431,7 +7910,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ height: 56, padding: "0 24px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {sel && tab === "debtors" && <button onClick={() => setSel(null)} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
+            {sel && tab === "debtors" && <button onClick={goBack} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
             <span style={{ fontSize: 16, fontWeight: 700 }}>
               {navTabs.find(t => t.k === tab)?.l}
               {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
@@ -6458,21 +7937,31 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {tab === "rehabBankruptcy" && <RehabBankruptcyView />}
           {tab === "minsa" && <MinSaView />}
           {tab === "aiDocs" && <AiDocsView />}
+          {tab === "aiAnalysis" && (
+            <div className="anim" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 16, color: "var(--tm)" }}>
+              <I name="sparkles" size={48} />
+              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</div>
+              <div style={{ fontSize: 14, color: "var(--ts)", textAlign: "center", lineHeight: 1.8 }}>
+                기능 준비 중입니다.<br />채권 데이터 기반 AI 분석 리포트가 이 화면에 표시됩니다.
+              </div>
+            </div>
+          )}
           {tab === "admin" && adminView}
         </div>
       </div>
       {/* Modals */}
       {modal?.type === "debtor"          && <DebtorFormModal />}
       {modal?.type === "payment"         && <PaymentFormModal />}
-      {modal?.type === "rematch"         && <RematchModal />}
+      {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
       {modal?.type === "activity"        && <ActivityFormModal />}
       {modal?.type === "addInstallment"  && <InstallmentAddModal />}
+      {modal?.type === "rollover"        && <RolloverModal sched={modal.sched} onClose={() => setModal(null)} onReload={reloadInstallments} showToast={showToast} />}
       {modal?.type === "addRehab"        && <RehabAddModal />}
       {modal?.type === "addLegal"        && <LegalAddModal />}
       {modal?.type === "addMinsa"        && <MinsaAddModal />}
       {modal?.type === "addComplaint"    && <ComplaintAddModal />}
       {/* Alerts */}
-      {alerts && <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 360, background: "var(--card)", borderLeft: "1px solid var(--brd)", zIndex: 999, display: "flex", flexDirection: "column" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 15, fontWeight: 700 }}>알림</span><button onClick={() => setAlerts(false)} style={{ background: "none", color: "var(--tm)" }}><I name="close" size={18} /></button></div><div style={{ flex: 1, overflow: "auto", padding: 12 }}>{alertList.map((a, i) => (<div key={i} onClick={() => { const d = data.debtors.find(x => x.id === a.debtorId); if (d) { setSel(d); setTab("debtors"); setAlerts(false); } }} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: a.p === "high" ? "#ef4444" : "#f59e0b", animation: a.p === "high" ? "pulse 2s infinite" : "none" }} /><span style={{ fontSize: 10, fontWeight: 600, color: a.p === "high" ? "#ef4444" : "#f59e0b" }}>{a.p === "high" ? "긴급" : "주의"}</span></div><div style={{ fontSize: 12, lineHeight: 1.5 }}>{a.msg}</div></div>))}</div></div>}
+      {alerts && <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 360, background: "var(--card)", borderLeft: "1px solid var(--brd)", zIndex: 999, display: "flex", flexDirection: "column" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 15, fontWeight: 700 }}>알림</span><button onClick={() => setAlerts(false)} style={{ background: "none", color: "var(--tm)" }}><I name="close" size={18} /></button></div><div style={{ flex: 1, overflow: "auto", padding: 12 }}>{alertList.map((a, i) => (<div key={i} onClick={() => { const d = data.debtors.find(x => x.id === a.debtorId); if (d) { navigateToDebtor(d); setAlerts(false); } }} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: a.p === "high" ? "#ef4444" : "#f59e0b", animation: a.p === "high" ? "pulse 2s infinite" : "none" }} /><span style={{ fontSize: 10, fontWeight: 600, color: a.p === "high" ? "#ef4444" : "#f59e0b" }}>{a.p === "high" ? "긴급" : "주의"}</span></div><div style={{ fontSize: 12, lineHeight: 1.5 }}>{a.msg}</div></div>))}</div></div>}
       {/* 중복 입금 확인 모달 */}
       {dupConfirm && (
         <div onClick={() => setDupConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>

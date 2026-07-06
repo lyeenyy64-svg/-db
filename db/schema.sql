@@ -342,8 +342,9 @@ SELECT
   d.*,
   b.name  AS brand_name,
   b.color AS brand_color,
-  (d.principal_balance - d.collected_amount)                 AS final_balance_finance,
-  (d.principal_balance - d.collected_amount + d.adjustment)  AS final_balance_legal
+  CASE WHEN d.principal_balance = 0 THEN 0
+       ELSE (d.principal_balance - d.collected_amount) END          AS final_balance_finance,
+  (d.principal_balance - d.collected_amount + d.adjustment)         AS final_balance_legal
 FROM debtors d
 LEFT JOIN brands b ON d.brand_code = b.code;
 
