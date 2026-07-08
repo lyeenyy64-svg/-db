@@ -6616,147 +6616,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { id: "지급명령", label: "지급명령" },
   ];
 
-  const AiAnalysisView = () => {
-    // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
-    const bottomRef = useRef(null);
-
-    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiMessages]);
-
-    const filteredDebtors = aiDebtorQ.trim().length > 0
-      ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
-      : [];
-
-    const sendMessage = async () => {
-      const q = aiInput.trim();
-      if (!q || aiLoading) return;
-      setAiInput("");
-      const userMsg = { role: "user", content: aiSelDebtor ? `[${aiSelDebtor.name}] ${q}` : q };
-      setAiMessages(prev => [...prev, userMsg]);
-      setAiLoading(true);
-      try {
-        const res = await fetch("/api/ai-chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null }),
-        });
-        const d2 = await res.json();
-        setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
-      } catch {
-        setAiMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
-      }
-      setAiLoading(false);
-    };
-
-    const QUICK = [
-      "이 채무자 현황을 종합적으로 분석해줘",
-      "최근 입금 패턴을 분석해줘",
-      "다음 법적 조치를 추천해줘",
-      "압류 가능성 있어?",
-    ];
-
-    const fmtBal = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
-
-    return (
-      <div className="anim" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)", maxWidth: 860, margin: "0 auto", padding: "0 16px" }}>
-        {/* 헤더 */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
-          <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
-          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
-          <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: 4 }}>GPT-4o mini 기반</span>
-          {aiMessages.length > 1 && (
-            <button onClick={() => setAiMessages([aiMessages[0]])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
-              대화 초기화
-            </button>
-          )}
-        </div>
-
-        {/* 채무자 선택 */}
-        <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 선택 (선택 시 해당 데이터 기반 분석)</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              value={aiDebtorQ}
-              onChange={e => { setAiDebtorQ(e.target.value); if (!e.target.value) setAiSelDebtor(null); }}
-              placeholder="채무자 이름 검색..."
-              style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
-            />
-            {aiSelDebtor && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--acc)", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
-                <span>{aiSelDebtor.name}</span>
-                <button onClick={() => { setAiSelDebtor(null); setAiDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
-              </div>
-            )}
-          </div>
-          {filteredDebtors.length > 0 && !aiSelDebtor && (
-            <div style={{ marginTop: 6, border: "1px solid var(--brd)", borderRadius: 7, overflow: "hidden", maxHeight: 160, overflowY: "auto" }}>
-              {filteredDebtors.slice(0, 8).map(d => (
-                <div key={d.id} onClick={() => { setAiSelDebtor(d); setAiDebtorQ(d.name); }}
-                  style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "var(--tp)", borderBottom: "1px solid var(--brd)" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                  onMouseLeave={e => e.currentTarget.style.background = ""}>
-                  <span style={{ fontWeight: 600 }}>{d.name}</span>
-                  <span style={{ color: "var(--ts)", marginLeft: 8, fontSize: 11 }}>{d.brand} · {d.hubName || "-"}</span>
-                  <span className="mono" style={{ color: "#8b5cf6", marginLeft: 8, fontSize: 11 }}>재무 {fmtBal(d.finalBalanceFinance)}원</span>
-                  <span className="mono" style={{ color: "var(--err)", marginLeft: 6, fontSize: 11 }}>법무 {fmtBal(d.finalBalanceLegal)}원</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* 채팅 영역 */}
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
-          {aiMessages.map((m, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-              <div style={{
-                maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
-                background: m.role === "user" ? "var(--acc)" : "var(--card)",
-                color: m.role === "user" ? "#fff" : "var(--tp)",
-                border: m.role === "user" ? "none" : "1px solid var(--brd)",
-                fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap",
-              }}>{m.content}</div>
-            </div>
-          ))}
-          {aiLoading && (
-            <div style={{ display: "flex", justifyContent: "flex-start" }}>
-              <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: "var(--card)", border: "1px solid var(--brd)", color: "var(--ts)", fontSize: 13 }}>
-                분석 중...
-              </div>
-            </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* 빠른 질문 */}
-        {aiSelDebtor && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0 6px" }}>
-            {QUICK.map(q => (
-              <button key={q} onClick={() => setAiInput(q)}
-                style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
-                {q}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* 입력창 */}
-        <div style={{ display: "flex", gap: 8, padding: "8px 0 16px", borderTop: "1px solid var(--brd)" }}>
-          <input
-            value={aiInput}
-            onChange={e => setAiInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder={aiSelDebtor ? `${aiSelDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
-            disabled={aiLoading}
-            style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
-          />
-          <button onClick={sendMessage} disabled={aiLoading || !aiInput.trim()}
-            style={{ padding: "10px 18px", borderRadius: 10, background: aiLoading || !aiInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: aiLoading || !aiInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
-            전송
-          </button>
-        </div>
-      </div>
-    );
-  };
 
   const AiDocsView = () => {
     const [selTemplate,   setSelTemplate]   = useState("압류별지");
@@ -8142,7 +8001,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {tab === "rehabBankruptcy" && <RehabBankruptcyView />}
           {tab === "minsa" && <MinSaView />}
           {tab === "aiDocs" && <AiDocsView />}
-          {tab === "aiAnalysis" && <AiAnalysisView />}
+          {tab === "aiAnalysis" && <AiAnalysisView
+            data={data}
+            aiMessages={aiMessages} setAiMessages={setAiMessages}
+            aiInput={aiInput} setAiInput={setAiInput}
+            aiLoading={aiLoading} setAiLoading={setAiLoading}
+            aiSelDebtor={aiSelDebtor} setAiSelDebtor={setAiSelDebtor}
+            aiDebtorQ={aiDebtorQ} setAiDebtorQ={setAiDebtorQ}
+          />}
           {tab === "admin" && adminView}
         </div>
       </div>
@@ -8187,6 +8053,148 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
       {/* Toast */}
       {toast && <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, zIndex: 2e3, animation: "toastIn .3s ease-out", boxShadow: "0 4px 20px rgba(16,185,129,.3)" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><I name="check" size={16} />{toast}</div></div>}
+    </div>
+  );
+}
+
+function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, aiLoading, setAiLoading, aiSelDebtor, setAiSelDebtor, aiDebtorQ, setAiDebtorQ }) {
+  // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
+  const bottomRef = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiMessages]);
+
+  const filteredDebtors = aiDebtorQ.trim().length > 0
+    ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
+    : [];
+
+  const sendMessage = async () => {
+    const q = aiInput.trim();
+    if (!q || aiLoading) return;
+    setAiInput("");
+    const userMsg = { role: "user", content: aiSelDebtor ? `[${aiSelDebtor.name}] ${q}` : q };
+    setAiMessages(prev => [...prev, userMsg]);
+    setAiLoading(true);
+    try {
+      const res = await fetch("/api/ai-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null }),
+      });
+      const d2 = await res.json();
+      setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
+    } catch {
+      setAiMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
+    }
+    setAiLoading(false);
+  };
+
+  const QUICK = [
+    "이 채무자 현황을 종합적으로 분석해줘",
+    "최근 입금 패턴을 분석해줘",
+    "다음 법적 조치를 추천해줘",
+    "압류 가능성 있어?",
+  ];
+
+  const fmtBal = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
+
+  return (
+    <div className="anim" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)", maxWidth: 860, margin: "0 auto", padding: "0 16px" }}>
+      {/* 헤더 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
+        <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
+        <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
+        <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: 4 }}>GPT-4o mini 기반</span>
+        {aiMessages.length > 1 && (
+          <button onClick={() => setAiMessages([aiMessages[0]])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+            대화 초기화
+          </button>
+        )}
+      </div>
+
+      {/* 채무자 선택 */}
+      <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 선택 (선택 시 해당 데이터 기반 분석)</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={aiDebtorQ}
+            onChange={e => { setAiDebtorQ(e.target.value); if (!e.target.value) setAiSelDebtor(null); }}
+            placeholder="채무자 이름 검색..."
+            style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+          />
+          {aiSelDebtor && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--acc)", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
+              <span>{aiSelDebtor.name}</span>
+              <button onClick={() => { setAiSelDebtor(null); setAiDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+            </div>
+          )}
+        </div>
+        {filteredDebtors.length > 0 && !aiSelDebtor && (
+          <div style={{ marginTop: 6, border: "1px solid var(--brd)", borderRadius: 7, overflow: "hidden", maxHeight: 160, overflowY: "auto" }}>
+            {filteredDebtors.slice(0, 8).map(d => (
+              <div key={d.id} onClick={() => { setAiSelDebtor(d); setAiDebtorQ(d.name); }}
+                style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "var(--tp)", borderBottom: "1px solid var(--brd)" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <span style={{ fontWeight: 600 }}>{d.name}</span>
+                <span style={{ color: "var(--ts)", marginLeft: 8, fontSize: 11 }}>{d.brand} · {d.hubName || "-"}</span>
+                <span className="mono" style={{ color: "#8b5cf6", marginLeft: 8, fontSize: 11 }}>재무 {fmtBal(d.finalBalanceFinance)}원</span>
+                <span className="mono" style={{ color: "var(--err)", marginLeft: 6, fontSize: 11 }}>법무 {fmtBal(d.finalBalanceLegal)}원</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 채팅 영역 */}
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
+        {aiMessages.map((m, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+            <div style={{
+              maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+              background: m.role === "user" ? "var(--acc)" : "var(--card)",
+              color: m.role === "user" ? "#fff" : "var(--tp)",
+              border: m.role === "user" ? "none" : "1px solid var(--brd)",
+              fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap",
+            }}>{m.content}</div>
+          </div>
+        ))}
+        {aiLoading && (
+          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: "var(--card)", border: "1px solid var(--brd)", color: "var(--ts)", fontSize: 13 }}>
+              분석 중...
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* 빠른 질문 */}
+      {aiSelDebtor && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0 6px" }}>
+          {QUICK.map(q => (
+            <button key={q} onClick={() => setAiInput(q)}
+              style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 입력창 */}
+      <div style={{ display: "flex", gap: 8, padding: "8px 0 16px", borderTop: "1px solid var(--brd)" }}>
+        <input
+          value={aiInput}
+          onChange={e => setAiInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+          placeholder={aiSelDebtor ? `${aiSelDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
+          disabled={aiLoading}
+          style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+        />
+        <button onClick={sendMessage} disabled={aiLoading || !aiInput.trim()}
+          style={{ padding: "10px 18px", borderRadius: 10, background: aiLoading || !aiInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: aiLoading || !aiInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
+          전송
+        </button>
+      </div>
     </div>
   );
 }
