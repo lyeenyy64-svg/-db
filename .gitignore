@@ -5,13 +5,13 @@ backend/.env
 dist/
 .vite/
 
-# 데이터베이스 (실제 채무자 데이터)
-debtflow.db
-debtflow.db-shm
-debtflow.db-wal
-db/debtflow.db
-db/debtflow.db-shm
-db/debtflow.db-wal
+# 데이터베이스 (실제 채무자 데이터) - 백업 파일 포함 전체 차단
+*.db
+*.db-shm
+*.db-wal
+
+# 원본/가공 데이터 (개인정보 포함)
+db/excel_data.json
 
 # 테스트/디버그 산출물
 test_output.hwpx
