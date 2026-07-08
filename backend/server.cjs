@@ -2278,6 +2278,108 @@ app.get("/{*splat}", (req, res) => {
   }
 });
 
+// ─── AI 종합분석 ──────────────────────────────────
+const OpenAI = require("openai");
+const openaiClient = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+app.post("/api/ai-chat", async (req, res) => {
+  if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
+  const { query, debtorId } = req.body;
+  if (!query) return res.status(400).json({ error: "query 필요" });
+
+  try {
+    // 특정 채무자 지정 시 해당 채무자 데이터 로드
+    let contextText = "";
+    if (debtorId) {
+      const d = db.prepare("SELECT * FROM debtors WHERE id=?").get(debtorId);
+      if (d) {
+        const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 20").all(debtorId);
+        const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 10").all(debtorId);
+        const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(debtorId);
+        const rehabs = db.prepare("SELECT * FROM rehabilitations WHERE debtor_id=? ORDER BY id DESC LIMIT 3").all(debtorId);
+        const installs = db.prepare("SELECT * FROM installment_plans WHERE debtor_id=? ORDER BY id DESC LIMIT 1").all(debtorId);
+        const complaints = db.prepare("SELECT * FROM complaints WHERE debtor_id=? ORDER BY complaint_date DESC LIMIT 3").all(debtorId);
+
+        const fmt = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
+        const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
+        const lastPay = pays[0];
+        contextText = `
+[채무자 기본정보]
+이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 허브: ${d.hub_name || "-"}
+원금: ${fmt(d.principal_balance)}원 | 수금상태: ${d.collection_status || "-"}
+담당자: ${d.assignee || "-"} | 메모: ${d.key_notes || "-"}
+전화: ${d.phone || "-"} | 채무원인: ${d.debt_cause || "-"}
+집행권원: ${d.exec_title || "-"}
+
+[입금 현황]
+총 입금액: ${fmt(totalPaid)}원 (${pays.length}건)
+최근 입금: ${lastPay ? `${lastPay.payment_date} ${fmt(lastPay.total_amount)}원` : "없음"}
+${pays.length > 0 ? pays.slice(0, 10).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원 (${p.payer_name || "-"})`).join("\n") : ""}
+
+[활동 이력 (최대 10건)]
+${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity_type}] ${a.content || ""}`).join("\n")}
+
+[압류/법적절차 (최대 5건)]
+${seizures.length === 0 ? "없음" : seizures.map(s => `법원: ${s.court || "-"} | 사건번호: ${s.case_number || "-"} | 상태: ${s.status || "-"}`).join("\n")}
+
+[회생/파산]
+${rehabs.length === 0 ? "없음" : rehabs.map(r => `${r.type || "-"} | 사건번호: ${r.case_number || "-"} | 법원: ${r.court || "-"}`).join("\n")}
+
+[분납약정]
+${installs.length === 0 ? "없음" : installs.map(i => `월 ${fmt(i.monthly_amount)}원 | 총채권: ${fmt(i.total_claim)}원 | 상태: ${i.status}`).join("\n")}
+
+[형사고소]
+${complaints.length === 0 ? "없음" : complaints.map(c => `${c.complaint_date} | ${c.police_station || "-"} | ${c.status_note || "-"}`).join("\n")}
+`.trim();
+      }
+    } else {
+      // 전체 현황 요약 제공
+      const totalDebtors = db.prepare("SELECT COUNT(*) AS c FROM debtors").get().c;
+      const totalBalance = db.prepare("SELECT SUM(principal_balance) AS s FROM debtors").get().s || 0;
+      const recentPays = db.prepare("SELECT d.name, p.total_amount, p.payment_date FROM payments p JOIN debtors d ON d.id=p.debtor_id ORDER BY p.payment_date DESC LIMIT 10").all();
+      const noPayDebtors = db.prepare(`SELECT COUNT(*) AS c FROM debtors d WHERE NOT EXISTS (SELECT 1 FROM payments p WHERE p.debtor_id=d.id AND p.payment_date >= date('now','-3 months'))`).get().c;
+      contextText = `
+[전체 현황]
+총 채무자 수: ${totalDebtors}명
+총 원금 잔액: ${Number(totalBalance).toLocaleString("ko-KR")}원
+최근 3개월 입금 없는 채무자: ${noPayDebtors}명
+
+[최근 입금 10건]
+${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLocaleString("ko-KR")}원`).join("\n")}
+`.trim();
+    }
+
+    const systemPrompt = `당신은 NPL 채권관리 전문 AI 어시스턴트입니다.
+바로고 채권관리 시스템의 실제 데이터를 바탕으로 담당자에게 실무적인 분석과 조언을 제공합니다.
+- 금액은 항상 원화(원) 단위로 표시하고 천단위 콤마를 사용하세요.
+- 입금 패턴, 법적 조치 이력을 분석해 구체적인 다음 조치를 추천하세요.
+- 압류, 분납약정, 법적 조치 가능성을 실무적 관점에서 판단하세요.
+- 답변은 간결하되 핵심 정보를 빠짐없이 포함하세요.
+- 한국어로 답변하세요.`;
+
+    const userMessage = contextText
+      ? `[채무자 데이터]\n${contextText}\n\n[질문]\n${query}`
+      : query;
+
+    const completion = await openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      max_tokens: 1000,
+      temperature: 0.3,
+    });
+
+    res.json({ answer: completion.choices[0].message.content });
+  } catch (err) {
+    console.error("AI chat error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── 서버 기동 ──────────────────────────────────
 const PORT = 3010;
 app.listen(PORT, () => {

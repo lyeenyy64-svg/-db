@@ -199,6 +199,16 @@ const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.strin
 const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
 const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 
+// ─── 소송/사건 진행상황 메모 (localStorage + DB 공유 저장) ──
+// case_notes_{caseId}: [{id, createdAt, content, createdBy}] — 날짜/작성자 자동 기재
+const getCaseNotes = (id) => { try { return JSON.parse(localStorage.getItem(`case_notes_${id}`) || "[]"); } catch { return []; } };
+const saveCaseNotes = (id, arr) => { localStorage.setItem(`case_notes_${id}`, JSON.stringify(arr)); kvPut(`case_notes_${id}`, arr); };
+const fmtDateTime = (iso) => {
+  if (!iso) return "-";
+  const dt = new Date(iso);
+  return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")} ${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+};
+
 // ─── 수동 매칭 override (localStorage 영구 저장) ─────────
 const REHAB_OVERRIDES_KEY = "rehab_manual_overrides";
 function getRehabOverrides() {
@@ -6598,6 +6608,146 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { id: "지급명령", label: "지급명령" },
   ];
 
+  const AiAnalysisView = () => {
+    const [messages, setMessages] = useState([
+      { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
+    ]);
+    const [input, setInput] = useState("");
+    const [loading, setLoading] = useState(false);
+    const [selDebtor, setSelDebtor] = useState(null);
+    const [debtorQ, setDebtorQ] = useState("");
+    const bottomRef = useRef(null);
+
+    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+    const filteredDebtors = debtorQ.trim().length > 0
+      ? data.debtors.filter(d => d.name.includes(debtorQ) || (d.hubName || "").includes(debtorQ))
+      : [];
+
+    const sendMessage = async () => {
+      const q = input.trim();
+      if (!q || loading) return;
+      setInput("");
+      const userMsg = { role: "user", content: selDebtor ? `[${selDebtor.name}] ${q}` : q };
+      setMessages(prev => [...prev, userMsg]);
+      setLoading(true);
+      try {
+        const res = await fetch("/api/ai-chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: q, debtorId: selDebtor?.id || null }),
+        });
+        const data2 = await res.json();
+        setMessages(prev => [...prev, { role: "assistant", content: data2.answer || data2.error || "오류가 발생했습니다." }]);
+      } catch {
+        setMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
+      }
+      setLoading(false);
+    };
+
+    const QUICK = [
+      "이 채무자 현황을 종합적으로 분석해줘",
+      "최근 입금 패턴을 분석해줘",
+      "다음 법적 조치를 추천해줘",
+      "압류 가능성 있어?",
+    ];
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)", maxWidth: 860, margin: "0 auto", padding: "0 16px" }}>
+        {/* 헤더 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
+          <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
+          <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
+          <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: 4 }}>GPT-4o mini 기반</span>
+        </div>
+
+        {/* 채무자 선택 */}
+        <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 선택 (선택 시 해당 데이터 기반 분석)</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              value={debtorQ}
+              onChange={e => { setDebtorQ(e.target.value); if (!e.target.value) setSelDebtor(null); }}
+              placeholder="채무자 이름 검색..."
+              style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+            />
+            {selDebtor && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--acc)", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
+                <span>{selDebtor.name}</span>
+                <button onClick={() => { setSelDebtor(null); setDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+              </div>
+            )}
+          </div>
+          {filteredDebtors.length > 0 && !selDebtor && (
+            <div style={{ marginTop: 6, border: "1px solid var(--brd)", borderRadius: 7, overflow: "hidden", maxHeight: 160, overflowY: "auto" }}>
+              {filteredDebtors.slice(0, 8).map(d => (
+                <div key={d.id} onClick={() => { setSelDebtor(d); setDebtorQ(d.name); }}
+                  style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "var(--tp)", borderBottom: "1px solid var(--brd)" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = ""}>
+                  <span style={{ fontWeight: 600 }}>{d.name}</span>
+                  <span style={{ color: "var(--ts)", marginLeft: 8, fontSize: 11 }}>{d.brand} · {d.hubName || "-"}</span>
+                  <span className="mono" style={{ color: "var(--acc)", marginLeft: 8, fontSize: 11 }}>{Number(d.legalClaim || 0).toLocaleString("ko-KR")}원</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 채팅 영역 */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+              <div style={{
+                maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                background: m.role === "user" ? "var(--acc)" : "var(--card)",
+                color: m.role === "user" ? "#fff" : "var(--tp)",
+                border: m.role === "user" ? "none" : "1px solid var(--brd)",
+                fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap",
+              }}>{m.content}</div>
+            </div>
+          ))}
+          {loading && (
+            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: "var(--card)", border: "1px solid var(--brd)", color: "var(--ts)", fontSize: 13 }}>
+                분석 중...
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* 빠른 질문 */}
+        {selDebtor && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0 6px" }}>
+            {QUICK.map(q => (
+              <button key={q} onClick={() => { setInput(q); }}
+                style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 입력창 */}
+        <div style={{ display: "flex", gap: 8, padding: "8px 0 16px", borderTop: "1px solid var(--brd)" }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+            placeholder={selDebtor ? `${selDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
+            disabled={loading}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+          />
+          <button onClick={sendMessage} disabled={loading || !input.trim()}
+            style={{ padding: "10px 18px", borderRadius: 10, background: loading || !input.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: loading || !input.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
+            전송
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   const AiDocsView = () => {
     const [selTemplate,   setSelTemplate]   = useState("압류별지");
     const [execType,      setExecType]      = useState("공정증서");
@@ -7072,6 +7222,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [selCase,      setSelCase]      = useState(null);
     const [matchingCase, setMatchingCase] = useState(null);
     const [matchQ,       setMatchQ]       = useState("");
+    const [caseNotes,    setCaseNotes]    = useState([]);
+    const [noteDraft,    setNoteDraft]    = useState("");
+    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); }, [selCase?.id]);
 
     const mc = data.minsaCases || [];
 
@@ -7158,6 +7311,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       </div>
     );
 
+    const handleAddNote = () => {
+      if (!selCase || !noteDraft.trim()) return;
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+      setNoteDraft("");
+    };
+    const handleDeleteNote = (noteId) => {
+      if (!selCase || !confirm("이 메모를 삭제하시겠습니까?")) return;
+      const arr = caseNotes.filter(n => n.id !== noteId);
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+    };
+
     const DetailModal = () => {
       if (!selCase) return null;
       const debtor = getDebtor(selCase.debtorId);
@@ -7188,6 +7355,34 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <DL label="기일시간"    val={selCase.hearingTime} />
             <DL label="기일장소"    val={selCase.hearingLocation} />
             <DL label="진행상황"    val={selCase.progressStatus} />
+          </div>
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <KoreanTextarea
+                value={noteDraft} onChange={e => setNoteDraft(e.target.value)} rows={2}
+                placeholder="진행상황을 입력하세요... (날짜·작성자 자동 기재)"
+                style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }}
+              />
+              <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
+            </div>
+            {caseNotes.length === 0
+              ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
+              : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                  {caseNotes.map(n => (
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", padding: "8px 10px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
+                          <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
+                          <span style={{ fontSize: 10, color: "var(--tm)" }}>{n.createdBy}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
+                      </div>
+                      {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
+                    </div>
+                  ))}
+                </div>
+            }
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
@@ -7937,15 +8132,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {tab === "rehabBankruptcy" && <RehabBankruptcyView />}
           {tab === "minsa" && <MinSaView />}
           {tab === "aiDocs" && <AiDocsView />}
-          {tab === "aiAnalysis" && (
-            <div className="anim" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60vh", gap: 16, color: "var(--tm)" }}>
-              <I name="sparkles" size={48} />
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</div>
-              <div style={{ fontSize: 14, color: "var(--ts)", textAlign: "center", lineHeight: 1.8 }}>
-                기능 준비 중입니다.<br />채권 데이터 기반 AI 분석 리포트가 이 화면에 표시됩니다.
-              </div>
-            </div>
-          )}
+          {tab === "aiAnalysis" && <AiAnalysisView />}
           {tab === "admin" && adminView}
         </div>
       </div>
