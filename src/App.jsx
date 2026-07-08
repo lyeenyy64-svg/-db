@@ -1343,6 +1343,14 @@ export default function App() {
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
+  // AI 종합분석 — 탭 전환해도 대화 유지
+  const [aiMessages, setAiMessages] = useState([
+    { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
+  ]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSelDebtor, setAiSelDebtor] = useState(null);
+  const [aiDebtorQ, setAiDebtorQ] = useState("");
   const [collectionChannels, setCollectionChannels] = useState({});
   const [collectionChannelsLoading, setCollectionChannelsLoading] = useState(false);
   const PP = 25;
@@ -6609,40 +6617,34 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   ];
 
   const AiAnalysisView = () => {
-    const [messages, setMessages] = useState([
-      { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
-    ]);
-    const [input, setInput] = useState("");
-    const [loading, setLoading] = useState(false);
-    const [selDebtor, setSelDebtor] = useState(null);
-    const [debtorQ, setDebtorQ] = useState("");
+    // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
     const bottomRef = useRef(null);
 
-    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+    useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiMessages]);
 
-    const filteredDebtors = debtorQ.trim().length > 0
-      ? data.debtors.filter(d => d.name.includes(debtorQ) || (d.hubName || "").includes(debtorQ))
+    const filteredDebtors = aiDebtorQ.trim().length > 0
+      ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
       : [];
 
     const sendMessage = async () => {
-      const q = input.trim();
-      if (!q || loading) return;
-      setInput("");
-      const userMsg = { role: "user", content: selDebtor ? `[${selDebtor.name}] ${q}` : q };
-      setMessages(prev => [...prev, userMsg]);
-      setLoading(true);
+      const q = aiInput.trim();
+      if (!q || aiLoading) return;
+      setAiInput("");
+      const userMsg = { role: "user", content: aiSelDebtor ? `[${aiSelDebtor.name}] ${q}` : q };
+      setAiMessages(prev => [...prev, userMsg]);
+      setAiLoading(true);
       try {
         const res = await fetch("/api/ai-chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: q, debtorId: selDebtor?.id || null }),
+          body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null }),
         });
-        const data2 = await res.json();
-        setMessages(prev => [...prev, { role: "assistant", content: data2.answer || data2.error || "오류가 발생했습니다." }]);
+        const d2 = await res.json();
+        setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
       } catch {
-        setMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
+        setAiMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
       }
-      setLoading(false);
+      setAiLoading(false);
     };
 
     const QUICK = [
@@ -6652,6 +6654,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       "압류 가능성 있어?",
     ];
 
+    const fmtBal = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
+
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)", maxWidth: 860, margin: "0 auto", padding: "0 16px" }}>
         {/* 헤더 */}
@@ -6659,6 +6663,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
           <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
           <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: 4 }}>GPT-4o mini 기반</span>
+          {aiMessages.length > 1 && (
+            <button onClick={() => setAiMessages([aiMessages[0]])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+              대화 초기화
+            </button>
+          )}
         </div>
 
         {/* 채무자 선택 */}
@@ -6666,28 +6675,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 선택 (선택 시 해당 데이터 기반 분석)</div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
-              value={debtorQ}
-              onChange={e => { setDebtorQ(e.target.value); if (!e.target.value) setSelDebtor(null); }}
+              value={aiDebtorQ}
+              onChange={e => { setAiDebtorQ(e.target.value); if (!e.target.value) setAiSelDebtor(null); }}
               placeholder="채무자 이름 검색..."
               style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
             />
-            {selDebtor && (
+            {aiSelDebtor && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--acc)", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
-                <span>{selDebtor.name}</span>
-                <button onClick={() => { setSelDebtor(null); setDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+                <span>{aiSelDebtor.name}</span>
+                <button onClick={() => { setAiSelDebtor(null); setAiDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
               </div>
             )}
           </div>
-          {filteredDebtors.length > 0 && !selDebtor && (
+          {filteredDebtors.length > 0 && !aiSelDebtor && (
             <div style={{ marginTop: 6, border: "1px solid var(--brd)", borderRadius: 7, overflow: "hidden", maxHeight: 160, overflowY: "auto" }}>
               {filteredDebtors.slice(0, 8).map(d => (
-                <div key={d.id} onClick={() => { setSelDebtor(d); setDebtorQ(d.name); }}
+                <div key={d.id} onClick={() => { setAiSelDebtor(d); setAiDebtorQ(d.name); }}
                   style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "var(--tp)", borderBottom: "1px solid var(--brd)" }}
                   onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                   onMouseLeave={e => e.currentTarget.style.background = ""}>
                   <span style={{ fontWeight: 600 }}>{d.name}</span>
                   <span style={{ color: "var(--ts)", marginLeft: 8, fontSize: 11 }}>{d.brand} · {d.hubName || "-"}</span>
-                  <span className="mono" style={{ color: "var(--acc)", marginLeft: 8, fontSize: 11 }}>{Number(d.legalClaim || 0).toLocaleString("ko-KR")}원</span>
+                  <span className="mono" style={{ color: "#8b5cf6", marginLeft: 8, fontSize: 11 }}>재무 {fmtBal(d.finalBalanceFinance)}원</span>
+                  <span className="mono" style={{ color: "var(--err)", marginLeft: 6, fontSize: 11 }}>법무 {fmtBal(d.finalBalanceLegal)}원</span>
                 </div>
               ))}
             </div>
@@ -6696,7 +6706,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 채팅 영역 */}
         <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
-          {messages.map((m, i) => (
+          {aiMessages.map((m, i) => (
             <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
               <div style={{
                 maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
@@ -6707,7 +6717,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               }}>{m.content}</div>
             </div>
           ))}
-          {loading && (
+          {aiLoading && (
             <div style={{ display: "flex", justifyContent: "flex-start" }}>
               <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: "var(--card)", border: "1px solid var(--brd)", color: "var(--ts)", fontSize: 13 }}>
                 분석 중...
@@ -6718,10 +6728,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
 
         {/* 빠른 질문 */}
-        {selDebtor && (
+        {aiSelDebtor && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0 6px" }}>
             {QUICK.map(q => (
-              <button key={q} onClick={() => { setInput(q); }}
+              <button key={q} onClick={() => setAiInput(q)}
                 style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
                 {q}
               </button>
@@ -6732,15 +6742,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {/* 입력창 */}
         <div style={{ display: "flex", gap: 8, padding: "8px 0 16px", borderTop: "1px solid var(--brd)" }}>
           <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
+            value={aiInput}
+            onChange={e => setAiInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder={selDebtor ? `${selDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
-            disabled={loading}
+            placeholder={aiSelDebtor ? `${aiSelDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
+            disabled={aiLoading}
             style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
           />
-          <button onClick={sendMessage} disabled={loading || !input.trim()}
-            style={{ padding: "10px 18px", borderRadius: 10, background: loading || !input.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: loading || !input.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
+          <button onClick={sendMessage} disabled={aiLoading || !aiInput.trim()}
+            style={{ padding: "10px 18px", borderRadius: 10, background: aiLoading || !aiInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: aiLoading || !aiInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
             전송
           </button>
         </div>
