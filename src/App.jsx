@@ -1393,11 +1393,8 @@ const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, delete
               <td style={strike()}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike({ width: 110, maxWidth: 110 })}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} />
-                  <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
-                    style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
-                </div>
+                <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 {strikeLine}
               </td>
               <td style={strike()}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
