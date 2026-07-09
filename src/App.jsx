@@ -2519,17 +2519,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
               <style>{`.chart-bc-col .chart-bc-tip{opacity:0;transition:opacity 0.12s;}.chart-bc-col:hover .chart-bc-tip{opacity:1;}.chart-bc-col:hover .chart-bc-bar{opacity:0.75;}`}</style>
               {/* 헤더 */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>월별 회수실적</div>
-                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 11, color: "var(--ts)", marginTop: 2 }}>{chartYear}년 합계 {fmt(totalAnnual)}</div>}
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <button onClick={() => setChartYear(y => y - 1)} disabled={chartYear <= 2024}
-                    style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear <= 2024 ? "var(--brd)" : "var(--tp)", cursor: chartYear <= 2024 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>‹</button>
-                  <span style={{ fontSize: 13, fontWeight: 700, minWidth: 44, textAlign: "center", color: "var(--tp)" }}>{chartYear}년</span>
-                  <button onClick={() => setChartYear(y => y + 1)} disabled={chartYear >= nowYear + 1}
-                    style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear >= nowYear + 1 ? "var(--brd)" : "var(--tp)", cursor: chartYear >= nowYear + 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>›</button>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 14 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <button onClick={() => setChartYear(y => y - 1)} disabled={chartYear <= 2024}
+                      style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear <= 2024 ? "var(--brd)" : "var(--tp)", cursor: chartYear <= 2024 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>‹</button>
+                    <span style={{ fontSize: 13, fontWeight: 700, minWidth: 44, textAlign: "center", color: "var(--tp)" }}>{chartYear}년</span>
+                    <button onClick={() => setChartYear(y => y + 1)} disabled={chartYear >= nowYear + 1}
+                      style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear >= nowYear + 1 ? "var(--brd)" : "var(--tp)", cursor: chartYear >= nowYear + 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>›</button>
+                  </div>
+                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{chartYear}년 합계 {fmt(totalAnnual)}</div>}
                 </div>
               </div>
               {/* 차트 바 */}
