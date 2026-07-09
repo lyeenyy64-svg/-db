@@ -8181,12 +8181,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ height: 1, background: "var(--brd)", margin: "8px 0" }} />
         </div>
         <div style={{ padding: 16, borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 8 }}>
-          {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (
-            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontSize: 11, color: "var(--tm)" }}>{x.l}</div>
-              <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--tp)" }}>{x.v}</div>
-            </div>
-          ))}
+          {(() => {
+            const dOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+            const yestStr = dOffset(-1), todayStr = dOffset(0), tmrwStr = dOffset(1);
+            const scheds = data.installmentSchedules || [];
+            const items = [
+              { l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },
+              { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건` },
+              { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건` },
+              { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건` },
+              { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건` },
+            ];
+            return items.map((x, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 11, color: "var(--tm)" }}>{x.l}</div>
+                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--tp)" }}>{x.v}</div>
+              </div>
+            ));
+          })()}
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--acc)" + "18", color: "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{currentUser.avatar}</div>
