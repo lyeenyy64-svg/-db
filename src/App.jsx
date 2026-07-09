@@ -2405,7 +2405,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드별 채권 현황</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드별 현황</div>
             {config.brands.map(b => { const bd = stats.byBrand[b.code] || {}; return (<div key={b.code} style={{ marginBottom: 14 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BrandBadge code={b.code} brands={config.brands} /><span style={{ fontSize: 13, fontWeight: 500 }}>{b.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{bd.count || 0}건</span></div><span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{fmt(bd.remaining)}</span></div><div style={{ height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}><div style={{ height: "100%", width: `${maxBrand > 0 ? ((bd.remaining || 0) / maxBrand) * 100 : 0}%`, background: `linear-gradient(90deg,${b.color},${b.color}88)`, borderRadius: 4 }} /></div></div>); })}
           </div>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
