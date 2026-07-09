@@ -2454,7 +2454,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
           <KPI label="총 채권금액" value={fmt(stats.totalRemaining)} sub={`재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
-          <KPI label="소송현황" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 재산명시·재산조회 ${stats.byLegalType["재산명시"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0}`} color="#ef4444" />
+          <KPI label="소송현황" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 재산명시·재산조회 ${stats.byLegalType["재산명시"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0} / 회생/파산 ${stats.totalRehabs || 0}`} color="#ef4444" />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
