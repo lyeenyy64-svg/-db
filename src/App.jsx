@@ -2528,7 +2528,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <button onClick={() => setChartYear(y => y + 1)} disabled={chartYear >= nowYear + 1}
                       style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear >= nowYear + 1 ? "var(--brd)" : "var(--tp)", cursor: chartYear >= nowYear + 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>›</button>
                   </div>
-                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{chartYear}년 합계 {fmt(totalAnnual)}</div>}
+                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#000" }}>{fmt(totalAnnual)}</div>}
                 </div>
               </div>
               {/* 차트 바 */}
