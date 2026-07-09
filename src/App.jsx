@@ -8049,7 +8049,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
   ];
   const navTabs = [
-    { k: "dashboard",       l: "대시보드",        i: "dashboard" },
+    { k: "dashboard",       l: "종합현황",        i: "dashboard" },
     { k: "debtors",         l: "채무자 관리",      i: "users" },
     { k: "payments",        l: "입금내역",         i: "won" },
     { k: "installments",    l: "분할상환",         i: "calendar" },
