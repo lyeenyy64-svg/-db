@@ -2431,7 +2431,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={`추심진행 ${stats.byStatus["추심진행"] || 0}건 / 보류 ${stats.byStatus["추심보류"] || 0}건`} color="#3b82f6" />
           <KPI label="총 채권 원금" value={fmt(stats.totalRemaining)} sub={`법무 기준 · 재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
-          <KPI label="법적절차 진행" value={`${stats.totalLegal || 0}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0}`} color="#ef4444" />
+          <KPI label="법적절차 진행" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0}`} color="#ef4444" />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
