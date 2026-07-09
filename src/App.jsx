@@ -359,6 +359,21 @@ function applyThirdsOv(cases) {
   return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
 }
 
+// ─── 사건 정보 편집 override (localStorage 영구 저장) ────────
+const CASE_FIELD_OV_KEY = "legal_case_field_overrides";
+function getCaseFieldOv() { try { return JSON.parse(localStorage.getItem(CASE_FIELD_OV_KEY) || "{}"); } catch { return {}; } }
+function saveCaseFieldOv(caseId, fields) {
+  const ov = getCaseFieldOv();
+  ov[caseId] = { ...ov[caseId], ...fields };
+  localStorage.setItem(CASE_FIELD_OV_KEY, JSON.stringify(ov));
+  kvPut(CASE_FIELD_OV_KEY, ov);
+}
+function applyCaseFieldOv(cases) {
+  const ov = getCaseFieldOv();
+  if (!Object.keys(ov).length) return cases;
+  return cases.map(c => ov[c.id] !== undefined ? { ...c, ...ov[c.id] } : c);
+}
+
 // ─── 제3채무자 편집 섹션 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
 const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
   const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
@@ -632,7 +647,7 @@ function loadExcelData(cfg) {
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
     rehabilitations:  [...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)],
-    legalCases:       applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]),
+    legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
     minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
     assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
@@ -1473,7 +1488,7 @@ export default function App() {
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
-      const legalCases      = applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]);
+      const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
       const minsaCases      = [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)];
       const assetDisclosures  = [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)];
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
@@ -5520,12 +5535,40 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const title  = isAD ? selCase.debtorName : selCase.defendant;
       const [docUrl, setDocUrl] = useState(() => getCaseUrl(selCase.id));
       const saveDocUrl = () => { saveCaseUrl(selCase.id, docUrl); showToast("문서 링크 저장됨"); };
+      const [isEditingCase, setIsEditingCase] = useState(false);
+      const [caseDraft, setCaseDraft] = useState(() => ({
+        court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+        plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+        filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+      }));
+      const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
+      const startEditCase = () => {
+        setCaseDraft({
+          court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+          plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+          filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+        });
+        setIsEditingCase(true);
+      };
+      const saveEditCase = () => {
+        saveCaseFieldOv(selCase.id, caseDraft);
+        setSelCase(prev => ({ ...prev, ...caseDraft }));
+        setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, ...caseDraft } : c) }));
+        setIsEditingCase(false);
+        showToast("저장 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
           <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
         </div>
       ) : null;
+      const EF = ({ label, children }) => (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1 }}>{children}</div>
+        </div>
+      );
       return (
         <Overlay onClose={() => setSelCase(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -5540,24 +5583,52 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
           {/* 사건 정보 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
-            <DL label="법원"       val={selCase.court} />
-            <DL label="사건번호"   val={selCase.caseNumber} />
-            {!isAD && <DL label="원고(채권자)"  val={selCase.plaintiff} />}
-            {!isAD && <DL label="피고(채무자)"  val={selCase.defendant} />}
-            {!isAD && <DL label="접수일자"      val={selCase.filingDate} />}
-            {!isAD && <DL label="기일시간"      val={selCase.hearingTime} />}
-            {!isAD && <DL label="기일장소"      val={selCase.hearingLocation} />}
-            {!isAD && <DL label="진행상황"      val={selCase.progressStatus} />}
-            {isAD  && <DL label="대상자"        val={selCase.debtorName} />}
-            {isAD  && <DL label="신청일"        val={selCase.applicationDate} />}
-            {isAD  && <DL label="결정일"        val={selCase.decisionDate} />}
-            {isAD  && <DL label="결과"          val={selCase.result} />}
-            {isAD  && <DL label="결과 상태"     val={selCase.status} />}
-            {isAD  && <DL label="취하/각하 사유" val={selCase.withdrawReason} />}
-            {isAD  && <DL label="감치결정"      val={selCase.detentionDecision} />}
-            {isAD  && <DL label="재산목록 제출"  val={selCase.propertyList && `${selCase.propertyList}${selCase.propertyListDesc ? ` (${selCase.propertyListDesc})` : ""}`} />}
-            {isAD  && <DL label="집행장 만료/취하" val={selCase.executionExpiration} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>사건 정보</div>
+              <span style={{ flex: 1 }} />
+              {!isAD && (isEditingCase ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={saveEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                  <button onClick={() => setIsEditingCase(false)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                </div>
+              ) : (
+                <button onClick={startEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+              ))}
+            </div>
+            {!isAD && isEditingCase ? (
+              <>
+                <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
+                <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="원고(채권자)"><KoreanInput value={caseDraft.plaintiff} onChange={e => setCF("plaintiff", e.target.value)} style={inp} /></EF>
+                <EF label="피고(채무자)"><KoreanInput value={caseDraft.defendant} onChange={e => setCF("defendant", e.target.value)} style={inp} /></EF>
+                <EF label="접수일자"><KoreanInput value={caseDraft.filingDate} onChange={e => setCF("filingDate", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="진행상황">
+                  <select value={caseDraft.progressStatus} onChange={e => setCF("progressStatus", e.target.value)} style={inp}>
+                    {["진행", "완료", "부분해지", "전부해지"].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </EF>
+              </>
+            ) : (
+              <>
+                <DL label="법원"       val={selCase.court} />
+                <DL label="사건번호"   val={selCase.caseNumber} />
+                {!isAD && <DL label="원고(채권자)"  val={selCase.plaintiff} />}
+                {!isAD && <DL label="피고(채무자)"  val={selCase.defendant} />}
+                {!isAD && <DL label="접수일자"      val={selCase.filingDate} />}
+                {!isAD && <DL label="기일시간"      val={selCase.hearingTime} />}
+                {!isAD && <DL label="기일장소"      val={selCase.hearingLocation} />}
+                {!isAD && <DL label="진행상황"      val={selCase.progressStatus} />}
+                {isAD  && <DL label="대상자"        val={selCase.debtorName} />}
+                {isAD  && <DL label="신청일"        val={selCase.applicationDate} />}
+                {isAD  && <DL label="결정일"        val={selCase.decisionDate} />}
+                {isAD  && <DL label="결과"          val={selCase.result} />}
+                {isAD  && <DL label="결과 상태"     val={selCase.status} />}
+                {isAD  && <DL label="취하/각하 사유" val={selCase.withdrawReason} />}
+                {isAD  && <DL label="감치결정"      val={selCase.detentionDecision} />}
+                {isAD  && <DL label="재산목록 제출"  val={selCase.propertyList && `${selCase.propertyList}${selCase.propertyListDesc ? ` (${selCase.propertyListDesc})` : ""}`} />}
+                {isAD  && <DL label="집행장 만료/취하" val={selCase.executionExpiration} />}
+              </>
+            )}
           </div>
 
           {/* 재산조회 섹션 (재산명시인 경우) */}
