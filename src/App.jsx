@@ -1358,7 +1358,7 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
   </div>
 );
 
-const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
+const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["채무자명", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
   const approvedUsers = users.filter(u => u.approved);
   return (
@@ -1397,7 +1397,7 @@ const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, delete
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 {strikeLine}
               </td>
-              <td style={strike()}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              <td style={strike()}>{canDelete && <button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -2599,7 +2599,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         })()}
         {/* ── 주요현안 ── */}
         <SectionHeader>주요현안</SectionHeader>
-        <ForcedExecutionTable rows={data.forcedExecutions} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
+        <ForcedExecutionTable rows={data.forcedExecutions} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
       </div>
