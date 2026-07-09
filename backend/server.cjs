@@ -2280,11 +2280,22 @@ app.get("/{*splat}", (req, res) => {
 
 // ─── AI 종합분석 ──────────────────────────────────
 const OpenAI = require("openai");
-const openaiClient = process.env.OPENAI_API_KEY
+let openaiClient = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
 
+// .env가 서버 기동 이후에 추가/수정된 경우 재시작 없이도 다음 요청에서 자동으로 반영되도록 재시도
+function getOpenAIClient() {
+  if (openaiClient) return openaiClient;
+  require("dotenv").config({ path: path.join(__dirname, ".env"), override: true });
+  if (process.env.OPENAI_API_KEY) {
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
+  return openaiClient;
+}
+
 app.post("/api/ai-chat", async (req, res) => {
+  const openaiClient = getOpenAIClient();
   if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
   const { query, debtorId } = req.body;
   if (!query) return res.status(400).json({ error: "query 필요" });
