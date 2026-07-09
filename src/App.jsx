@@ -2303,9 +2303,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   };
 
   // ─── 주요현안 (강제집행/신용분석/협의 대상자) — 엑셀 스타일 테이블 ──
-  const issueTh  = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "var(--tp)", background: "var(--bg2)", border: "1px solid var(--brd)", textAlign: "left", whiteSpace: "nowrap" };
-  const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--brd)", verticalAlign: "middle" };
-  const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent" };
+  const issueTh  = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "var(--tp)", background: "var(--bg2)", border: "1px solid var(--brd)", textAlign: "center", whiteSpace: "nowrap" };
+  const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--brd)", verticalAlign: "middle", textAlign: "center" };
+  const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent", textAlign: "center" };
   const issueAuto = { fontSize: 12, color: "var(--tm)" };
 
   const IssueTableCard = ({ title, count, onAdd, children }) => (
@@ -2322,29 +2322,43 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   const ForcedExecutionTable = () => {
     const rows = data.forcedExecutions;
-    const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", ""];
+    const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+    const approvedUsers = users.filter(u => u.approved);
     return (
       <IssueTableCard title="강제집행 대상자" count={rows.length}
-        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorId: "", registeredDate: today(), resolvedDate: "", result: "" })}>
+        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorId: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
         <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
         <tbody>
-          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
-          {rows.map(r => {
-            const d = data.debtors.find(x => x.id === r.debtorId);
-            return (
-              <tr key={r.id}>
-                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("forcedExecutions", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
-                <td style={issueTd}><span style={issueAuto}>{d ? (d.execTitle ? "준비완료" : "미비") : "-"}</span></td>
-                <td style={issueTd}><span style={issueAuto}>{d?.residentCopy ? fmtDate(d.residentCopy) : "-"}</span></td>
-                <td style={issueTd}><span style={issueAuto}>{d ? (d.creditGrade ? `${d.creditGrade}${d.creditCheck ? ` (${fmtDate(d.creditCheck)})` : ""}` : "미실시") : "-"}</span></td>
-                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-                <td style={issueTd}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} /></td>
-                <td style={issueTd}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} /></td>
-                <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} placeholder="처리결과" /></td>
-                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
-              </tr>
-            );
-          })}
+          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+          {rows.map(r => (
+            <tr key={r.id}>
+              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("forcedExecutions", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
+              <td style={issueTd}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} /></td>
+              <td style={issueTd}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} /></td>
+              <td style={issueTd}>
+                <select value={r.creditOk || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { creditOk: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-</option>
+                  <option value="O">O</option>
+                  <option value="X">X</option>
+                </select>
+              </td>
+              <td style={issueTd}>
+                <select value={r.assignee || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
+                </select>
+              </td>
+              <td style={issueTd}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} /></td>
+              <td style={issueTd}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} /></td>
+              <td style={issueTd}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={!!r.completed} title="완료" onChange={e => updateKeyIssue("forcedExecutions", r.id, { completed: e.target.checked })} style={{ cursor: "pointer", flexShrink: 0 }} />
+                  <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, textDecoration: r.completed ? "line-through" : "none", color: r.completed ? "var(--tm)" : "var(--tp)" }} placeholder="처리결과" />
+                </div>
+              </td>
+              <td style={issueTd}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+            </tr>
+          ))}
         </tbody>
       </IssueTableCard>
     );
