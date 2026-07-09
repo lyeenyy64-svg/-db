@@ -1561,12 +1561,24 @@ export default function App() {
     let debounce;
     let src;
     let retryTimer;
+    let idleWaitTimer;
+
+    // 입력 중(포커스가 입력 필드에 있음)이면 새로고침으로 값이 덮어써지지 않도록 대기
+    const isUserTyping = () => {
+      const el = document.activeElement;
+      return !!el && ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
+    };
+    const reloadWhenIdle = () => {
+      clearTimeout(idleWaitTimer);
+      if (isUserTyping()) { idleWaitTimer = setTimeout(reloadWhenIdle, 2000); return; }
+      loadData();
+    };
 
     const connect = () => {
       src = new EventSource("/api/events");
       src.addEventListener("data-changed", () => {
         clearTimeout(debounce);
-        debounce = setTimeout(() => loadData(), 500);
+        debounce = setTimeout(reloadWhenIdle, 500);
       });
       src.onerror = () => {
         src.close();
@@ -1576,14 +1588,15 @@ export default function App() {
     };
     connect();
 
-    // 탭 복귀 시 놓친 변경사항 즉시 반영
-    const onVisible = () => { if (document.visibilityState === "visible") loadData(); };
+    // 탭 복귀 시 놓친 변경사항 반영 (입력 중이면 대기)
+    const onVisible = () => { if (document.visibilityState === "visible") reloadWhenIdle(); };
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       src.close();
       clearTimeout(debounce);
       clearTimeout(retryTimer);
+      clearTimeout(idleWaitTimer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [backendStatus, loadData]);
