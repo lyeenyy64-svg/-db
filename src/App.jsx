@@ -2419,10 +2419,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // ═══ VIEWS ══════════════════════════════════════════════
 
   // ─── Dashboard ──────────────────────────────────────────
+  const SectionHeader = ({ children }) => (
+    <div style={{ background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8 }}>{children}</div>
+  );
+
   const Dashboard = () => {
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <SectionHeader>종합현황</SectionHeader>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={`추심진행 ${stats.byStatus["추심진행"] || 0}건 / 보류 ${stats.byStatus["추심보류"] || 0}건`} color="#3b82f6" />
           <KPI label="총 채권 원금" value={fmt(stats.totalRemaining)} sub={`법무 기준 · 재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
@@ -2461,6 +2466,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         {/* ── 월별 회수실적 차트 ── */}
+        <SectionHeader>회수현황</SectionHeader>
         {(() => {
           const fmtBar = (v) => { if (!v) return ""; if (v >= 100000000) return `${(v/100000000).toFixed(1)}억`; return `${Math.round(v/10000)}만`; };
           const CHART_H = 180;
@@ -2559,7 +2565,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
         {/* ── 주요현안 ── */}
-        <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>주요현안</div>
+        <SectionHeader>주요현안</SectionHeader>
         <ForcedExecutionTable />
         <CreditAnalysisTable />
         <NegotiationTable />
@@ -8189,7 +8195,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {sel && tab === "debtors" && <button onClick={goBack} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
             <span style={{ fontSize: 16, fontWeight: 700 }}>
-              {navTabs.find(t => t.k === tab)?.l}
+              {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
               {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
               {sel && tab === "debtors" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {sel.name} ({sel.brandName})</span>}
