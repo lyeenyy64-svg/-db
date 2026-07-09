@@ -2513,8 +2513,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const monthlyData = Array.from({ length: 12 }, (_, i) => {
             const m = i + 1;
             if (chartYear === nowYear) {
-              const total = stats.monthlyByChannel?.[m]?.companyAccount || 0;
-              const brands = { B: stats.monthlyByChannel?.[m]?.byBrand?.B || 0, D: stats.monthlyByChannel?.[m]?.byBrand?.D || 0, M: stats.monthlyByChannel?.[m]?.byBrand?.M || 0 };
+              const cc = stats.monthlyByChannel?.[m];
+              const total = (cc?.companyAccount || 0) + (cc?.cashCharge || 0) + (cc?.welcomeDirect || 0);
+              const brands = { B: cc?.byBrand?.B || 0, D: cc?.byBrand?.D || 0, M: cc?.byBrand?.M || 0 };
               return { m, total, brands };
             }
             const total = getCC(chartYear, m, 'all', 'total') || 0;
