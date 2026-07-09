@@ -2357,9 +2357,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
                 <td style={strike()}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                    <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} placeholder="처리결과" />
+                    <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} />
                     <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
-                      style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "var(--bg2)", color: r.completed ? "#fff" : "var(--tm)", border: `1px solid ${r.completed ? "#ef4444" : "var(--brd)"}` }}>완료</button>
+                      style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                   </div>
                   {strikeLine}
                 </td>
