@@ -1002,6 +1002,30 @@ const TRIGGER_TYPES = [
   { key: "seizure_collected", label: "압류 회수 발생" },
 ];
 
+// ─── Brand Logo ───────────────────────────────────────────
+const BrandLogo = ({ size = 32 }) => (
+  <svg width={size} height={size} viewBox="0 0 40 40">
+    <rect width="40" height="40" rx="9" fill="#241b4d" />
+    <circle cx="20" cy="9" r="2" fill="#fff" />
+    <line x1="20" y1="11" x2="20" y2="30" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+    <line x1="9" y1="13" x2="31" y2="13" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+    <line x1="9" y1="13" x2="9" y2="21" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+    <line x1="31" y1="13" x2="31" y2="21" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+    <path d="M4 21 a5 5 0 0 0 10 0 Z" fill="#f97316" />
+    <path d="M26 21 a5 5 0 0 0 10 0 Z" fill="#f97316" />
+    <line x1="13" y1="30" x2="27" y2="30" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+const BrandWordmark = ({ fontSize = 22 }) => (
+  <div style={{ fontSize, fontWeight: 900, letterSpacing: -0.5 }}>
+    <span style={{ color: "#f97316" }}>바</span>
+    <span style={{ color: "#8b5cf6" }}>모</span>
+    <span style={{ color: "#241b4d" }}>딜</span>
+    <span style={{ color: "#111" }}> CMS</span>
+  </div>
+);
+
 // ─── Login Screen ─────────────────────────────────────────
 const LoginScreen = ({ onLogin, loginError }) => {
   const [id, setId]       = useState("");
@@ -1013,7 +1037,10 @@ const LoginScreen = ({ onLogin, loginError }) => {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
       <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 48, width: 400, border: "1px solid var(--brd)", boxShadow: "0 8px 40px rgba(0,0,0,.08)" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 22, fontWeight: 900, marginBottom: 8 }}><span style={{ color: "#3b82f6" }}>B</span><span style={{ color: "#f97316" }}>M</span><span style={{ color: "#8b5cf6" }}>D</span> DEBTFLOW</div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8 }}>
+            <BrandLogo size={44} />
+            <BrandWordmark fontSize={28} />
+          </div>
           <div style={{ fontSize: 12, color: "var(--tm)" }}>NPL 채권관리 시스템</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -7908,7 +7935,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <style>{CSS}</style>
       {/* Sidebar */}
       <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}><div style={{ fontSize: 15, fontWeight: 900, letterSpacing: -0.5 }}><span style={{ color: "#f59e0b" }}>B</span><span style={{ color: "#8b5cf6" }}>M</span><span style={{ color: "#3b82f6" }}>D</span><span> DEBTFLOW</span></div><div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div></div>
+        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <BrandLogo size={30} />
+            <BrandWordmark fontSize={18} />
+          </div>
+          <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2, letterSpacing: 1.5 }}>NPL MANAGEMENT</div>
+        </div>
         <div style={{ flex: 1, padding: "8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
           {navTabs.map(t => {
             const isExpanded = t.sub && expandedNav.has(t.k);
