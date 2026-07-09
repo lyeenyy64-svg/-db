@@ -2341,7 +2341,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const approvedUsers = users.filter(u => u.approved);
     return (
       <IssueTableCard title="강제집행 대상자" count={rows.length}
-        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorId: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
+        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
         <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
         <tbody>
           {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
@@ -2350,7 +2350,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
             return (
               <tr key={r.id}>
-                <td style={strike({ minWidth: 200 })}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("forcedExecutions", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} />{strikeLine}</td>
+                <td style={strike({ minWidth: 140 })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
                 <td style={strike()}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
                 <td style={strike()}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
                 <td style={strike()}>
@@ -2370,9 +2370,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </td>
                 <td style={strike()}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
                 <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-                <td style={strike()}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
-                    <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} />
+                <td style={strike({ width: 110, maxWidth: 110 })}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                    <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, minWidth: 0 }} />
                     <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
                       style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                   </div>
