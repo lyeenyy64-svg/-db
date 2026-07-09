@@ -363,6 +363,7 @@ function applyThirdsOv(cases) {
 const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
   const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
   const [isEditing, setIsEditing] = useState(false);
+  const [checked, setChecked] = useState(() => new Set());
 
   const setRow = useCallback((i, k, v) => {
     setRows(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
@@ -370,6 +371,7 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
 
   const startEdit = useCallback(() => {
     setRows(thirds.map(t => ({ ...t })));
+    setChecked(new Set());
     setIsEditing(true);
   }, [thirds]);
 
@@ -378,11 +380,13 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
     saveThirdsOv(caseId, cleaned);
     onSave(cleaned);
     setRows(cleaned);
+    setChecked(new Set());
     setIsEditing(false);
   }, [rows, caseId, onSave]);
 
   const handleCancel = useCallback(() => {
     setRows(thirds.map(t => ({ ...t })));
+    setChecked(new Set());
     setIsEditing(false);
   }, [thirds]);
 
@@ -390,9 +394,15 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
     setRows(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }]);
   }, []);
 
-  const removeRow = useCallback((i) => {
-    setRows(prev => prev.filter((_, ri) => ri !== i));
+  const toggleCheck = useCallback((i) => {
+    setChecked(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
   }, []);
+
+  const deleteChecked = useCallback(() => {
+    if (checked.size === 0) return;
+    setRows(prev => prev.filter((_, ri) => !checked.has(ri)));
+    setChecked(new Set());
+  }, [checked]);
 
   const display = isEditing ? rows : thirds;
   const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
@@ -414,6 +424,7 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
         ) : (
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={addRow} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 행 추가</button>
+            <button onClick={deleteChecked} disabled={checked.size === 0} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: checked.size === 0 ? "var(--bg2)" : "#fef2f2", color: checked.size === 0 ? "var(--tm)" : "#ef4444", border: `1px solid ${checked.size === 0 ? "var(--brd)" : "#fecaca"}`, cursor: checked.size === 0 ? "default" : "pointer" }}>행삭제{checked.size > 0 ? ` (${checked.size})` : ""}</button>
             <button onClick={handleSave} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
             <button onClick={handleCancel} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
           </div>
@@ -423,6 +434,7 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: "2px solid var(--brd)" }}>
+              {isEditing && <th style={{ padding: "4px 6px", width: 20 }} />}
               <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
               <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
               <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
@@ -430,12 +442,12 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
               <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
               <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
               <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
-              {isEditing && <th style={{ padding: "4px 8px" }} />}
             </tr>
           </thead>
           <tbody>
             {display.map((t, i) => isEditing ? (
-              <tr key={i} style={{ borderBottom: "1px solid var(--brd)" }}>
+              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: checked.has(i) ? "#fef2f2" : "transparent" }}>
+                <td style={{ padding: "4px 6px", textAlign: "center" }}><input type="checkbox" checked={checked.has(i)} onChange={() => toggleCheck(i)} style={{ cursor: "pointer" }} /></td>
                 <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
                 <td style={{ padding: "4px 6px" }}><KoreanInput value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
                 <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.claimAmount || "")} onChange={v => setRow(i, "claimAmount", Number(v) || 0)} style={numInpS} /></td>
@@ -443,9 +455,6 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
                 <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.collected || "")} onChange={v => setRow(i, "collected", Number(v) || 0)} style={numInpS} /></td>
                 <td style={{ padding: "4px 6px" }}><KoreanInput value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
                 <td style={{ padding: "4px 6px" }}><KoreanInput value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
-                <td style={{ padding: "4px 6px" }}>
-                  <button onClick={() => removeRow(i)} style={{ padding: "2px 7px", borderRadius: 5, background: "#fef2f2", color: "#ef4444", border: "1px solid #fecaca", cursor: "pointer", fontSize: 13, lineHeight: 1 }}>×</button>
-                </td>
               </tr>
             ) : (
               <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
