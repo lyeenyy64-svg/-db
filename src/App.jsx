@@ -185,6 +185,14 @@ function saveMR(key, recs) {
 }
 function addMR(key, rec)   { const r = [rec, ...getMR(key)]; saveMR(key, r); return r; }
 function delMR(key, id)    { const r = getMR(key).filter(x => x.id !== id); saveMR(key, r); return r; }
+function updateMR(key, id, patch) {
+  const recs = getMR(key);
+  const idx = recs.findIndex(x => x.id === id);
+  if (idx === -1) return false;
+  recs[idx] = { ...recs[idx], ...patch };
+  saveMR(key, recs);
+  return true;
+}
 
 // ─── 채무자 히스토리 (localStorage + DB 공유 저장) ──────────
 // hist_m_{id}: 수동 추가 항목 [{id, date, content}]
@@ -4978,6 +4986,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(cmpEdit),
         });
+        updateMR(MK.complaints, selComplaint.id, cmpEdit);
         setData(prev => ({ ...prev, complaints: prev.complaints.map(c => c.id === selComplaint.id ? { ...c, ...cmpEdit } : c) }));
         setSelComplaint(prev => ({ ...prev, ...cmpEdit }));
         showToast("저장 완료");
@@ -5023,6 +5032,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           body: JSON.stringify({ debtorId }),
         });
         const debtor = data.debtors.find(d => d.id === debtorId);
+        updateMR(MK.complaints, selComplaint.id, { debtorId, debtorName: debtor?.name || selComplaint.debtorName, brand: debtor?.brand || selComplaint.brand });
         setData(prev => ({ ...prev, complaints: prev.complaints.map(c => c.id === selComplaint.id ? { ...c, debtorId, debtorName: debtor?.name || c.debtorName, brand: debtor?.brand || c.brand } : c) }));
         setSelComplaint(prev => ({ ...prev, debtorId, debtorName: debtor?.name || prev.debtorName, brand: debtor?.brand || prev.brand }));
         setCmpMatchMode(false); setCmpMatchQ("");
