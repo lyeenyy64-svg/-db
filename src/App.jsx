@@ -1357,6 +1357,7 @@ export default function App() {
   const [brandFilter, setBrandFilter] = useState("전체");
   const [catFilter, setCatFilter] = useState("전체");
   const [statusFilter, setStatusFilter] = useState("전체");
+  const [assigneeFilter, setAssigneeFilter] = useState("전체");
   const [sort, setSort] = useState({ f: "finalBalanceLegal", d: "desc" });
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(null);
@@ -2053,6 +2054,7 @@ export default function App() {
     if (brandFilter !== "전체") l = l.filter(d => d.brand === brandFilter);
     if (catFilter !== "전체") l = l.filter(d => d.category === catFilter);
     if (statusFilter !== "전체") l = l.filter(d => d.collectionStatus === statusFilter);
+    if (assigneeFilter !== "전체") l = l.filter(d => d.assignee === assigneeFilter);
     if (sort.f) l.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
 
     // 같은 이름+브랜드 or 유사 코드(1234 / 1234-1)인 채무자를 그룹핑
@@ -2086,11 +2088,11 @@ export default function App() {
       }
     }
     return grouped;
-  }, [data, q, brandFilter, catFilter, statusFilter, sort]);
+  }, [data, q, brandFilter, catFilter, statusFilter, assigneeFilter, sort]);
 
   const tp = Math.ceil(filtered.length / PP);
   const paged = filtered.slice((page - 1) * PP, page * PP);
-  useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter]);
+  useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter, assigneeFilter]);
   const doSort = (f) => {
     if (sort.f === f) {
       if (sort.d === "desc") setSort({ f, d: "asc" });
@@ -2411,11 +2413,27 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>분류별 현황</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 20 }}>
-              {DASHBOARD_GROUPS.map(g => (<div key={g.label} style={{ textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8 }}><div className="mono" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4, color: g.color }}>{stats.byGroup?.[g.label] || 0}</div><div style={{ fontSize: 11, color: "var(--tm)" }}>{g.label}</div></div>))}
+              {DASHBOARD_GROUPS.map(g => (
+                <div key={g.label} onClick={() => { setQ(""); setBrandFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("전체"); setCatFilter(g.cats[0]); setTab("debtors"); }}
+                  style={{ textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
+                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, marginBottom: 4, color: g.color }}>{stats.byGroup?.[g.label] || 0}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)" }}>{g.label}</div>
+                </div>
+              ))}
             </div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
             <div style={{ display: "flex", gap: 10 }}>
-              {config.assignees.map(a => (<div key={a} style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8 }}><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 4 }}>{stats.byAssignee[a] || 0}</div><div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div></div>))}
+              {config.assignees.map(a => (
+                <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
+                  style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
+                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 4 }}>{stats.byAssignee[a] || 0}</div>
+                  <div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -3041,6 +3059,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
+        <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} style={{ width: 110 }}><option value="전체">담당자: 전체</option>{config.assignees.map(a => <option key={a} value={a}>{a}</option>)}</select>
         {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />신규 등록</button>}
         <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
         <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
