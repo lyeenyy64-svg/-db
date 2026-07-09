@@ -8088,7 +8088,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <style>{CSS}</style>
       {/* Sidebar */}
       <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)" }}>
+        <div onClick={() => setTab("dashboard")} style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)", cursor: "pointer" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <BrandLogo size={30} />
             <BrandWordmark fontSize={18} />
