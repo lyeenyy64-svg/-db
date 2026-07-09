@@ -177,6 +177,9 @@ const MK = {
   debtors:          "manual_debtors",
   payments:         "manual_payments",
   activities:       "manual_activities",
+  forcedExecutions: "manual_forced_executions",
+  creditAnalyses:   "manual_credit_analyses",
+  negotiations:     "manual_negotiations",
 };
 function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function saveMR(key, recs) {
@@ -624,6 +627,9 @@ function loadExcelData(cfg) {
     minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
     assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
+    forcedExecutions: getMR(MK.forcedExecutions),
+    creditAnalyses:   getMR(MK.creditAnalyses),
+    negotiations:     getMR(MK.negotiations),
   };
 }
 
@@ -1467,7 +1473,10 @@ export default function App() {
       const complaints   = [...complaintsRes, ...getMR(MK.complaints)];
       const activities   = [...activitiesRes, ...getMR(MK.activities)];
       const allDebtors   = [...debtors, ...manualDebtors];
-      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders }));
+      const forcedExecutions = getMR(MK.forcedExecutions);
+      const creditAnalyses   = getMR(MK.creditAnalyses);
+      const negotiations     = getMR(MK.negotiations);
+      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations }));
       setBackendStatus("connected");
       setLastSaved(new Date());
       setPendingRefreshKey(k => k + 1);
@@ -1930,6 +1939,19 @@ export default function App() {
       addMR(MK.complaints, c);
     }
   };
+  // ─── 주요현안 (강제집행/신용분석/협의 대상자) ───────────
+  const addKeyIssue = (listKey, rec) => {
+    setData(prev => ({ ...prev, [listKey]: [rec, ...prev[listKey]] }));
+    addMR(MK[listKey], rec);
+  };
+  const updateKeyIssue = (listKey, id, patch) => {
+    setData(prev => ({ ...prev, [listKey]: prev[listKey].map(r => r.id === id ? { ...r, ...patch } : r) }));
+    updateMR(MK[listKey], id, patch);
+  };
+  const deleteKeyIssue = (listKey, id) => {
+    setData(prev => ({ ...prev, [listKey]: prev[listKey].filter(r => r.id !== id) }));
+    delMR(MK[listKey], id);
+  };
   // #4 브랜드 변경 시 채무자 연쇄 갱신
   const updateBrandInDebtors = (oldCode, newBrand) => {
     setData(prev => ({
@@ -2269,6 +2291,106 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     );
   };
 
+  // ─── 주요현안 (강제집행/신용분석/협의 대상자) — 엑셀 스타일 테이블 ──
+  const issueTh  = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "var(--tp)", background: "var(--bg2)", border: "1px solid var(--brd)", textAlign: "left", whiteSpace: "nowrap" };
+  const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--brd)", verticalAlign: "middle" };
+  const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent" };
+  const issueAuto = { fontSize: 12, color: "var(--tm)" };
+
+  const IssueTableCard = ({ title, count, onAdd, children }) => (
+    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 700 }}>{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
+        <button onClick={onAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={12} />신규등록</button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+      </div>
+    </div>
+  );
+
+  const ForcedExecutionTable = () => {
+    const rows = data.forcedExecutions;
+    const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", ""];
+    return (
+      <IssueTableCard title="강제집행 대상자" count={rows.length}
+        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorId: "", registeredDate: today(), resolvedDate: "", result: "" })}>
+        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+          {rows.map(r => {
+            const d = data.debtors.find(x => x.id === r.debtorId);
+            return (
+              <tr key={r.id}>
+                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("forcedExecutions", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
+                <td style={issueTd}><span style={issueAuto}>{d ? (d.execTitle ? "준비완료" : "미비") : "-"}</span></td>
+                <td style={issueTd}><span style={issueAuto}>{d?.residentCopy ? fmtDate(d.residentCopy) : "-"}</span></td>
+                <td style={issueTd}><span style={issueAuto}>{d ? (d.creditGrade ? `${d.creditGrade}${d.creditCheck ? ` (${fmtDate(d.creditCheck)})` : ""}` : "미실시") : "-"}</span></td>
+                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
+                <td style={issueTd}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} /></td>
+                <td style={issueTd}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} /></td>
+                <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={issueInp} placeholder="처리결과" /></td>
+                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </IssueTableCard>
+    );
+  };
+
+  const CreditAnalysisTable = () => {
+    const rows = data.creditAnalyses;
+    const cols = ["채무자명", "브랜드", "신용분석 요청일", "신용분석 결과", "담당자", ""];
+    return (
+      <IssueTableCard title="신용분석 대상자" count={rows.length}
+        onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), debtorId: "", requestDate: today(), result: "" })}>
+        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+          {rows.map(r => {
+            const d = data.debtors.find(x => x.id === r.debtorId);
+            return (
+              <tr key={r.id}>
+                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("creditAnalyses", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
+                <td style={issueTd}>{d ? <BrandBadge code={d.brand} brands={config.brands} /> : <span style={issueAuto}>-</span>}</td>
+                <td style={issueTd}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} /></td>
+                <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { result: e.target.value })} style={issueInp} placeholder="신용분석 결과" /></td>
+                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
+                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </IssueTableCard>
+    );
+  };
+
+  const NegotiationTable = () => {
+    const rows = data.negotiations;
+    const cols = ["채무자명", "담당자", "주요협의사항", ""];
+    return (
+      <IssueTableCard title="주요 협의 대상자" count={rows.length}
+        onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "" })}>
+        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+        <tbody>
+          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+          {rows.map(r => {
+            const d = data.debtors.find(x => x.id === r.debtorId);
+            return (
+              <tr key={r.id}>
+                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("negotiations", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
+                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
+                <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} style={issueInp} placeholder="주요협의사항" /></td>
+                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </IssueTableCard>
+    );
+  };
+
   // ═══ VIEWS ══════════════════════════════════════════════
 
   // ─── Dashboard ──────────────────────────────────────────
@@ -2398,6 +2520,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", justifyContent: "space-around" }}>
           {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (<div key={i} style={{ textAlign: "center" }}><div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{x.v}</div></div>))}
         </div>
+        {/* ── 주요현안 ── */}
+        <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>주요현안</div>
+        <ForcedExecutionTable />
+        <CreditAnalysisTable />
+        <NegotiationTable />
       </div>
     );
   };
