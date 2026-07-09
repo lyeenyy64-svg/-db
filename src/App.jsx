@@ -1358,12 +1358,12 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
   </div>
 );
 
-const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
-  const cols = ["채무자명", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
+  const cols = ["채무자명", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
   const approvedUsers = users.filter(u => u.approved);
   return (
     <IssueTableCard title="강제집행 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
+      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
       <tbody>
         {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
@@ -1373,6 +1373,13 @@ const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, delete
           return (
             <tr key={r.id}>
               <td style={strike({ minWidth: 140 })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
+              <td style={strike()}>
+                <select value={r.brand || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                </select>
+                {strikeLine}
+              </td>
               <td style={strike()}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike()}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike()}>
@@ -2599,7 +2606,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         })()}
         {/* ── 주요현안 ── */}
         <SectionHeader>주요현안</SectionHeader>
-        <ForcedExecutionTable rows={data.forcedExecutions} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
+        <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
       </div>
