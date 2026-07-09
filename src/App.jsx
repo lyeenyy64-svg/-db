@@ -1359,7 +1359,7 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
 );
 
 const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
-  const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+  const cols = ["채무자명", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
   const approvedUsers = users.filter(u => u.approved);
   return (
     <IssueTableCard title="강제집행 대상자" count={rows.length}
@@ -1394,7 +1394,7 @@ const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, delete
               <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike({ width: 110, maxWidth: 110 })}>
                 <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
-                  <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, minWidth: 0 }} />
+                  <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, minWidth: 0, width: 50, flex: "0 1 50px" }} />
                   <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
                     style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 </div>
@@ -2177,7 +2177,7 @@ export default function App() {
       "재산명시": ad.length,
       "형사고소": cmp.length,
     };
-    const totalLegal = lc.length + ad.length + cmp.length;
+    const totalLegal = lc.length + ad.length + cmp.length + data.rehabilitations.length;
     const totalSeizures = lc.filter(c => c.type === "압류").length;
     return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
   }, [data, config]);
@@ -2541,7 +2541,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <button onClick={() => setChartYear(y => y + 1)} disabled={chartYear >= nowYear + 1}
                       style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: chartYear >= nowYear + 1 ? "var(--brd)" : "var(--tp)", cursor: chartYear >= nowYear + 1 ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700 }}>›</button>
                   </div>
-                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#000" }}>{fmt(totalAnnual)}</div>}
+                  {totalAnnual > 0 && <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{fmt(totalAnnual)}</div>}
                 </div>
               </div>
               {/* 차트 바 */}
