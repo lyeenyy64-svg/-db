@@ -1337,6 +1337,128 @@ function SlackIngestView({ showToast, reloadFromBackend, currentUser }) {
 }
 
 // ─── Main App ─────────────────────────────────────────────
+// ─── 주요현안 (강제집행/신용분석/협의 대상자) — 엑셀 스타일 테이블 ──
+// App 밖(모듈 스코프)에 정의: App이 리렌더될 때마다 컴포넌트 아이덴티티가
+// 바뀌어 통째로 리마운트되면서 입력 중인 필드의 포커스/한글 조합이 끊기는
+// 문제를 방지 (타이핑할 때마다 setData가 호출되어 App이 리렌더되기 때문)
+const issueTh  = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "var(--tp)", background: "var(--bg2)", border: "1px solid var(--brd)", textAlign: "center", whiteSpace: "nowrap" };
+const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--brd)", verticalAlign: "middle", textAlign: "center" };
+const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent", textAlign: "center" };
+const issueAuto = { fontSize: 12, color: "var(--tm)" };
+
+const IssueTableCard = ({ title, count, onAdd, children }) => (
+  <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <div style={{ fontSize: 14, fontWeight: 700 }}>{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
+      <button onClick={onAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={12} />신규등록</button>
+    </div>
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+    </div>
+  </div>
+);
+
+const ForcedExecutionTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
+  const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+  const approvedUsers = users.filter(u => u.approved);
+  return (
+    <IssueTableCard title="강제집행 대상자" count={rows.length}
+      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
+      <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.map(r => {
+          const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
+          const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+          return (
+            <tr key={r.id}>
+              <td style={strike({ minWidth: 140 })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
+              <td style={strike()}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike()}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike()}>
+                <select value={r.creditOk || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { creditOk: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-</option>
+                  <option value="O">O</option>
+                  <option value="X">X</option>
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike()}>
+                <select value={r.assignee || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike()}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: 110, maxWidth: 110 })}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
+                  <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, minWidth: 0 }} />
+                  <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
+                    style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
+                </div>
+                {strikeLine}
+              </td>
+              <td style={strike()}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </IssueTableCard>
+  );
+};
+
+const CreditAnalysisTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
+  const cols = ["채무자명", "브랜드", "신용분석 요청일", "신용분석 결과", "담당자", ""];
+  return (
+    <IssueTableCard title="신용분석 대상자" count={rows.length}
+      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), debtorId: "", requestDate: today(), result: "" })}>
+      <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.map(r => {
+          const d = debtors.find(x => x.id === r.debtorId);
+          return (
+            <tr key={r.id}>
+              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("creditAnalyses", r.id, { debtorId: id })} debtors={debtors} brands={brands} /></td>
+              <td style={issueTd}>{d ? <BrandBadge code={d.brand} brands={brands} /> : <span style={issueAuto}>-</span>}</td>
+              <td style={issueTd}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} /></td>
+              <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { result: e.target.value })} style={issueInp} placeholder="신용분석 결과" /></td>
+              <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
+              <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </IssueTableCard>
+  );
+};
+
+const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
+  const cols = ["채무자명", "담당자", "주요협의사항", ""];
+  return (
+    <IssueTableCard title="주요 협의 대상자" count={rows.length}
+      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "" })}>
+      <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.map(r => {
+          const d = debtors.find(x => x.id === r.debtorId);
+          return (
+            <tr key={r.id}>
+              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("negotiations", r.id, { debtorId: id })} debtors={debtors} brands={brands} /></td>
+              <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
+              <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} style={issueInp} placeholder="주요협의사항" /></td>
+              <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </IssueTableCard>
+  );
+};
+
 export default function App() {
   // ─── Auth & Users ─────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(null);
@@ -2330,128 +2452,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     );
   };
 
-  // ─── 주요현안 (강제집행/신용분석/협의 대상자) — 엑셀 스타일 테이블 ──
-  const issueTh  = { padding: "8px 10px", fontSize: 11, fontWeight: 700, color: "var(--tp)", background: "var(--bg2)", border: "1px solid var(--brd)", textAlign: "center", whiteSpace: "nowrap" };
-  const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--brd)", verticalAlign: "middle", textAlign: "center" };
-  const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent", textAlign: "center" };
-  const issueAuto = { fontSize: 12, color: "var(--tm)" };
-
-  const IssueTableCard = ({ title, count, onAdd, children }) => (
-    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ fontSize: 14, fontWeight: 700 }}>{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
-        <button onClick={onAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={12} />신규등록</button>
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
-      </div>
-    </div>
-  );
-
-  const ForcedExecutionTable = () => {
-    const rows = data.forcedExecutions;
-    const cols = ["채무자명", "집행권원 준비여부", "주민등록초본", "신용분석 여부", "담당자", "등록일", "처리일", "처리결과", "삭제"];
-    const approvedUsers = users.filter(u => u.approved);
-    return (
-      <IssueTableCard title="강제집행 대상자" count={rows.length}
-        onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
-        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
-        <tbody>
-          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
-          {rows.map(r => {
-            const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
-            const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-            return (
-              <tr key={r.id}>
-                <td style={strike({ minWidth: 140 })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
-                <td style={strike()}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-                <td style={strike()}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-                <td style={strike()}>
-                  <select value={r.creditOk || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { creditOk: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
-                    <option value="">-</option>
-                    <option value="O">O</option>
-                    <option value="X">X</option>
-                  </select>
-                  {strikeLine}
-                </td>
-                <td style={strike()}>
-                  <select value={r.assignee || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
-                    <option value="">-- 선택 --</option>
-                    {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
-                  </select>
-                  {strikeLine}
-                </td>
-                <td style={strike()}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-                <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-                <td style={strike({ width: 110, maxWidth: 110 })}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
-                    <KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { result: e.target.value })} style={{ ...issueInp, minWidth: 0 }} />
-                    <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
-                      style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
-                  </div>
-                  {strikeLine}
-                </td>
-                <td style={strike()}><button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </IssueTableCard>
-    );
-  };
-
-  const CreditAnalysisTable = () => {
-    const rows = data.creditAnalyses;
-    const cols = ["채무자명", "브랜드", "신용분석 요청일", "신용분석 결과", "담당자", ""];
-    return (
-      <IssueTableCard title="신용분석 대상자" count={rows.length}
-        onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), debtorId: "", requestDate: today(), result: "" })}>
-        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
-        <tbody>
-          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
-          {rows.map(r => {
-            const d = data.debtors.find(x => x.id === r.debtorId);
-            return (
-              <tr key={r.id}>
-                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("creditAnalyses", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
-                <td style={issueTd}>{d ? <BrandBadge code={d.brand} brands={config.brands} /> : <span style={issueAuto}>-</span>}</td>
-                <td style={issueTd}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} /></td>
-                <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { result: e.target.value })} style={issueInp} placeholder="신용분석 결과" /></td>
-                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </IssueTableCard>
-    );
-  };
-
-  const NegotiationTable = () => {
-    const rows = data.negotiations;
-    const cols = ["채무자명", "담당자", "주요협의사항", ""];
-    return (
-      <IssueTableCard title="주요 협의 대상자" count={rows.length}
-        onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "" })}>
-        <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
-        <tbody>
-          {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
-          {rows.map(r => {
-            const d = data.debtors.find(x => x.id === r.debtorId);
-            return (
-              <tr key={r.id}>
-                <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("negotiations", r.id, { debtorId: id })} debtors={data.debtors} brands={config.brands} /></td>
-                <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-                <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} style={issueInp} placeholder="주요협의사항" /></td>
-                <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </IssueTableCard>
-    );
-  };
-
   // ═══ VIEWS ══════════════════════════════════════════════
 
   // ─── Dashboard ──────────────────────────────────────────
@@ -2601,9 +2601,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         })()}
         {/* ── 주요현안 ── */}
         <SectionHeader>주요현안</SectionHeader>
-        <ForcedExecutionTable />
-        <CreditAnalysisTable />
-        <NegotiationTable />
+        <ForcedExecutionTable rows={data.forcedExecutions} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
+        <CreditAnalysisTable rows={data.creditAnalyses} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
+        <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
       </div>
     );
   };
