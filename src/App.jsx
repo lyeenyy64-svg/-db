@@ -2463,7 +2463,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <SectionHeader>종합현황</SectionHeader>
+        <SectionHeader>채권현황</SectionHeader>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
           <KPI label="총 채권금액" value={fmt(stats.totalRemaining)} sub={`재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
