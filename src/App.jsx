@@ -2428,7 +2428,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Dashboard ──────────────────────────────────────────
   const SectionHeader = ({ children }) => (
-    <div style={{ background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8 }}>{children}</div>
+    <div style={{ alignSelf: "flex-start", background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8 }}>{children}</div>
   );
 
   const Dashboard = () => {
