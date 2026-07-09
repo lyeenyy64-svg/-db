@@ -2517,9 +2517,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           );
         })()}
-        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", justifyContent: "space-around" }}>
-          {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (<div key={i} style={{ textAlign: "center" }}><div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 600 }}>{x.v}</div></div>))}
-        </div>
         {/* ── 주요현안 ── */}
         <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>주요현안</div>
         <ForcedExecutionTable />
@@ -8127,9 +8124,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           })}
           <div style={{ height: 1, background: "var(--brd)", margin: "8px 0" }} />
         </div>
-        <div style={{ padding: 16, borderTop: "1px solid var(--brd)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>{config.brands.map(b => (<div key={b.code} style={{ textAlign: "center" }}><div className="mono" style={{ fontSize: 14, fontWeight: 700, color: b.color }}>{stats.byBrand[b.code]?.count || 0}</div><div style={{ fontSize: 9, color: "var(--tm)" }}>{b.name}</div></div>))}</div>
-          <div style={{ fontSize: 11, color: "var(--tm)" }}>총 관리 채권</div><div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)" }}>{stats.totalDebtors}건</div>
+        <div style={{ padding: 16, borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 8 }}>
+          {[{ l: "분할상환 진행", v: `${stats.totalInstallments}건` },{ l: "채권압류 진행", v: `${stats.totalSeizures}건` },{ l: "회생/파산", v: `${stats.totalRehabs}건` },{ l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },{ l: "총 입금건수", v: `${stats.totalPayments}건` }].map((x, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 11, color: "var(--tm)" }}>{x.l}</div>
+              <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--tp)" }}>{x.v}</div>
+            </div>
+          ))}
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--acc)" + "18", color: "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{currentUser.avatar}</div>
