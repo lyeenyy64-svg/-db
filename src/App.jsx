@@ -8314,7 +8314,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
-          {tab === "dashboard" && <Dashboard />}
+          {tab === "dashboard" && Dashboard()}
           {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : debtorListView)}
           {tab === "collection" && <CollectionView />}
           {tab === "payments" && <PaymentsView />}
