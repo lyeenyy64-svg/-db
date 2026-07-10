@@ -76,6 +76,15 @@ const DASHBOARD_GROUPS = [
   { label: "대손채권",   color: "#ef4444", cats: ["대손채권"] },
 ];
 
+// ─── 연체 에이징 구간 ───────────────────────────────────────
+const AGING_BUCKETS = [
+  { key: "b0",   label: "30일 미만",  min: 0,   max: 30,       color: "#10b981" },
+  { key: "b30",  label: "30~59일",    min: 30,  max: 60,       color: "#f59e0b" },
+  { key: "b60",  label: "60~89일",    min: 60,  max: 90,       color: "#f97316" },
+  { key: "b90",  label: "90~119일",   min: 90,  max: 120,      color: "#ef4444" },
+  { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#991b1b" },
+];
+
 // ─── Data Generation ──────────────────────────────────────
 function generateData(cfg) {
   const debtors = [], payments = [], activities = [], seizureCases = [], rehabilitations = [], installmentPlans = [], complaints = [];
@@ -2346,6 +2355,38 @@ export default function App() {
     return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
   }, [data, config]);
 
+  // ─── 연체 에이징 분석 ──────────────────────────────────────
+  // "연체일수"는 채무자별 별도 만기일이 없는 채권이 많아, 최근 입금일(없으면 대여일)로부터
+  // 경과한 일수를 기준으로 삼는다 — NPL 추심 실무에서 흔히 쓰는 방식이며, 값이 클수록
+  // 오래 방치된(=우선 추심이 필요한) 채권임을 뜻한다.
+  const agingStats = useMemo(() => {
+    const lastPayByDebtor = {};
+    data.payments.forEach(p => {
+      if (!p.debtorId || !p.paymentDate) return;
+      if (!lastPayByDebtor[p.debtorId] || p.paymentDate > lastPayByDebtor[p.debtorId]) lastPayByDebtor[p.debtorId] = p.paymentDate;
+    });
+    const nowMs = new Date(today() + "T00:00:00").getTime();
+    const buckets = AGING_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
+    let noAnchorCount = 0;
+    data.debtors.filter(d => d.collectionStatus === "추심진행" && (d.finalBalanceLegal || 0) > 0).forEach(d => {
+      const anchor = lastPayByDebtor[d.id] || d.loanDate || null;
+      const anchorMs = anchor ? new Date(anchor + "T00:00:00").getTime() : NaN;
+      if (!anchor || isNaN(anchorMs)) { noAnchorCount++; return; }
+      const days = Math.max(0, Math.floor((nowMs - anchorMs) / 86400000));
+      const bucket = buckets.find(b => days >= b.min && days < b.max) || buckets[buckets.length - 1];
+      bucket.count++;
+      bucket.amount += (d.finalBalanceLegal || 0);
+      bucket.items.push({ ...d, agingDays: days, lastPaymentDate: lastPayByDebtor[d.id] || null });
+    });
+    buckets.forEach(b => b.items.sort((a, c) => c.finalBalanceLegal - a.finalBalanceLegal));
+    return {
+      buckets,
+      totalCount: buckets.reduce((s, b) => s + b.count, 0),
+      totalAmount: buckets.reduce((s, b) => s + b.amount, 0),
+      noAnchorCount,
+    };
+  }, [data]);
+
   const alertList = useMemo(() => {
     const l = [];
     data.installmentPlans.forEach(p => { const un = (p.schedules || p.logs || []).filter(x => x.status === "미납"); if (un.length > 0) l.push({ type: "installment", msg: `${p.debtorName} 분할상환 미납 ${un.length}회`, p: "high", debtorId: p.debtorId }); });
@@ -2631,6 +2672,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   const Dashboard = () => {
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
+    const [agingModalBucket, setAgingModalBucket] = useState(null);
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <SectionHeader>채권현황</SectionHeader>
@@ -2671,6 +2713,55 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
         </div>
+        {/* ── 연체 에이징 분석 ── */}
+        <SectionHeader>연체 에이징 분석</SectionHeader>
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
+            추심진행 중인 채권을 최근 입금일(입금 이력이 없으면 대여일) 기준 경과일수로 나눠본 결과입니다 — 오래될수록 우선 추심이 필요합니다. 칸을 클릭하면 목록을 볼 수 있습니다.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${agingStats.buckets.length}, 1fr)`, gap: 12 }}>
+            {agingStats.buckets.map(b => (
+              <div key={b.key} onClick={() => b.count > 0 && setAgingModalBucket(b.key)}
+                style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", cursor: b.count > 0 ? "pointer" : "default", border: `1px solid ${b.color}30` }}
+                onMouseEnter={e => { if (b.count > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>{b.label}</div>
+                <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: b.color, marginBottom: 4 }}>{b.count}건</div>
+                <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(b.amount)}</div>
+              </div>
+            ))}
+          </div>
+          {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "var(--tm)" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
+        </div>
+        {agingModalBucket && (() => {
+          const bucket = agingStats.buckets.find(b => b.key === agingModalBucket);
+          if (!bucket) return null;
+          return (
+            <Overlay onClose={() => setAgingModalBucket(null)} wide>
+              <ModalHeader title={`${bucket.label} 연체 채권 (${bucket.count}건, ${fmt(bucket.amount)})`} onClose={() => setAgingModalBucket(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "경과일", "최근입금일", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {bucket.items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setAgingModalBucket(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.agingDays}일</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{d.lastPaymentDate ? fmtDate(d.lastPaymentDate) : "-"}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
         {/* ── 월별 회수실적 차트 ── */}
         <SectionHeader>회수현황</SectionHeader>
         {(() => {
