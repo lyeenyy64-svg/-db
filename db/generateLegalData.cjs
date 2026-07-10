@@ -234,14 +234,16 @@ const allElec   = [...barogoAll, ...badaAll, ...dwAll];
 // 지급명령 + 압류 → 법적절차 탭
 const legalCases = allElec.filter(c => ['지급명령', '압류'].includes(c.type));
 
-// 제3채무자 파싱 (사건번호 기준으로 전체 통합)
+// 제3채무자 파싱 (브랜드별 파일로 분리 보관 — 법원 사건번호는 브랜드 간 중복될 수 있어
+// 사건번호만으로 두 브랜드 맵을 합치면 다른 브랜드의 제3채무자 데이터가 잘못 붙을 수 있다)
 const barogoThirds = parseThirdParties('바로고딜버 제3채무자.xlsx', 3);   // 바로고 brand B
 const moaThirds    = parseThirdParties('모아라인 제3채무자.xlsx',   4);   // 모아라인 brand M
-const allThirds    = { ...barogoThirds, ...moaThirds };
+const thirdsByBrand = { B: barogoThirds, M: moaThirds };
 
-// 압류 케이스에 thirdParties 배열 주입
+// 압류 케이스에 thirdParties 배열 주입 (같은 브랜드의 제3채무자 맵에서만 조회)
 legalCases.forEach(c => {
-  c.thirdParties = (c.type === '압류' && allThirds[c.caseNumber]) || [];
+  const thirds = thirdsByBrand[c.brand];
+  c.thirdParties = (c.type === '압류' && thirds && thirds[c.caseNumber]) || [];
 });
 
 // 민사소송 → 민사소송 메뉴
@@ -252,9 +254,11 @@ const adCases      = parseAssetDisclosure();
 const adCaseNumSet = new Set(adCases.map(c => c.caseNumber));
 
 // 전자소송에서 재산명시 항목 추출하여 브랜드 정보 확보
+// 사건번호만으로는 다른 법원의 다른 브랜드 사건과 우연히 같은 문자열이 나올 수 있으므로
+// court+caseNumber 조합으로 키를 잡아 오귀속을 방지한다.
 const kaMyungFromElec = allElec.filter(c => c.type === '재산명시');
 const brandByCaseNum  = {};
-kaMyungFromElec.forEach(c => { brandByCaseNum[c.caseNumber] = c.brand; });
+kaMyungFromElec.forEach(c => { brandByCaseNum[`${c.court}|${c.caseNumber}`] = c.brand; });
 
 // 재산명시 일괄에 없는 항목 보충
 const extraAD = kaMyungFromElec
@@ -285,7 +289,7 @@ const extraAD = kaMyungFromElec
 
 // 재산명시 일괄 항목에 브랜드 주입
 const assetDisclosures = [
-  ...adCases.map(c => ({ ...c, brand: brandByCaseNum[c.caseNumber] || null })),
+  ...adCases.map(c => ({ ...c, brand: brandByCaseNum[`${c.court}|${c.caseNumber}`] || null })),
   ...extraAD,
 ];
 

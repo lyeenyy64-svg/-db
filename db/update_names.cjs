@@ -64,11 +64,18 @@ for (let i = 2; i < newRows.length; i++) {
 console.log(`     로드된 레코드: ${newMap.size}개`);
 
 // ── DB에서 현재 채무자 목록 로드 ─────────────────────────────────────
+// hub_code는 브랜드 간(때로는 같은 브랜드 내에서도) 중복될 수 있는 값이라 고유 키로 쓸 수 없다.
+// (setup.cjs도 동일한 이유로 byHubCode를 code → [id...] 배열로 관리한다.)
+// 여기서는 code로 후보를 모은 뒤, 후보가 여럿이면 브랜드로 좁히고, 그래도 모호하면
+// 잘못된 채무자 이름을 덮어쓰지 않도록 업데이트를 건너뛴다.
 console.log("[3/4] DB에서 채무자 로드");
-const dbDebtors = db.prepare("SELECT id, hub_code, name FROM debtors").all();
-const dbByHubCode = new Map(); // hub_code → { id, name }
+const dbDebtors = db.prepare("SELECT id, hub_code, brand_code, name FROM debtors").all();
+const dbByHubCode = new Map(); // hub_code → [{ id, brand_code, name }, ...]
 for (const d of dbDebtors) {
-  if (d.hub_code) dbByHubCode.set(String(d.hub_code).trim(), d);
+  if (!d.hub_code) continue;
+  const key = String(d.hub_code).trim();
+  if (!dbByHubCode.has(key)) dbByHubCode.set(key, []);
+  dbByHubCode.get(key).push(d);
 }
 console.log(`     DB 레코드: ${dbDebtors.length}개`);
 
@@ -87,15 +94,28 @@ const insertStmt = db.prepare(`
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
 `);
 
-let updated = 0, inserted = 0, skipped = 0, unchanged = 0;
+let updated = 0, inserted = 0, skipped = 0, unchanged = 0, ambiguous = 0;
 
 const tx = db.transaction(() => {
   for (const [code, { name: newName, row }] of newMap.entries()) {
-    const dbRecord = dbByHubCode.get(code);
+    const brand = cleanStr(row[COL.brand]) || "B";
+    const candidates = dbByHubCode.get(code) || [];
+    let dbRecord = null;
+    if (candidates.length === 1) {
+      dbRecord = candidates[0];
+    } else if (candidates.length > 1) {
+      const byBrand = candidates.filter(d => d.brand_code === brand);
+      if (byBrand.length === 1) {
+        dbRecord = byBrand[0];
+      } else {
+        console.warn(`  [모호함] 코드=${code}에 해당하는 채무자가 ${candidates.length}명 있어 이름을 업데이트하지 않고 건너뜀`);
+        ambiguous++;
+        continue;
+      }
+    }
 
     if (!dbRecord) {
       // 신규 레코드 INSERT
-      const brand = cleanStr(row[COL.brand]) || "B";
       const category = cleanStr(row[COL.category]) || "장기채권";
       const assignee = cleanStr(row[COL.assignee]) || "";
       const phone = cleanStr(row[COL.phone]) || "";
@@ -137,6 +157,7 @@ console.log(`
   - 신규 삽입:     ${inserted}개
   - 변경 없음:     ${unchanged}개
   - 처리 실패:     ${skipped}개
+  - 모호(건너뜀): ${ambiguous}개
 `);
 
 db.close();

@@ -71,14 +71,29 @@ function brandToCompany(code) {
 }
 
 // ─── 5. 임포트 ─────────────────────────────────────────────
-let imported = 0, skipped = 0;
+// id가 같으면 원본 엑셀이 수정돼도 재실행 시 반영되도록 INSERT OR IGNORE 대신
+// ON CONFLICT DO UPDATE를 사용한다 (기존에는 IGNORE로 조용히 no-op되면서도
+// imported 카운터와 "✓" 로그가 매번 찍혀 실제로는 아무것도 갱신되지 않은 것처럼 보였다).
+let imported = 0, updated = 0, skipped = 0;
 
+const existsStmt = db.prepare("SELECT 1 FROM complaints WHERE id = ?");
 const insert = db.prepare(`
-  INSERT OR IGNORE INTO complaints
+  INSERT INTO complaints
     (id, debtor_id, complainant, goods_amount, loan_amount, charge,
      complaint_date, police_station, status_note, investigator, investigator_contact)
   VALUES
     (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET
+    debtor_id = excluded.debtor_id,
+    complainant = excluded.complainant,
+    goods_amount = excluded.goods_amount,
+    loan_amount = excluded.loan_amount,
+    charge = excluded.charge,
+    complaint_date = excluded.complaint_date,
+    police_station = excluded.police_station,
+    status_note = excluded.status_note,
+    investigator = excluded.investigator,
+    investigator_contact = excluded.investigator_contact
 `);
 
 const importTx = db.transaction(() => {
@@ -111,16 +126,17 @@ const importTx = db.transaction(() => {
     const status     = detectStatus(progressTexts);
 
     const id = `CRM${String(no).padStart(4, "0")}`;
+    const isNew = !existsStmt.get(id);
 
     insert.run(id, debtorId, brandToCompany(brand), goodsAmt, loanAmt, charge, cDate, police, statusNote, inv, invCont);
-    imported++;
-    console.log(`  ✓ #${no} [${brand}] ${name} → ${status}`);
+    if (isNew) imported++; else updated++;
+    console.log(`  ${isNew ? "✓" : "↻"} #${no} [${brand}] ${name} → ${status}`);
   }
 });
 
 importTx();
 
-console.log(`\n완료: 임포트 ${imported}건 / 스킵 ${skipped}건`);
+console.log(`\n완료: 신규 임포트 ${imported}건 / 갱신 ${updated}건 / 스킵 ${skipped}건`);
 
 // ─── 6. 결과 확인 ──────────────────────────────────────────
 const total = db.prepare("SELECT COUNT(*) as cnt FROM complaints").get();

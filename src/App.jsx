@@ -134,7 +134,7 @@ function generateData(cfg) {
       installmentPlans.push({ id: `INS${String(installmentPlans.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, brandName: brand.name, hubCode: subCode, paymentTiming: pick(cfg.installmentTimings), monthlyAmount: mAmt, totalDebt: principal, totalClaim: finalLegal, assignee: debtor.assignee, startDate: new Date(2024, rand(0, 11), 1).toISOString().split("T")[0], status: pick(["진행중","진행중","진행중","완료","중단"]), logs: Array.from({ length: rand(3, 12) }, (_, li) => ({ targetMonth: `${2024 + Math.floor((li + rand(0, 5)) / 12)}년 ${((li + rand(1, 3)) % 12) + 1}월`, paidAmount: Math.random() > 0.2 ? mAmt : 0, memo: pick(["입금확인","","미납","지연입금","일부입금",""]), status: Math.random() > 0.2 ? "완납" : Math.random() > 0.5 ? "미납" : "지연" })) });
     }
     if (Math.random() > 0.9) {
-      complaints.push({ id: `CRM${String(complaints.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, assignee: debtor.assignee, complainant: "㈜바로고", hubName: debtor.hubName, goodsAmount: rand(100, 3000) * 10000, loanAmount: principal, charge: pick(cfg.chargeTypes), complaintDate: new Date(2024, rand(0, 11), rand(1, 28)).toISOString().split("T")[0], policeStation: pick(cfg.policeStations), statusNote: pick(["수사중","기소","불기소","재정신청","1심 진행중"]) });
+      complaints.push({ id: `CRM${String(complaints.length + 1).padStart(4, "0")}`, debtorId: debtor.id, debtorName: debtor.name, brand: debtor.brand, assignee: debtor.assignee, complainant: "㈜바로고", hubName: debtor.hubName, goodsAmount: rand(100, 3000) * 10000, loanAmount: principal, charge: pick(cfg.chargeTypes), complaintDate: new Date(2024, rand(0, 11), rand(1, 28)).toISOString().split("T")[0], policeStation: pick(cfg.policeStations), status: pick(["수사중","기소","불기소","재정신청","1심 진행중"]) });
     }
   }
   activities.sort((a, b) => b.activityDate.localeCompare(a.activityDate));
@@ -159,11 +159,15 @@ function normNameForMatch(s) {
 // ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
 // 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
 function kvPut(key, value) {
+  // 실패해도 로컬 화면은 정상으로 보이지만 다른 사용자/기기와는 조용히 어긋난다.
+  // 원인 추적이 가능하도록 최소한 콘솔에는 남긴다.
   fetch(`/api/kv/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
-  }).catch(() => {});
+  })
+    .then(r => { if (!r.ok) console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); })
+    .catch(e => console.warn(`[kvPut] 서버 동기화 실패 (key=${key}):`, e.message));
 }
 
 // ─── 수동 추가 데이터 (localStorage + DB 공유 저장) ────────
@@ -544,15 +548,26 @@ function buildDebtorIndex(debtors) {
   ambBrand.forEach(k => delete byBrand[k]);
   ambName.forEach(k => delete byName[k]);
 
-  // 2차: 숫자 접미사 제거 (김용진95→김용진) — 충돌 없는 경우만
+  // 2차: 숫자 접미사 제거 (김용진95→김용진) — 충돌 감지 포함
+  // (기존에는 byName[noNum]이 이미 채워져 있으면 그냥 스킵만 해서, 서로 다른 두 채무자가
+  //  같은 noNum으로 축약될 때 먼저 등록된 쪽이 잘못 고착되고 충돌로 표시되지 않았다.)
+  const ambNoNum = new Set(), ambBrandNoNum = new Set();
   debtors.forEach(d => {
     const norm = normNameForMatch(d.name);
     const noNum = norm.replace(/\d+$/, "");
     if (!noNum || noNum === norm) return;
-    if (!byName[noNum] && !ambName.has(noNum)) byName[noNum] = d.id;
+    if (!ambName.has(noNum)) {
+      if (byName[noNum] && byName[noNum] !== d.id) ambNoNum.add(noNum);
+      else if (!byName[noNum]) byName[noNum] = d.id;
+    }
     const bk2 = `${d.brand}:${noNum}`;
-    if (!byBrand[bk2] && !ambBrand.has(bk2)) byBrand[bk2] = d.id;
+    if (!ambBrand.has(bk2)) {
+      if (byBrand[bk2] && byBrand[bk2] !== d.id) ambBrandNoNum.add(bk2);
+      else if (!byBrand[bk2]) byBrand[bk2] = d.id;
+    }
   });
+  ambNoNum.forEach(k => delete byName[k]);
+  ambBrandNoNum.forEach(k => delete byBrand[k]);
 
   return { byBrand, byName, byAlias };
 }
@@ -646,7 +661,7 @@ function loadExcelData(cfg) {
     installmentPlans:     getMR(MK.installmentPlans),
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
-    rehabilitations:  [...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)],
+    rehabilitations:  applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]),
     legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
     minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
     assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
@@ -1122,7 +1137,7 @@ const PendingScreen = ({ user, onLogout }) => (
 );
 
 // ─── SlackIngestView (모듈 레벨 — App 내부 정의 시 매 렌더마다 리마운트되어 state 초기화되는 문제 방지)
-function SlackIngestView({ showToast, reloadFromBackend, currentUser }) {
+function SlackIngestView({ showToast, reloadFromBackend, currentUser, isAdmin }) {
   const [text, setText] = useState("");
   const [msgDate, setMsgDate] = useState(today());
   const [preview, setPreview] = useState(null);
@@ -1813,7 +1828,7 @@ export default function App() {
     const rows = [];
     seizures.forEach(s => rows.push(["압류", s.brand, s.debtorName, s.court, s.caseNumber, s.status, s.targets.length + "건", s.targets.reduce((a, t) => a + t.collected, 0)]));
     rehabs.forEach(r => rows.push(["회생파산", r.brand, r.debtorName, r.court, r.caseNumber, r.type, r.currentRound, r.monthlyPayment]));
-    complaints.forEach(c => rows.push(["형사", c.brand, c.debtorName, c.policeStation, c.charge, c.statusNote, "", c.loanAmount]));
+    complaints.forEach(c => rows.push(["형사", c.brand, c.debtorName, c.policeStation, c.charge, c.status, "", c.loanAmount]));
     downloadCSV(`법적절차_${today()}.csv`, ["구분","브랜드","채무자","법원/경찰서","사건번호/죄명","상태","비고","금액"], rows);
   };
 
@@ -1921,14 +1936,22 @@ export default function App() {
         fetch("/api/payments").then(r => r.json()),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
-      const debtors = debtorsRes.map(d => ({
-        ...d,
-        brandColor: brandColorMap[d.brand] || "#64748b",
-        execTitle: !!d.execTitle,
-        guarantors: [], phoneHistory: [], monthlyCollected: {},
-      }));
-      // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override 적용
-      const rehabilitations = applyRehabOverrides(matchRehabsToDebtors(EXCEL_REHABS, debtors));
+      const excelByKey = {};
+      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
+      const debtors = debtorsRes.map(d => {
+        const ex = excelByKey[`${d.brand}||${d.name}`];
+        return {
+          ...d,
+          brandColor: brandColorMap[d.brand] || "#64748b",
+          execTitle: !!d.execTitle,
+          guarantors: ex?.guarantors || [],
+          history: ex?.history || [],
+          phoneHistory: [], monthlyCollected: {},
+        };
+      });
+      // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override/수동 추가 건 적용
+      // (loadData와 동일하게 처리해야 입금 등록/삭제 후에도 연대보증인·히스토리·수동 회생파산건이 유지된다)
+      const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, debtors), ...getMR(MK.rehabilitations)]);
       setData(prev => ({ ...prev, debtors, payments: paymentsRes, rehabilitations }));
       setLastSaved(new Date());
       if (sel) {
@@ -2218,9 +2241,10 @@ export default function App() {
     if (catFilter !== "전체") l = l.filter(d => d.category === catFilter);
     if (statusFilter !== "전체") l = l.filter(d => d.collectionStatus === statusFilter);
     if (assigneeFilter !== "전체") l = l.filter(d => d.assignee === assigneeFilter);
-    if (sort.f) l.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
 
     // 같은 이름+브랜드 or 유사 코드(1234 / 1234-1)인 채무자를 그룹핑
+    // (정렬은 그룹 합산 이후에 해야 한다 — 화면에 보이는 값은 그룹 합계인데 그룹핑 전
+    //  개별 채무자 값으로 먼저 정렬하면 합계 기준 정렬 순서와 어긋난다)
     const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
     const grouped = [];
     const seen = new Set();
@@ -2250,6 +2274,7 @@ export default function App() {
         grouped.push(d);
       }
     }
+    if (sort.f) grouped.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
     return grouped;
   }, [data, q, brandFilter, catFilter, statusFilter, assigneeFilter, sort]);
 
@@ -2294,7 +2319,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Debtor Add/Edit Modal ──────────────────────────────
   const DebtorFormModal = () => {
-    const isEdit = modal.data;
+    // "+항목"(같은 채무자의 신규 서브로우 추가)은 id 없이 brand/name 등 기본값만 담은
+    // modal.data를 넘긴다 — modal.data의 truthy 여부만으로는 이 경우와 실제 수정을
+    // 구분할 수 없어 신규 등록인데도 updateDebtor(undefined, ...)가 호출되는 버그가 있었다.
+    const isEdit = !!modal.data?.id;
     const [f, setF] = useState(isEdit ? { ...modal.data } : {
       brand: config.brands[0]?.code || "B", category: config.categories[0], assignee: config.assignees[0],
       name: "", phone: "", hubCode: "", hubName: "", debtCause: config.debtCauses[0] || "",
@@ -2302,6 +2330,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       loanDate: today(), principalBalance: 0, adjustment: 0, collectedAmount: 0,
       salesRep: "", residentNumber: "",
       keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
+      ...modal.data, // "+항목"으로 넘어온 brand/name/category/assignee/hubName 기본값 적용
     });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const [phoneItems, setPhoneItems] = useState(() => {
@@ -3051,7 +3080,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── 형사고소 추가 모달 ────────────────────────────────────
   const ComplaintAddModal = () => {
-    const [f, setF] = useState({ brand: config.brands[0]?.code || "B", debtorId: "", debtorName: "", complainant: "", charge: "사기", goodsAmount: "", loanAmount: "", complaintDate: today(), policeStation: "", statusNote: "수사중" });
+    const [f, setF] = useState({ brand: config.brands[0]?.code || "B", debtorId: "", debtorName: "", complainant: "", charge: "사기", goodsAmount: "", loanAmount: "", complaintDate: today(), policeStation: "", status: "수사중" });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const debtor = data.debtors.find(d => d.id === f.debtorId);
     const handleSave = () => {
@@ -3061,7 +3090,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         debtorName: debtor?.name || f.debtorName,
         complainant: f.complainant, charge: f.charge,
         goodsAmount: Number(f.goodsAmount) || 0, loanAmount: Number(f.loanAmount) || 0,
-        complaintDate: f.complaintDate, policeStation: f.policeStation, statusNote: f.statusNote,
+        complaintDate: f.complaintDate, policeStation: f.policeStation, status: f.status,
       };
       addMR(MK.complaints, rec);
       setData(prev => ({ ...prev, complaints: [rec, ...prev.complaints] }));
@@ -3088,7 +3117,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="고소인"><KoreanInput value={f.complainant} onChange={e => set("complainant", e.target.value)} style={inp} placeholder="예: 주식회사 바로고" /></Field>
           <Field label="경찰서"><KoreanInput value={f.policeStation} onChange={e => set("policeStation", e.target.value)} style={inp} placeholder="예: 광진경찰서" /></Field>
           <Field label="고소일"><input type="date" value={f.complaintDate} onChange={e => set("complaintDate", e.target.value)} style={inp} /></Field>
-          <Field label="진행상황"><KoreanInput value={f.statusNote} onChange={e => set("statusNote", e.target.value)} style={inp} placeholder="수사중, 기소, 불기소 등" /></Field>
+          <Field label="진행상황"><KoreanInput value={f.status} onChange={e => set("status", e.target.value)} style={inp} placeholder="수사중, 기소, 불기소 등" /></Field>
           <Field label="물품대(원)"><MoneyInput value={f.goodsAmount} onChange={v => set("goodsAmount", v)} style={inp} /></Field>
           <Field label="대여금(원)"><MoneyInput value={f.loanAmount} onChange={v => set("loanAmount", v)} style={inp} /></Field>
         </div>
@@ -5741,7 +5770,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             sub={`재산조회 명령 ${ad.filter(c=>c.hasInquiryOrder).length}건`}
             color="#f59e0b" />
           <KPI label="형사고소" value={`${cmp.length}건`}
-            sub={`수사중 ${cmp.filter(c=>c.statusNote==="수사중").length}건`}
+            sub={`수사중 ${cmp.filter(c=>c.status==="수사중").length}건`}
             color="#ef4444" />
         </div>
 
@@ -6159,7 +6188,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       showToast("삭제 완료");
     };
 
+    // collectedAmount는 채무자 단위 누적값이라, 같은 채무자에 매칭된 추심의뢰가 2건 이상이면
+    // 채무자별로 한 번만 합산해야 한다 (그러지 않으면 중복 매칭될수록 회수금액이 배로 커진다).
+    const seenRecDebtorIds = new Set();
     const autoTotalRec = orders.reduce((s, o) => {
+      if (!o.debtorId || seenRecDebtorIds.has(o.debtorId)) return s;
+      seenRecDebtorIds.add(o.debtorId);
       const d = getDebtor(o.debtorId);
       return s + (d?.collectedAmount || 0);
     }, 0);
@@ -6613,6 +6647,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setLoadingList(false);
     };
     useEffect(() => { loadPending(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+    // items가 바뀔 때마다 pendingCount를 여기서 파생시킨다 — 여러 항목을 동시에 처리할 때
+    // 각 핸들러가 오래된 items 클로저를 기준으로 직접 길이를 계산해 덮어쓰면 방금 처리된
+    // 항목이 되살아나거나 카운트가 어긋날 수 있다.
+    useEffect(() => { setPendingCount(items.length); }, [items.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const getFiltered = (srch) => {
       if (!srch) return [];
@@ -6639,9 +6677,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           showToast(`✓ 연결 완료: ${result.debtorName} — 잔액 ${fmt(result.balanceAfter)}${autoMsg}`);
           // 같은 payer_name인 항목도 목록에서 제거
           const removedNames = new Set([item.payer_name]);
-          const updated = items.filter(x => !removedNames.has(x.payer_name));
-          setItems(updated);
-          setPendingCount(updated.length);
+          setItems(prev => prev.filter(x => !removedNames.has(x.payer_name)));
           // 학습 매핑 갱신
           setLearnedMap(prev => ({ ...prev, [item.payer_name]: { payer_name: item.payer_name, debtor_id: dId, debtor_name: d?.name, resolved_count: (prev[item.payer_name]?.resolved_count || 0) + 1 } }));
           await reloadFromBackend();
@@ -6656,9 +6692,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!confirm(`"${item.payer_name}" ${fmt(item.total_amount)} 항목을 삭제할까요?`)) return;
       try {
         await fetch(`/api/pending-payments/${item.id}`, { method: "DELETE" });
-        const updated = items.filter(x => x.id !== item.id);
-        setItems(updated);
-        setPendingCount(updated.length);
+        setItems(prev => prev.filter(x => x.id !== item.id));
         setCheckedIds(prev => { const n = new Set(prev); n.delete(item.id); return n; });
         showToast("삭제됨");
       } catch (e) { showToast(e.message); }
@@ -6669,9 +6703,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!confirm(`선택한 ${checkedIds.size}건을 삭제할까요?`)) return;
       try {
         await Promise.all([...checkedIds].map(id => fetch(`/api/pending-payments/${id}`, { method: "DELETE" })));
-        const updated = items.filter(x => !checkedIds.has(x.id));
-        setItems(updated);
-        setPendingCount(updated.length);
+        setItems(prev => prev.filter(x => !checkedIds.has(x.id)));
         setCheckedIds(new Set());
         showToast(`${checkedIds.size}건 삭제됨`);
       } catch (e) { showToast(e.message); }
@@ -8105,7 +8137,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>}
 
         {/* Slack 수집 */}
-        {mainTab === "slack" && <SlackIngestView showToast={showToast} reloadFromBackend={reloadFromBackend} currentUser={currentUser} />}
+        {mainTab === "slack" && <SlackIngestView showToast={showToast} reloadFromBackend={reloadFromBackend} currentUser={currentUser} isAdmin={isAdmin} />}
 
         {/* 수정 로그 (DB 영구 보존) */}
         {mainTab === "logs" && (() => {

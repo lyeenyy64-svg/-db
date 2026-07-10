@@ -513,9 +513,13 @@ function ingestPayment(b) {
   const welcome = parseInt(b.welcomeDirect, 10) || 0;
   let c = company, ch = cash, w = welcome;
   if (c + ch + w !== total) {
-    // Slack/엑셀 입금은 기본적으로 본사계좌로 가정
-    c = total - ch - w;
-    if (c < 0) { c = total; ch = 0; w = 0; }
+    if (ch === 0 && w === 0) {
+      // 채널 세부 입력이 없는 경우(Slack/엑셀 입금)만 기본적으로 본사계좌로 가정
+      c = total;
+    } else {
+      // 채널별 금액이 명시적으로 입력됐는데 총액과 일치하지 않으면 조용히 재배분하지 않고 에러 반환
+      return { ok: false, error: `채널별 금액 합계(${(c + ch + w).toLocaleString()}원)가 총 입금액(${total.toLocaleString()}원)과 일치하지 않습니다` };
+    }
   }
 
   let resolvedId = b.debtorId;
@@ -727,6 +731,9 @@ app.delete("/api/payments/:id", (req, res) => {
     return { debtorId: pay.debtor_id, balanceAfter: debtor?.final_balance_legal ?? null };
   })();
 
+  // 입금이 삭제되어 분할상환 완납의 근거가 사라졌을 수 있으므로 해당 채무자 일정을 재열어 재평가
+  try { runInstallmentAutoSync({ forceDebtorIds: [pay.debtor_id] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
+
   res.json({ ok: true, ...result });
 });
 
@@ -770,6 +777,8 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
       );
       return { ok: true, oldDebtorName: oldDebtor?.name || pay.debtor_id, newDebtorName: newDebtor.name };
     })();
+    // 재매칭으로 이전/신규 채무자 양쪽의 분할상환 완납 근거가 바뀔 수 있으므로 재평가
+    try { runInstallmentAutoSync({ forceDebtorIds: [pay.debtor_id, newDebtorId] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
     res.json(result);
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
@@ -1016,44 +1025,21 @@ app.post("/api/installments/import-excel", (req, res) => {
   }
 });
 
-// ─── 분할상환 자동 상태 동기화 (최대 1분에 1회) ─────────────────────────────
+// ─── 분할상환 자동 상태 동기화 (GET 조회 시 최대 1분에 1회, runInstallmentAutoSync 위임) ──
+// 과거에는 회차별로 ±7일 창에서 독립적으로 입금 합계를 조회해 완납 여부를 판단했으나,
+// 이 경우 회차 간격이 7일보다 좁으면 하나의 입금이 두 회차 모두를 완납 처리하는 이중 크레딧
+// 버그가 있었다. 아래 runInstallmentAutoSync()의 워터폴 배분 방식으로 완전히 대체한다.
 let _lastAutoSync = 0;
 function runAutoSync() {
   const now = Date.now();
   if (now - _lastAutoSync < 60000) return 0;
   _lastAutoSync = now;
-  const today = new Date().toISOString().slice(0, 10);
-  const todayMonth = today.slice(0, 7);
-  const plans = db.prepare("SELECT id, debtor_id FROM installment_plans").all();
-  let updated = 0;
-  db.transaction(() => {
-    for (const plan of plans) {
-      const scheds = db.prepare(`
-        SELECT id, due_date, due_month, scheduled_amount, status, paid_amount
-        FROM installment_schedules WHERE plan_id=? AND status NOT IN ('이월')
-        AND ((due_date IS NOT NULL AND due_date < ?) OR (due_date IS NULL AND due_month <= ?))
-      `).all(plan.id, today, todayMonth);
-      for (const s of scheds) {
-        const anchor = s.due_date || (s.due_month + "-28");
-        const paid = db.prepare(`SELECT COALESCE(SUM(total_amount),0) AS total FROM payments WHERE debtor_id=? AND payment_date BETWEEN DATE(?,'-7 days') AND DATE(?,'+7 days')`).get(plan.debtor_id, anchor, anchor);
-        const paidAmt = paid.total || 0;
-        let newStatus = null;
-        if (s.scheduled_amount > 0) {
-          if (paidAmt >= s.scheduled_amount) newStatus = "완납";
-          else if (paidAmt > 0) newStatus = "일부납";
-          else if (s.due_date && s.due_date < today && s.status === "예정") newStatus = "미납";
-        } else {
-          if (paidAmt > 0 && s.status !== "완납") newStatus = "완납";
-          else if (s.due_date && s.due_date < today && s.status === "예정") newStatus = "미납";
-        }
-        if (newStatus && newStatus !== s.status) {
-          db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?").run(newStatus, paidAmt > 0 ? paidAmt : s.paid_amount, s.id);
-          updated++;
-        }
-      }
-    }
-  })();
-  return updated;
+  try {
+    return runInstallmentAutoSync();
+  } catch (e) {
+    console.error("[auto-sync] 오류:", e.message);
+    return 0;
+  }
 }
 
 // GET /api/installments - 전체 플랜 + 일정 + 히스토리 목록
@@ -1232,7 +1218,10 @@ app.post("/api/installments/schedules/sync-memo-amounts", (req, res) => {
 // ── 분할상환 자동 동기화 함수 (워터폴 배분 방식) ──
 // 같은 채무자의 여러 일정에 동일 입금액이 중복 매칭되는 것을 방지.
 // 플랜 시작일부터 총 입금합 계산 후 오래된 일정부터 순서대로 배분.
-function runInstallmentAutoSync() {
+// opts.forceDebtorIds: 이 채무자들의 일정은 이미 '완납'이어도 재계산한다
+// (입금 삭제/재매칭으로 완납의 근거가 사라졌을 때 상태를 다시 열기 위함).
+function runInstallmentAutoSync(opts = {}) {
+  const forceDebtorIds = new Set(opts.forceDebtorIds || []);
   const today = new Date().toISOString().slice(0, 10);
   const todayMonth = today.slice(0, 7);
 
@@ -1292,7 +1281,7 @@ function runInstallmentAutoSync() {
 
         const needed = s.scheduled_amount || 0;
 
-        if (s.status === "완납") {
+        if (s.status === "완납" && !forceDebtorIds.has(plan.debtor_id)) {
           // 이미 완납 → 예약된 금액만 풀에서 차감, 재처리 안 함
           pool = Math.max(0, pool - needed);
           continue;
@@ -1478,6 +1467,7 @@ app.delete("/api/debtors/:id", (req, res) => {
     db.prepare("DELETE FROM activities WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM rehabilitations WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM installment_plans WHERE debtor_id = ?").run(id);
+    db.prepare("DELETE FROM complaint_history WHERE complaint_id IN (SELECT id FROM complaints WHERE debtor_id = ?)").run(id);
     db.prepare("DELETE FROM complaints WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM debtors WHERE id = ?").run(id);
     res.json({ ok: true });

@@ -98,12 +98,14 @@ function matchDebtor(index, criteria) {
   function resolve(candidates, label) {
     if (!candidates || candidates.length === 0) return null;
     let pool = candidates;
-    if (pool.length > 1 && brand) {
-      const byBrand = pool.filter(id => {
+    if (brand) {
+      // 브랜드가 주어졌으면 후보 개수와 무관하게 항상 적용한다.
+      // 일치하는 후보가 하나도 없으면 다른 브랜드 채무자로 오매칭되지 않도록 매칭 실패로 처리(fail closed).
+      pool = pool.filter(id => {
         const d = debtors.find(x => x.id === id);
         return d && d.brand_code === brand;
       });
-      if (byBrand.length > 0) pool = byBrand;
+      if (pool.length === 0) return null;
     }
     const picked = pickByOriginalCode(pool, debtors);
     return picked ? { debtorId: picked, matchedBy: label } : null;

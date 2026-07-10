@@ -15,6 +15,10 @@ const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 //            17=원금(재무) 18=조정액 19=회수액 20=최종잔액(재무) 21=최종잔액(법무)
 //            22-33=1~12월(무시) 34+=날짜별 히스토리
 
+// 금액 셀이 "1,500,000"처럼 콤마 포함 텍스트로 저장된 경우 parseFloat만 쓰면 1만 파싱되어
+// 잔액이 사실상 0으로 붕괴한다. 콤마를 제거한 뒤 파싱한다 (다른 generate*.cjs 스크립트와 동일).
+const toNum = (v) => (typeof v === 'number' ? v : (parseFloat(String(v || '').replace(/,/g, '')) || 0));
+
 const normCat = (cat) => {
   if (cat === '회생/파산') return '회생파산';
   if (cat === '협의/소송') return '협의소송';
@@ -93,9 +97,9 @@ for (let i = 2; i < rows.length; i++) {
 
   const code     = String(r[7] || '').trim();
   const hubName  = String(r[8] || '').trim();
-  const principal  = parseFloat(r[17]) || 0;
-  const adjustment = parseFloat(r[18]) || 0;
-  const collected  = parseFloat(r[19]) || 0;
+  const principal  = toNum(r[17]);
+  const adjustment = toNum(r[18]);
+  const collected  = toNum(r[19]);
   const loanDate   = excelDateToStr(r[15]);
   const rowHistory = parseHistory(r);
 
@@ -125,17 +129,20 @@ for (let i = 2; i < rows.length; i++) {
       creditReportUrl: '',
       subRows: [],
       loanDate,
-      historyDates: new Set(rowHistory.map(h => h.date)),
+      // 날짜만으로 중복 제거하면 같은 날짜에 다른 허브 서브로우의 서로 다른 히스토리가
+      // 하나로 뭉개진다. 날짜+내용 조합으로 키를 잡아야 서로 다른 기록이 보존된다.
+      historyDates: new Set(rowHistory.map(h => `${h.date} ${h.content}`)),
       history: [...rowHistory],
     });
   } else {
     const g = groupMap.get(key);
     if (!g.loanDate && loanDate) g.loanDate = loanDate;
-    // 히스토리 머지 (날짜 중복 제거)
+    // 히스토리 머지 (날짜+내용 조합 기준 중복 제거)
     for (const h of rowHistory) {
-      if (!g.historyDates.has(h.date)) {
+      const hKey = `${h.date} ${h.content}`;
+      if (!g.historyDates.has(hKey)) {
         g.history.push(h);
-        g.historyDates.add(h.date);
+        g.historyDates.add(hKey);
       }
     }
   }

@@ -104,11 +104,24 @@ async function checkConnection() {
 async function pollChannel(db, ingestPayment, cfg) {
   const chStatus = status.channels[cfg.label];
   const oldest = getLastTs(db, cfg.kvKey);
-  const args = { channel: cfg.id, limit: 100 };
-  if (oldest) args.oldest = oldest;
 
-  const result = await client.conversations.history(args);
-  const messages = (result.messages || []).slice().reverse();
+  // oldest 이후 쌓인 메시지가 100건을 넘으면(예: 봇이 오래 꺼져있던 경우) 한 페이지만 읽으면
+  // 최신 100건만 가져오고 그보다 오래된 미수집 메시지는 커서를 넘겨버려 영구 누락된다.
+  // has_more/next_cursor를 따라가며 오래된 메시지까지 모두 수집한다.
+  const rawMessages = [];
+  let cursor;
+  let page = 0;
+  do {
+    const args = { channel: cfg.id, limit: 200 };
+    if (oldest) args.oldest = oldest;
+    if (cursor) args.cursor = cursor;
+    const result = await client.conversations.history(args);
+    rawMessages.push(...(result.messages || []));
+    cursor = result.has_more ? result.response_metadata?.next_cursor : null;
+    page++;
+  } while (cursor && page < 50); // 안전장치: 무한 루프 방지
+
+  const messages = rawMessages.slice().reverse();
 
   let processed = 0, success = 0, pending = 0;
   let newLastTs = oldest;

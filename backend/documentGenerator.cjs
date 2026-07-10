@@ -100,7 +100,8 @@ async function generateHwpx(docData) {
 
   // ── 3. 구간 추출 ──────────────────────────────────────────
   const header       = xml.substring(0, bankStart);
-  const tableSection = xml.substring(tableStart, item8Start);
+  // 은행 항목이 0건이면 "다 음" 예금압류 순서 표도 미리보기(buildPreviewHtml)와 동일하게 생략한다.
+  const tableSection = (bankItems || []).length > 0 ? xml.substring(tableStart, item8Start) : "";
   const footer       = xml.substring(platformEnd);
 
   // ── 4. 새 항목 XML 생성 ───────────────────────────────────

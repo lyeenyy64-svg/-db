@@ -58,6 +58,7 @@ function parse(text, messageDate) {
     if (OTHER_BANK_HEADER.test(line)) {
       if (activated) meta.deactivatedByHeader = line;
       activated = false;
+      currentDate = null; // 재활성화 시 이전 블록의 날짜를 이어받지 않도록 초기화
       continue;
     }
 
