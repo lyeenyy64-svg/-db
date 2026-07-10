@@ -2832,7 +2832,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <SectionHeader sectionId="aging">연체 에이징 분석</SectionHeader>
         {!collapsedSections.has("aging") && (<>
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: "#000", marginBottom: 14 }}>
             추심 진행중인 채권을 최근 입금일(입금 이력이 없으면 대여일) 기준 경과일수로 나눠본 결과입니다. 칸을 클릭하면 목록을 볼 수 있습니다.
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${agingStats.buckets.length}, 1fr)`, gap: 12 }}>
