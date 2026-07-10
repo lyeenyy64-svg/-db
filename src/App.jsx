@@ -2720,6 +2720,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} currentUserName={currentUser?.name} />
+        {/* 마지막 카드가 화면 하단에 바짝 붙어 잘려 보이지 않도록 여유 공간 확보 */}
+        <div style={{ height: 24 }} />
       </div>
     );
   };
