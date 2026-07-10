@@ -2777,7 +2777,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const collapsed = collapsedSections.has(sectionId);
     return (
       <div onClick={() => setCollapsedSections(prev => { const next = new Set(prev); next.has(sectionId) ? next.delete(sectionId) : next.add(sectionId); return next; })}
-        style={{ alignSelf: "flex-start", background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}>
+        style={{ alignSelf: "flex-start", background: "#4b5563", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}>
         <span>{children}</span>
         <span style={{ fontSize: 13, transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.15s" }}>▾</span>
       </div>
