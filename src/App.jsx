@@ -1409,7 +1409,7 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
   <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
       <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
-      <button onClick={onAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={12} />신규등록</button>
+      <button onClick={onAdd} style={{ padding: "5px 10px", borderRadius: 6, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid var(--acc)40", cursor: "pointer" }}>등록</button>
     </div>
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
@@ -1428,7 +1428,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
       onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
@@ -1485,7 +1485,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
       onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
@@ -1564,7 +1564,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
       onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
           const d = debtors.find(x => x.id === r.debtorId);
           return (
@@ -1599,7 +1599,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
       onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중" })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 항목이 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 항목이 없습니다 — [등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
@@ -3615,7 +3615,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
         <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} style={{ width: 110 }}><option value="전체">담당자: 전체</option>{config.assignees.map(a => <option key={a} value={a}>{a}</option>)}</select>
-        {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />신규 등록</button>}
+        {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid var(--acc)40", cursor: "pointer" }}>등록</button>}
         <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
         <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
       </div>
@@ -4068,7 +4068,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {dtabs.map(t => (<button key={t.k} onClick={() => setDetailTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 500, background: detailTab === t.k ? "var(--bg)" : "transparent", color: detailTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.k} {t.count > 0 && <span className="mono" style={{ fontSize: 10 }}>({t.count})</span>}</button>))}
           </div>
           {detailTab === "히스토리" && canEdit && (
-            <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />히스토리 추가</button>
+            <button onClick={openAdd} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", border: "1px solid var(--acc)40", cursor: "pointer" }}>히스토리 추가</button>
           )}
           {detailTab === "입금내역" && canEdit && (
             <button onClick={() => setModal({ type: "payment", debtorId: d.id })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "8px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}><I name="plus" size={14} />입금 등록</button>
