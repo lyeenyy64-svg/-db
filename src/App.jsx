@@ -3700,27 +3700,28 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         .map((h, i) => {
           if (deletedSet.has(i)) return null;
           const ed = histEdits[`e_${i}`];
-          return { key: `e_${i}`, date: ed?.date ?? h.date, content: ed?.content ?? h.content, isExcel: true, origIdx: i };
+          return { key: `e_${i}`, date: ed?.date ?? h.date, content: ed?.content ?? h.content, type: ed?.type ?? h.type, isExcel: true, origIdx: i };
         })
         .filter(Boolean),
-      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, isManual: true, manualId: h.id, createdBy: h.createdBy })),
+      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, type: h.type, isManual: true, manualId: h.id, createdBy: h.createdBy })),
     ].sort((a, b) => b.date.localeCompare(a.date));
 
     const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
-    const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "" });
-    const openEdit = (h) => setHistForm({ mode: "edit", key: h.key, date: h.date, content: h.content });
+    const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "", type: config.activityTypes[0] || "" });
+    const openEdit = (h) => setHistForm({ mode: "edit", key: h.key, date: h.date, content: h.content, type: h.type || config.activityTypes[0] || "" });
     const handleHistSave = () => {
       const date = histDateFromInput(histForm.date);
       const content = histForm.content.trim();
+      const type = histForm.type;
       if (!date || !content) return;
       if (histForm.mode === "add") {
-        updHistM([{ id: uid("HIST"), date, content, createdBy: currentUser?.name }, ...histManual]);
+        updHistM([{ id: uid("HIST"), date, content, type, createdBy: currentUser?.name }, ...histManual]);
       } else {
         if (histForm.key.startsWith("e_")) {
-          updHistE({ ...histEdits, [histForm.key]: { date, content } });
+          updHistE({ ...histEdits, [histForm.key]: { date, content, type } });
         } else {
           const mid = histForm.key.replace("m_", "");
-          updHistM(histManual.map(h => h.id === mid ? { ...h, date, content } : h));
+          updHistM(histManual.map(h => h.id === mid ? { ...h, date, content, type } : h));
         }
       }
       setHistForm(null);
@@ -4038,7 +4039,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap" }}>날짜</span>
                 <input type="date" value={histDateToInput(histForm.date)} onChange={e => setHistForm(f => ({ ...f, date: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
-                <span style={{ fontSize: 11, color: "var(--tm)", marginLeft: 8 }}>{histForm.mode === "add" ? "새 항목 추가" : "항목 수정"}</span>
+                <span style={{ fontSize: 12, color: "var(--tm)", whiteSpace: "nowrap", marginLeft: 8 }}>활동유형</span>
+                <select value={histForm.type} onChange={e => setHistForm(f => ({ ...f, type: e.target.value }))} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }}>
+                  {config.activityTypes.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
               </div>
               <KoreanTextarea
                 value={histForm.content}
@@ -4060,6 +4064,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={h.key} style={{ display: "flex", gap: 0, borderBottom: i < allHistory.length - 1 ? "1px solid var(--brd)" : "none" }}>
                 <div style={{ width: 110, flexShrink: 0, padding: "12px 14px", background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
                   <span className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, lineHeight: 1.4 }}>{h.date}</span>
+                  {h.type && <span style={{ fontSize: 9, color: "var(--ts)", fontWeight: 600, background: "var(--hover)", borderRadius: 4, padding: "1px 4px" }}>{h.type}</span>}
                   {h.isManual && <span style={{ fontSize: 9, color: "var(--ok)", fontWeight: 600, background: "#10b98115", borderRadius: 4, padding: "1px 4px" }}>수동</span>}
                   {h.createdBy && <span style={{ fontSize: 9, color: "var(--tm)", lineHeight: 1.3 }}>{h.createdBy}</span>}
                 </div>
