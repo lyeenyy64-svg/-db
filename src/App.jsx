@@ -85,6 +85,8 @@ const AGING_BUCKETS = [
   { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#991b1b" },
 ];
 
+const ASSIGNEE_COLORS = ["#3b82f6", "#f97316", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4", "#eab308", "#ec4899"];
+
 // ─── Data Generation ──────────────────────────────────────
 function generateData(cfg) {
   const debtors = [], payments = [], activities = [], seizureCases = [], rehabilitations = [], installmentPlans = [], complaints = [];
@@ -717,6 +719,7 @@ const I = ({ name, size = 18 }) => {
     fileText: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>,
     download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
     sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75z"/></svg>,
+    pieChart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>,
   };
   return s[name] || null;
 };
@@ -1697,6 +1700,7 @@ export default function App() {
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
+  const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
@@ -2911,8 +2915,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <SectionHeader sectionId="leaderboard">담당자별 실적</SectionHeader>
         {!collapsedSections.has("leaderboard") && (
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
-              이번 달 회수액을 지난달, 그리고 직접 입력한 월간 목표 금액과 비교합니다. 목표는 칸에 직접 입력해 설정할 수 있습니다.
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+              <button onClick={() => { const n = new Date(); setAssigneeMonthlyModal({ year: n.getFullYear(), month: n.getMonth() + 1 }); }}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
+                <I name="pieChart" size={14} />월별 회수액
+              </button>
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -2956,6 +2965,54 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
         )}
+        {assigneeMonthlyModal && (() => {
+          const { year, month } = assigneeMonthlyModal;
+          const debtorAssignee = {};
+          data.debtors.forEach(d => { debtorAssignee[d.id] = d.assignee; });
+          const rows = config.assignees.map((a, i) => {
+            const amount = data.payments
+              .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+              .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
+              .reduce((s, p) => s + (p.totalAmount || 0), 0);
+            return { assignee: a, amount, color: ASSIGNEE_COLORS[i % ASSIGNEE_COLORS.length] };
+          }).sort((a, b) => b.amount - a.amount);
+          const total = rows.reduce((s, r) => s + r.amount, 0);
+          let acc = 0;
+          const gradient = total > 0 ? rows.map(r => {
+            const pct = (r.amount / total) * 100;
+            const from = acc; acc += pct;
+            return `${r.color} ${from}% ${acc}%`;
+          }).join(", ") : "var(--bg2) 0% 100%";
+          const shiftMonth = (delta) => {
+            let y = year, m = month + delta;
+            if (m < 1) { m = 12; y -= 1; } else if (m > 12) { m = 1; y += 1; }
+            setAssigneeMonthlyModal({ year: y, month: m });
+          };
+          return (
+            <Overlay onClose={() => setAssigneeMonthlyModal(null)}>
+              <ModalHeader title="담당자별 월별 회수액" onClose={() => setAssigneeMonthlyModal(null)} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 20 }}>
+                <button onClick={() => shiftMonth(-1)} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>‹</button>
+                <span style={{ fontSize: 15, fontWeight: 700, minWidth: 90, textAlign: "center" }}>{year}년 {month}월</span>
+                <button onClick={() => shiftMonth(1)} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>›</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 32 }}>
+                <div style={{ width: 160, height: 160, borderRadius: "50%", background: `conic-gradient(${gradient})`, flexShrink: 0 }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 160 }}>
+                  {total === 0 && <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 월 회수 내역이 없습니다.</div>}
+                  {rows.map(r => (
+                    <div key={r.assignee} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: r.color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{r.assignee}</span>
+                      <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{fmt(r.amount)}</span>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 40, textAlign: "right" }}>{total > 0 ? `${((r.amount / total) * 100).toFixed(1)}%` : "-"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Overlay>
+          );
+        })()}
         {/* ── 주요현안 ── */}
         <SectionHeader sectionId="issues">주요현안</SectionHeader>
         {!collapsedSections.has("issues") && (<>
