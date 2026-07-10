@@ -3580,20 +3580,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <thead><tr style={{ background: "var(--bg2)" }}>
               {[
                 { k: "brand", l: "브랜드", w: 60 },
-                { k: "category", l: "분류", w: 80 },
+                { k: "category", l: "분류", w: 110 },
                 { k: "assignee", l: "담당", w: 50 },
                 { k: "name", l: "채무자명", w: 110 },
                 { k: "guarantors", l: "연대보증인", w: 100 },
                 { k: "hubCode", l: "코드", w: 70 },
                 { k: "hubName", l: "허브/지점", w: 130 },
                 { k: "debtCause", l: "채무발생원인", w: 90 },
-                { k: "collectionStatus", l: "추심상태", w: 80 },
-                { k: "principalBalance",   l: "원채무액",      w: 105 },
-                { k: "adjustment",         l: "추가법무비용",  w: 100 },
-                { k: "collectedAmount",    l: "회수액",        w: 100 },
-                { k: "finalBalanceFinance",l: "재무기준잔액",   w: 110 },
-                { k: "finalBalanceLegal",  l: "법무기준잔액",   w: 110 },
-                { k: "execTitle", l: "집행권원", w: 65 },
+                { k: "principalBalance",   l: "원채무액",      w: 125 },
+                { k: "adjustment",         l: "추가법무비용",  w: 120 },
+                { k: "collectedAmount",    l: "회수액",        w: 120 },
+                { k: "finalBalanceFinance",l: "재무기준잔액",   w: 130 },
+                { k: "finalBalanceLegal",  l: "법무기준잔액",   w: 130 },
               ].map(c => (
                 <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>{c.l}{sort.f === c.k && <I name={sort.d === "asc" ? "arrowUp" : "arrowDown"} size={12} />}</div>
@@ -3604,36 +3602,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const subs = d.subRows && d.subRows.length > 1 ? d.subRows : null;
               const span = subs ? subs.length : 1;
 
-              const ExecCell = ({ rec, rs }) => (
-                <td rowSpan={rs} style={{ padding: "8px 10px", textAlign: "center", fontSize: 12 }} onClick={e => e.stopPropagation()}>
-                  {rec.execTitle
-                    ? (rec.execTitleUrl
-                      ? <a href={rec.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 700, textDecoration: "none" }} title={rec.execTitleType || "집행권원"}>O</a>
-                      : <span style={{ color: "var(--ok)", fontWeight: 700 }}>O</span>)
-                    : <span style={{ color: "var(--tm)" }}>-</span>}
-                </td>
-              );
-
               if (!subs) {
                 return (
                   <tr key={d.id} onClick={() => { setSel(d); setDetailTab("히스토리"); }} style={{ cursor: "pointer", borderBottom: "1px solid var(--brd)" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                     <td style={{ padding: "10px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
-                    <td style={{ padding: "10px 10px" }}><Badge status={d.category} small /></td>
+                    <td style={{ padding: "10px 10px", whiteSpace: "nowrap" }}><Badge status={d.category} small /></td>
                     <td style={{ padding: "10px 10px", fontSize: 12 }}>{d.assignee}</td>
                     <td style={{ padding: "10px 10px", fontWeight: 500 }}>{d.name}</td>
                     <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)" }}>{d.guarantors?.join(", ") || "-"}</td>
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)" }}>{d.hubCode}</td>
                     <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.hubName}</td>
                     <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.debtCause || "-"}</td>
-                    <td style={{ padding: "10px 10px" }}><Badge status={d.collectionStatus} small /></td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12 }}>{fmt(d.principalBalance)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "var(--ok)" }}>{fmt(d.collectedAmount)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, color: "#8b5cf6" }}>{fmt(d.finalBalanceFinance)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(d.finalBalanceLegal)}</td>
-                    <ExecCell rec={d} rs={1} />
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(d.principalBalance)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(d.collectedAmount)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(d.finalBalanceFinance)}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, color: "var(--err)" }}>{fmt(d.finalBalanceLegal)}</td>
                   </tr>
                 );
               }
@@ -3661,7 +3647,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                       </td>
                     )}
-                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", ...sharedBg }}><Badge status={d.category} small /></td>}
+                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", ...sharedBg }}><Badge status={d.category} small /></td>}
                     {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", fontSize: 12, borderBottom: "1px solid var(--brd)", ...sharedBg }}>{d.assignee}</td>}
                     {isFirst && (
                       <td rowSpan={span} style={{ padding: "10px 10px", fontWeight: 600, borderBottom: "1px solid var(--brd)", borderRight: "1px solid var(--brd)", ...sharedBg }}
@@ -3674,13 +3660,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)" }}>{sub.hubCode}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.hubName}</td>
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.debtCause || "-"}</td>
-                    <td style={{ padding: "8px 10px" }}><Badge status={sub.collectionStatus} small /></td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12 }}>{fmt(sub.principalBalance || 0)}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "var(--ok)" }}>{fmt(sub.collectedAmount || 0)}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, color: "#8b5cf6" }}>{fmt(sub.finalBalanceFinance ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0)))}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(subLegal)}</td>
-                    <ExecCell rec={sub} rs={1} />
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(sub.principalBalance || 0)}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(sub.collectedAmount || 0)}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(sub.finalBalanceFinance ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0)))}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, color: "var(--err)" }}>{fmt(subLegal)}</td>
                   </tr>
                 );
               });
