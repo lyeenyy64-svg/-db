@@ -194,6 +194,7 @@ const MK = {
   creditAnalyses:   "manual_credit_analyses",
   negotiations:     "manual_negotiations",
   todoList:         "manual_todo_list",
+  assigneeTargets:  "manual_assignee_targets",
 };
 function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function saveMR(key, recs) {
@@ -680,6 +681,7 @@ function loadExcelData(cfg) {
     creditAnalyses:   getMR(MK.creditAnalyses),
     negotiations:     getMR(MK.negotiations),
     todoList:         getMR(MK.todoList),
+    assigneeTargets:  getMR(MK.assigneeTargets),
   };
 }
 
@@ -1790,7 +1792,8 @@ export default function App() {
       const creditAnalyses   = getMR(MK.creditAnalyses);
       const negotiations     = getMR(MK.negotiations);
       const todoList         = getMR(MK.todoList);
-      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations, todoList }));
+      const assigneeTargets  = getMR(MK.assigneeTargets);
+      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations, todoList, assigneeTargets }));
       setBackendStatus("connected");
       setLastSaved(new Date());
       setPendingRefreshKey(k => k + 1);
@@ -2287,6 +2290,12 @@ export default function App() {
     setData(prev => ({ ...prev, [listKey]: prev[listKey].filter(r => r.id !== id) }));
     delMR(MK[listKey], id);
   };
+  // ─── 담당자별 월간 목표 금액 설정 ─────────────────────────
+  const setAssigneeTarget = (assignee, monthlyTarget) => {
+    const existing = (data.assigneeTargets || []).find(t => t.assignee === assignee);
+    if (existing) updateKeyIssue("assigneeTargets", existing.id, { monthlyTarget });
+    else addKeyIssue("assigneeTargets", { id: uid("TGT"), assignee, monthlyTarget });
+  };
   // #4 브랜드 변경 시 채무자 연쇄 갱신
   const updateBrandInDebtors = (oldCode, newBrand) => {
     setData(prev => ({
@@ -2388,6 +2397,31 @@ export default function App() {
       noAnchorCount,
     };
   }, [data]);
+
+  // ─── 담당자별 성과 리더보드 (이번달 vs 지난달, 목표 대비 달성률) ─
+  const assigneeStats = useMemo(() => {
+    const debtorAssignee = {};
+    data.debtors.forEach(d => { debtorAssignee[d.id] = d.assignee; });
+    const targetMap = {};
+    (data.assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t.monthlyTarget; });
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth() + 1;
+    const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+    const sumFor = (a, year, month) => data.payments
+      .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+      .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
+      .reduce((s, p) => s + (p.totalAmount || 0), 0);
+    const rows = config.assignees.map(a => {
+      const thisMonth = sumFor(a, y, m);
+      const lastMonth = sumFor(a, py, pm);
+      const momRate = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : (thisMonth > 0 ? 100 : 0);
+      const target = targetMap[a] || 0;
+      const achieveRate = target > 0 ? (thisMonth / target) * 100 : null;
+      return { assignee: a, thisMonth, lastMonth, momRate, target, achieveRate };
+    });
+    rows.sort((a, b) => b.thisMonth - a.thisMonth);
+    return rows;
+  }, [data, config]);
 
   const alertList = useMemo(() => {
     const l = [];
@@ -2873,6 +2907,55 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           );
         })()}
+        {/* ── 담당자 성과 리더보드 ── */}
+        <SectionHeader sectionId="leaderboard">담당자 성과 리더보드</SectionHeader>
+        {!collapsedSections.has("leaderboard") && (
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+            <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
+              이번 달 회수액을 지난달, 그리고 직접 입력한 월간 목표 금액과 비교합니다. 목표는 칸에 직접 입력해 설정할 수 있습니다.
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "var(--bg2)" }}>
+                    {["순위", "담당자", "이번달 회수액", "지난달 회수액", "전월대비", "월간 목표", "달성률"].map((h, i) => (
+                      <th key={h} style={{ padding: "8px 10px", textAlign: i === 1 ? "left" : "center", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {assigneeStats.map((a, i) => (
+                    <tr key={a.assignee} style={{ borderBottom: "1px solid var(--brd)" }}>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)" }}>{i + 1}</td>
+                      <td style={{ padding: "10px", fontWeight: 600 }}>{a.assignee}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisMonth)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)" }}>{fmt(a.lastMonth)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)" }}>
+                        {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
+                      </td>
+                      <td style={{ padding: "10px", textAlign: "center" }}>
+                        <input type="text" inputMode="numeric" value={a.target ? a.target.toLocaleString("ko-KR") : ""}
+                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, isNaN(n) ? 0 : n); }}
+                          placeholder="목표 미설정"
+                          style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                      </td>
+                      <td style={{ padding: "10px", textAlign: "center" }}>
+                        {a.achieveRate == null ? <span style={{ color: "var(--tm)", fontSize: 12 }}>-</span> : (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                            <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: a.achieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.achieveRate.toFixed(1)}%</span>
+                            <div style={{ width: 80, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${Math.min(100, a.achieveRate)}%`, height: "100%", background: a.achieveRate >= 100 ? "#10b981" : "#3b82f6" }} />
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         {/* ── 주요현안 ── */}
         <SectionHeader sectionId="issues">주요현안</SectionHeader>
         {!collapsedSections.has("issues") && (<>
