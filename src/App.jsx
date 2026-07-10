@@ -3879,8 +3879,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
             <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span><Badge status={d.category} /><Badge status={d.collectionStatus} /></div>
-              <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}><span>{d.brandName}</span><span>담당: {d.assignee}</span>{d.execTitle && (d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>)}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span><Badge status={d.category} /><Badge status={d.assignee} /></div>
+              {d.execTitle && <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}>{d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>}</div>}
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
