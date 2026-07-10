@@ -167,6 +167,31 @@ function normNameForMatch(s) {
     .trim();
 }
 
+// 채무자명이 나중에 수정(중복 구분용 "1" 등)되어 이름+브랜드 매칭이 끊겼을 때의 보조 매칭용:
+// 전화번호 문자열에서 첫 010-XXXX-XXXX 형태만 추출해 숫자만 남긴다 (다중 번호 텍스트에도 안전)
+function extractPhoneDigits(s) {
+  const m = String(s || "").match(/01[0-9][-\s]?\d{3,4}[-\s]?\d{4}/);
+  return m ? m[0].replace(/[-\s]/g, "") : "";
+}
+
+// excelData.js(원본 엑셀 스냅샷) ↔ 실제 DB 채무자 매칭용 인덱스.
+// 이름+브랜드가 1차 키. NPL#### id는 excelData.js와 운영 DB가 서로 다른 원본 파일에서
+// 독립적으로 새로 매겨진 값이라 우연히 겹칠 수 있으므로 매칭 키로 쓰지 않는다.
+const EXCEL_BY_KEY = {};
+const EXCEL_BY_PHONE = {}; // 브랜드+전화번호가 여러 명과 겹치면 null(모호함) — 유일할 때만 보조 매칭에 사용
+EXCEL_DEBTORS.forEach(e => {
+  EXCEL_BY_KEY[`${e.brand}||${e.name}`] = e;
+  const pd = extractPhoneDigits(e.phone);
+  if (pd) {
+    const pkey = `${e.brand}||${pd}`;
+    EXCEL_BY_PHONE[pkey] = (pkey in EXCEL_BY_PHONE) ? null : e;
+  }
+});
+// 이름+브랜드 매칭 실패 시에만, 전화번호가 유일하게 일치하는 원본이 있으면 보조로 매칭
+function matchExcelDebtor(d) {
+  return EXCEL_BY_KEY[`${d.brand}||${d.name}`] || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`] || undefined;
+}
+
 // ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
 // 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
 function kvPut(key, value) {
@@ -1766,10 +1791,8 @@ export default function App() {
         fetch("/api/activities").then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
-      const excelByKey = {};
-      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
       const debtors = debtorsRes.map(d => {
-        const ex = excelByKey[`${d.brand}||${d.name}`];
+        const ex = matchExcelDebtor(d);
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
@@ -2092,10 +2115,8 @@ export default function App() {
         fetch("/api/payments").then(r => r.json()),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
-      const excelByKey = {};
-      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
       const debtors = debtorsRes.map(d => {
-        const ex = excelByKey[`${d.brand}||${d.name}`];
+        const ex = matchExcelDebtor(d);
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
