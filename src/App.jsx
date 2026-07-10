@@ -1409,7 +1409,7 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
   <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
       <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
-      <button onClick={onAdd} style={{ padding: "5px 10px", borderRadius: 6, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid var(--acc)40", cursor: "pointer" }}>등록</button>
+      <button onClick={onAdd} style={{ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, background: "var(--bg2)", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer" }}>등록</button>
     </div>
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
