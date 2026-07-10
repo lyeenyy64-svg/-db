@@ -720,6 +720,7 @@ const I = ({ name, size = 18 }) => {
     download: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
     sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75z"/></svg>,
     pieChart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>,
+    flag: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4"/><path d="M4 4h14l-3 4 3 4H4"/></svg>,
   };
   return s[name] || null;
 };
@@ -1690,6 +1691,7 @@ export default function App() {
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   const [legalSubTab, setLegalSubTab] = useState("지급명령");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
+  const [issuesSubTab, setIssuesSubTab] = useState("강제집행 대상자");
   const [expandedNav, setExpandedNav] = useState(() => new Set());
   const [autoResidentNums, setAutoResidentNums] = useState({});
   const [residentRevealed, setResidentRevealed] = useState(() => new Set());
@@ -3013,16 +3015,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </Overlay>
           );
         })()}
-        {/* ── 주요현안 ── */}
-        <SectionHeader sectionId="issues">주요현안</SectionHeader>
-        {!collapsedSections.has("issues") && (<>
-        <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
-        <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
-        <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} currentUserName={currentUser?.name} />
-        <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
-        </>)}
         {/* 마지막 카드가 화면 하단에 바짝 붙어 잘려 보이지 않도록 여유 공간 확보 */}
         <div style={{ height: 24 }} />
+      </div>
+    );
+  };
+
+  // ─── Issues View (주요현안: 강제집행/신용분석/협의/TodoList) ─
+  const IssuesView = () => {
+    const canDelete = ["배현진", "김준원"].includes(currentUser?.name);
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {issuesSubTab === "강제집행 대상자" && <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />}
+        {issuesSubTab === "신용분석 대상자" && <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />}
+        {issuesSubTab === "주요 협의 대상자" && <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} currentUserName={currentUser?.name} />}
+        {issuesSubTab === "To Do List" && <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />}
       </div>
     );
   };
@@ -8630,8 +8637,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "회생",     cnt: (data.rehabilitations||[]).filter(r => r.type === "회생").length },
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
   ];
+  const issuesSubItems = [
+    { k: "강제집행 대상자",   cnt: (data.forcedExecutions||[]).length },
+    { k: "신용분석 대상자",   cnt: (data.creditAnalyses||[]).length },
+    { k: "주요 협의 대상자",  cnt: (data.negotiations||[]).length },
+    { k: "To Do List",       cnt: (data.todoList||[]).length },
+  ];
   const navTabs = [
     { k: "dashboard",       l: "종합현황",        i: "dashboard" },
+    { k: "issues",          l: "주요현안",         i: "flag",    sub: issuesSubItems, subState: issuesSubTab, setSub: (v) => { setIssuesSubTab(v); setTab("issues"); } },
     { k: "debtors",         l: "채무자 관리",      i: "users" },
     { k: "payments",        l: "입금내역",         i: "won" },
     { k: "installments",    l: "분할상환",         i: "calendar" },
@@ -8751,6 +8765,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
               {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
+              {tab === "issues" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {issuesSubTab}</span>}
               {sel && tab === "debtors" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {sel.name} ({sel.brandName})</span>}
             </span>
           </div>
@@ -8765,6 +8780,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
           {tab === "dashboard" && Dashboard()}
+          {tab === "issues" && <IssuesView />}
           {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : debtorListView)}
           {tab === "collection" && <CollectionView />}
           {tab === "payments" && <PaymentsView />}
