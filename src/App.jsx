@@ -8823,7 +8823,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
               {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
-              {sel && tab === "debtors" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {sel.name} ({sel.brandName})</span>}
             </span>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
