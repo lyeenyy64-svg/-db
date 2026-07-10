@@ -2908,7 +2908,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
         {/* ── 담당자 성과 리더보드 ── */}
-        <SectionHeader sectionId="leaderboard">담당자 성과 리더보드</SectionHeader>
+        <SectionHeader sectionId="leaderboard">담당자별 실적</SectionHeader>
         {!collapsedSections.has("leaderboard") && (
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
