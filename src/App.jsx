@@ -1694,6 +1694,7 @@ export default function App() {
   const [prevLegalSubTab, setPrevLegalSubTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
+  const [collapsedSections, setCollapsedSections] = useState(() => new Set());
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
@@ -2667,15 +2668,23 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // ═══ VIEWS ══════════════════════════════════════════════
 
   // ─── Dashboard ──────────────────────────────────────────
-  const SectionHeader = ({ children }) => (
-    <div style={{ alignSelf: "flex-start", background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8 }}>{children}</div>
-  );
+  const SectionHeader = ({ children, sectionId }) => {
+    const collapsed = collapsedSections.has(sectionId);
+    return (
+      <div onClick={() => setCollapsedSections(prev => { const next = new Set(prev); next.has(sectionId) ? next.delete(sectionId) : next.add(sectionId); return next; })}
+        style={{ alignSelf: "flex-start", background: "#000", color: "#fff", fontSize: 18, fontWeight: 800, padding: "10px 16px", borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}>
+        <span>{children}</span>
+        <span style={{ fontSize: 13, transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform 0.15s" }}>▾</span>
+      </div>
+    );
+  };
 
   const Dashboard = () => {
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <SectionHeader>채권현황</SectionHeader>
+        <SectionHeader sectionId="bonds">채권현황</SectionHeader>
+        {!collapsedSections.has("bonds") && (<>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
           <KPI label="총 채권금액" value={fmt(stats.totalRemaining)} sub={`재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
@@ -2713,8 +2722,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
         </div>
+        </>)}
         {/* ── 연체 에이징 분석 ── */}
-        <SectionHeader>연체 에이징 분석</SectionHeader>
+        <SectionHeader sectionId="aging">연체 에이징 분석</SectionHeader>
+        {!collapsedSections.has("aging") && (<>
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
             추심진행 중인 채권을 최근 입금일(입금 이력이 없으면 대여일) 기준 경과일수로 나눠본 결과입니다 — 오래될수록 우선 추심이 필요합니다. 칸을 클릭하면 목록을 볼 수 있습니다.
@@ -2733,6 +2744,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
           {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "var(--tm)" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
         </div>
+        </>)}
         {agingModalBucket && (() => {
           const bucket = agingStats.buckets.find(b => b.key === agingModalBucket);
           if (!bucket) return null;
@@ -2763,8 +2775,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
         {/* ── 월별 회수실적 차트 ── */}
-        <SectionHeader>회수현황</SectionHeader>
-        {(() => {
+        <SectionHeader sectionId="collection">회수현황</SectionHeader>
+        {!collapsedSections.has("collection") && (() => {
           const fmtBar = (v) => { if (!v) return ""; if (v >= 100000000) return `${(v/100000000).toFixed(1)}억`; return `${Math.round(v/10000)}만`; };
           const CHART_H = 180;
           const nowMonth = new Date().getMonth() + 1;
@@ -2862,11 +2874,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
         {/* ── 주요현안 ── */}
-        <SectionHeader>주요현안</SectionHeader>
+        <SectionHeader sectionId="issues">주요현안</SectionHeader>
+        {!collapsedSections.has("issues") && (<>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} currentUserName={currentUser?.name} />
         <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
+        </>)}
         {/* 마지막 카드가 화면 하단에 바짝 붙어 잘려 보이지 않도록 여유 공간 확보 */}
         <div style={{ height: 24 }} />
       </div>
