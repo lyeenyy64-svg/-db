@@ -1481,11 +1481,36 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   );
 };
 
-const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
-  const cols = ["채무자명", "담당자", "주요협의사항", ""];
+const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, currentUserName }) => {
+  const cols = ["채무자명", "담당자", "주요협의사항", "삭제"];
+
+  // 주요협의사항 텍스트를 해당 채무자의 히스토리(hist_m_)에도 반영한다.
+  // 같은 협의건을 여러 번 고쳐도 새 기록이 계속 쌓이지 않도록 r.histId로 같은 항목을 갱신하고,
+  // 이 협의 행이 삭제되어도 histId는 여기서만 참조할 뿐 히스토리 쪽에서 삭제를 연쇄시키지 않는다
+  // (요청사항: 협의 대상자 삭제와 무관하게 채무자 히스토리는 그대로 남아있어야 함).
+  const syncNoteToHistory = (r, debtorId, noteText) => {
+    const text = (noteText || "").trim();
+    if (!debtorId || !text) return;
+    const hist = getHistM(debtorId);
+    const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+    if (r.histId) {
+      const idx = hist.findIndex(h => h.id === r.histId);
+      if (idx >= 0) {
+        if (hist[idx].content === text) return;
+        const updated = [...hist];
+        updated[idx] = { ...updated[idx], content: text, date: todayDot };
+        saveHistM(debtorId, updated);
+        return;
+      }
+    }
+    const newId = uid("HIST");
+    saveHistM(debtorId, [{ id: newId, date: todayDot, content: text, createdBy: currentUserName || "관리자" }, ...hist]);
+    updateKeyIssue("negotiations", r.id, { histId: newId });
+  };
+
   return (
     <IssueTableCard title="주요 협의 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "" })}>
+      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
       <tbody>
         {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
@@ -1493,10 +1518,10 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
           const d = debtors.find(x => x.id === r.debtorId);
           return (
             <tr key={r.id}>
-              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("negotiations", r.id, { debtorId: id })} debtors={debtors} brands={brands} /></td>
+              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
               <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-              <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} style={issueInp} placeholder="주요협의사항" /></td>
-              <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} onBlur={e => syncNoteToHistory(r, r.debtorId, e.target.value)} style={issueInp} placeholder="주요협의사항" /></td>
+              <td style={{ ...issueTd, textAlign: "center" }}>{canDelete && <button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -2668,7 +2693,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <SectionHeader>주요현안</SectionHeader>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
-        <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
+        <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} currentUserName={currentUser?.name} />
       </div>
     );
   };
