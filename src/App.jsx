@@ -1693,6 +1693,7 @@ export default function App() {
   const [prevTab, setPrevTab] = useState(null);
   const [prevLegalSubTab, setPrevLegalSubTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
+  const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
@@ -2672,7 +2673,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   const Dashboard = () => {
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
-    const [agingModalBucket, setAgingModalBucket] = useState(null);
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         <SectionHeader>채권현황</SectionHeader>
