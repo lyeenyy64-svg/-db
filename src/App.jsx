@@ -1428,24 +1428,51 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   );
 };
 
-const CreditAnalysisTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue }) => {
-  const cols = ["채무자명", "브랜드", "신용분석 요청일", "신용분석 결과", "담당자", ""];
+const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
+  const cols = ["대상자", "브랜드", "요청자", "요청일", "담당자", "신용조회일", "신용조회 결과", "처리결과", "삭제"];
+  const approvedUsers = users.filter(u => u.approved);
   return (
     <IssueTableCard title="신용분석 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), debtorId: "", requestDate: today(), result: "" })}>
+      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
-          const d = debtors.find(x => x.id === r.debtorId);
+          const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
+          const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
           return (
             <tr key={r.id}>
-              <td style={{ ...issueTd, minWidth: 200 }}><DebtorAutoComplete value={r.debtorId} onChange={id => updateKeyIssue("creditAnalyses", r.id, { debtorId: id })} debtors={debtors} brands={brands} /></td>
-              <td style={issueTd}>{d ? <BrandBadge code={d.brand} brands={brands} /> : <span style={issueAuto}>-</span>}</td>
-              <td style={issueTd}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} /></td>
-              <td style={issueTd}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { result: e.target.value })} style={issueInp} placeholder="신용분석 결과" /></td>
-              <td style={issueTd}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-              <td style={{ ...issueTd, textAlign: "center" }}><button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button></td>
+              <td style={strike({ minWidth: 140 })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" />{strikeLine}</td>
+              <td style={strike()}>
+                <select value={r.brand || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike()}><KoreanInput value={r.requester || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requester: e.target.value })} style={issueInp} placeholder="요청자" />{strikeLine}</td>
+              <td style={strike()}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike()}>
+                <select value={r.assignee || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike()}><input type="date" value={r.checkDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike()}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
+                  <input value={r.checkResult || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkResult: e.target.value.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="000" style={{ ...issueInp, width: 46, textAlign: "right", padding: "5px 4px" }} />
+                  <span style={{ fontSize: 12, color: "var(--ts)" }}>점</span>
+                </div>
+                {strikeLine}
+              </td>
+              <td style={strike({ width: 110, maxWidth: 110 })}>
+                <button onClick={() => updateKeyIssue("creditAnalyses", r.id, { completed: !r.completed })}
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
+                {strikeLine}
+              </td>
+              <td style={strike()}>{canDelete && <button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -2640,7 +2667,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {/* ── 주요현안 ── */}
         <SectionHeader>주요현안</SectionHeader>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
-        <CreditAnalysisTable rows={data.creditAnalyses} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
+        <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} />
       </div>
     );
