@@ -2847,7 +2847,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             ))}
           </div>
-          {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "var(--tm)" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
+          {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "#000" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
         </div>
         </>)}
         {agingModalBucket && (() => {
