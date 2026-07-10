@@ -1375,11 +1375,14 @@ const IssueTableCard = ({ title, count, onAdd, children }) => (
 
 const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["채무자명", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+  // 채무자명이 minWidth만 있고 다른 칸엔 폭 제한이 없어, 남는 공간을 전부 채무자명 칸이
+  // 가져가며 유독 넓어 보이던 문제 수정 — 각 칸에 비율에 맞는 폭을 지정
+  const colWidths = [110, 90, 110, 110, 70, 90, 110, 110, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   return (
     <IssueTableCard title="강제집행 대상자" count={rows.length}
       onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
-      <thead><tr>{cols.map((h, i) => <th key={i} style={issueTh}>{h}</th>)}</tr></thead>
+      <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [신규등록]으로 추가하세요</td></tr>}
         {rows.map(r => {
@@ -1387,17 +1390,17 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
           return (
             <tr key={r.id}>
-              <td style={strike({ minWidth: 140 })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
-              <td style={strike()}>
+              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[1] })}>
                 <select value={r.brand || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike()}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike()}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike()}>
+              <td style={strike({ width: colWidths[2] })}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[3] })}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[4] })}>
                 <select value={r.creditOk || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { creditOk: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-</option>
                   <option value="O">O</option>
@@ -1405,21 +1408,21 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike()}>
+              <td style={strike({ width: colWidths[5] })}>
                 <select value={r.assignee || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike()}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike()}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: 110, maxWidth: 110 })}>
+              <td style={strike({ width: colWidths[6] })}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[7] })}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[8], maxWidth: colWidths[8] })}>
                 <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 {strikeLine}
               </td>
-              <td style={strike()}>{canDelete && <button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: colWidths[9], textAlign: "center" })}>{canDelete && <button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
