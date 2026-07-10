@@ -1535,6 +1535,10 @@ export default function App() {
   const [adminEditingRule, setAdminEditingRule] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  // 대시보드 CHECK 사항 패널에서 특정 건수를 클릭했을 때, 해당 탭으로 이동한 뒤
+  // 그 날짜만 보도록 열어주기 위한 신호값 (설정되면 해당 뷰가 소비하고 다시 null로 되돌린다)
+  const [installmentsFocusDate, setInstallmentsFocusDate] = useState(null);
+  const [paymentsFocusDate, setPaymentsFocusDate] = useState(null);
   const [adminEditLogs, setAdminEditLogs] = useState(null); // null=미로드, []~=로드됨
   const [adminEditLogsLoading, setAdminEditLogsLoading] = useState(false);
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
@@ -3970,6 +3974,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [subTab, setSubTab] = useState("목록");
     const [pq, setPq] = useState(""); const [pBrand, setPBrand] = useState("전체"); const [pPage, setPPage] = useState(1);
     const [pFrom, setPFrom] = useState(""); const [pTo, setPTo] = useState("");
+    // 대시보드 "오늘 입금 건수" 클릭 시 그 날짜로 필터를 걸어서 보여준다
+    useEffect(() => {
+      if (paymentsFocusDate) {
+        setSubTab("목록");
+        setPq(""); setPBrand("전체");
+        setPFrom(paymentsFocusDate); setPTo(paymentsFocusDate); setPPage(1);
+        setPaymentsFocusDate(null);
+      }
+    }, [paymentsFocusDate]); // eslint-disable-line react-hooks/exhaustive-deps
     const pFiltered = useMemo(() => {
       let l = [...data.payments];
       if (pq) { const ql = pq.toLowerCase(); l = l.filter(p => (p.debtorName || "").toLowerCase().includes(ql) || (p.payerName || "").toLowerCase().includes(ql) || (p.hubName || "").toLowerCase().includes(ql) || (p.hubCode || "").toLowerCase().includes(ql)); }
@@ -4070,6 +4083,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [pSchedEditMemo, setPSchedEditMemo] = useState("");
     const [pSchedEditStatus, setPSchedEditStatus] = useState("예정");
 
+    // 대시보드 "○○ 분할상환 대상자" 클릭 시 그 날짜의 일정 팝업을 바로 열어준다
+    useEffect(() => {
+      if (installmentsFocusDate) {
+        setInstTab("이번달");
+        setViewMonth(installmentsFocusDate.slice(0, 7));
+        setDayPopup(installmentsFocusDate);
+        setInstallmentsFocusDate(null);
+      }
+    }, [installmentsFocusDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const thisMonthSchedsAll = useMemo(() => {
       return (data.installmentSchedules || []).filter(s =>
@@ -8301,21 +8323,25 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ height: 1, background: "var(--brd)", margin: "8px 0" }} />
         </div>
         <div style={{ padding: 16, borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#000", marginBottom: 2 }}>[CHECK 사항]</div>
           {(() => {
             const dOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
             const yestStr = dOffset(-1), todayStr = dOffset(0), tmrwStr = dOffset(1);
             const scheds = data.installmentSchedules || [];
             const items = [
-              { l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건` },
-              { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건` },
-              { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건` },
-              { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건` },
-              { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건` },
+              { l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건`, onClick: () => setAlerts(true) },
+              { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
+              { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
+              { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
+              { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
             ];
             return items.map((x, i) => (
-              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 11, color: "var(--tm)" }}>{x.l}</div>
-                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--tp)" }}>{x.v}</div>
+              <div key={i} onClick={x.onClick}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: "2px 6px", margin: "0 -6px", borderRadius: 6 }}>
+                <div style={{ fontSize: 11, color: "#000" }}>{x.l}</div>
+                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#000" }}>{x.v}</div>
               </div>
             ));
           })()}
