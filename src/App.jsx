@@ -1552,6 +1552,25 @@ export default function App() {
   });
   useEffect(() => { localStorage.setItem(APP_USERS_KEY, JSON.stringify(users)); kvPut(APP_USERS_KEY, users); }, [users]);
   const [alertRules, setAlertRules] = useState(DEFAULT_ALERT_RULES);
+  // 알림 규칙은 서버 DB(alert_rules 테이블)에 영구 저장되고, 백엔드의 알림 규칙 엔진이
+  // 주기적으로 평가해 실제 Slack 발송까지 수행한다 (더 이상 새로고침하면 사라지는 화면 전용 상태가 아님).
+  useEffect(() => {
+    fetch("/api/alert-rules").then(r => r.ok ? r.json() : null).then(rows => { if (rows) setAlertRules(rows); }).catch(() => {});
+  }, []);
+  const addAlertRule = (rule) => {
+    setAlertRules(prev => [...prev, rule]);
+    fetch("/api/alert-rules", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rule) })
+      .catch(() => showToast("알림 규칙 저장 실패 — 새로고침하면 사라집니다"));
+  };
+  const patchAlertRule = (id, patch) => {
+    setAlertRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+    fetch(`/api/alert-rules/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) })
+      .catch(() => showToast("알림 규칙 저장 실패 — 새로고침하면 되돌아갑니다"));
+  };
+  const deleteAlertRule = (id) => {
+    setAlertRules(prev => prev.filter(r => r.id !== id));
+    fetch(`/api/alert-rules/${id}`, { method: "DELETE" }).catch(() => {});
+  };
 
   const handleLogin = (nameOrEmail, password) => {
     const user = users.find(u => u.name === nameOrEmail || u.email === nameOrEmail);
@@ -8176,39 +8195,45 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {mainTab === "alerts" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 14, fontWeight: 600 }}>알림 규칙 ({alertRules.length}개)</span>
-            <button onClick={() => { const nr = { id: uid("rule"), name: "새 알림 규칙", enabled: false, trigger: TRIGGER_TYPES[0].key, condition: "", target: "channel", channel: "#npl-알림", assignee: "" }; setAlertRules(prev => [...prev, nr]); setEditingRule(nr.id); }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />규칙 추가</button>
+            <button onClick={() => { const nr = { id: uid("rule"), name: "새 알림 규칙", enabled: false, trigger: TRIGGER_TYPES[0].key, condition: "", target: "channel", channel: "#npl-알림", assignee: "", assigneeSlackId: "" }; addAlertRule(nr); setEditingRule(nr.id); }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />규칙 추가</button>
           </div>
-          {alertRules.map((rule, ri) => (
+          {alertRules.map((rule) => (
             <div key={rule.id} style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: editingRule === rule.id ? "1px solid var(--brd)" : "none" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <button onClick={() => { setAlertRules(prev => prev.map((r, i) => i === ri ? { ...r, enabled: !r.enabled } : r)); }} style={{ width: 40, height: 22, borderRadius: 11, background: rule.enabled ? "var(--ok)" : "#cbd5e1", position: "relative", border: "none", cursor: "pointer", transition: "background .2s" }}>
+                  <button onClick={() => patchAlertRule(rule.id, { enabled: !rule.enabled })} style={{ width: 40, height: 22, borderRadius: 11, background: rule.enabled ? "var(--ok)" : "#cbd5e1", position: "relative", border: "none", cursor: "pointer", transition: "background .2s" }}>
                     <div style={{ width: 18, height: 18, borderRadius: 9, background: "#fff", position: "absolute", top: 2, left: rule.enabled ? 20 : 2, transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,.2)" }} />
                   </button>
                   <span style={{ fontSize: 14, fontWeight: 600 }}>{rule.name}</span>
                   <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "var(--bg)", color: "var(--tm)" }}>{TRIGGER_TYPES.find(t => t.key === rule.trigger)?.label}</span>
-                  <span style={{ fontSize: 11, color: "var(--tm)" }}>→ {rule.target === "channel" ? rule.channel : `DM: ${rule.assignee}`}</span>
+                  <span style={{ fontSize: 11, color: "var(--tm)" }}>→ {rule.target === "channel" ? rule.channel : `DM: ${rule.assignee}${rule.assigneeSlackId ? "" : " (Slack ID 미등록)"}`}</span>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
                   <button onClick={() => setEditingRule(editingRule === rule.id ? null : rule.id)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}><I name="edit" size={13} /></button>
-                  <button onClick={() => { if (confirm("이 규칙을 삭제하시겠습니까?")) setAlertRules(prev => prev.filter(r => r.id !== rule.id)); }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}><I name="trash" size={13} /></button>
+                  <button onClick={() => { if (confirm("이 규칙을 삭제하시겠습니까?")) deleteAlertRule(rule.id); }} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430" }}><I name="trash" size={13} /></button>
                 </div>
               </div>
               {editingRule === rule.id && (
                 <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <Field label="규칙 이름"><KoreanInput value={rule.name} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, name: e.target.value } : r))} style={inp} /></Field>
-                  <Field label="트리거"><select value={rule.trigger} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, trigger: e.target.value } : r))} style={inp}>{TRIGGER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
-                  <Field label="조건 설명"><KoreanInput value={rule.condition} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, condition: e.target.value } : r))} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
-                  <Field label="알림 대상"><select value={rule.target} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, target: e.target.value } : r))} style={inp}><option value="channel">Slack 채널</option><option value="dm">개인 DM</option></select></Field>
-                  {rule.target === "channel" && <Field label="Slack 채널"><KoreanInput value={rule.channel} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, channel: e.target.value } : r))} style={inp} placeholder="#채널명" /></Field>}
-                  {rule.target === "dm" && <Field label="DM 대상자"><select value={rule.assignee} onChange={e => setAlertRules(prev => prev.map(r => r.id === rule.id ? { ...r, assignee: e.target.value } : r))} style={inp}><option value="">-- 선택 --</option>{users.filter(u => u.approved).map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}</select></Field>}
+                  <Field label="규칙 이름"><KoreanInput value={rule.name} onChange={e => patchAlertRule(rule.id, { name: e.target.value })} style={inp} /></Field>
+                  <Field label="트리거"><select value={rule.trigger} onChange={e => patchAlertRule(rule.id, { trigger: e.target.value })} style={inp}>{TRIGGER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
+                  <Field label="조건 설명"><KoreanInput value={rule.condition} onChange={e => patchAlertRule(rule.id, { condition: e.target.value })} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
+                  <Field label="알림 대상"><select value={rule.target} onChange={e => patchAlertRule(rule.id, { target: e.target.value })} style={inp}><option value="channel">Slack 채널</option><option value="dm">개인 DM</option></select></Field>
+                  {rule.target === "channel" && <Field label="Slack 채널"><KoreanInput value={rule.channel} onChange={e => patchAlertRule(rule.id, { channel: e.target.value })} style={inp} placeholder="#채널명 (표시용 라벨 — 실제 발송은 서버에 설정된 알림 채널로 통합 전송됩니다)" /></Field>}
+                  {rule.target === "dm" && <Field label="DM 대상자"><select value={rule.assignee} onChange={e => patchAlertRule(rule.id, { assignee: e.target.value })} style={inp}><option value="">-- 선택 --</option>{users.filter(u => u.approved).map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}</select></Field>}
+                  {rule.target === "dm" && <Field label="DM 대상자 Slack ID"><KoreanInput value={rule.assigneeSlackId || ""} onChange={e => patchAlertRule(rule.id, { assigneeSlackId: e.target.value.trim() })} style={inp} placeholder="예: U0123ABCDE (Slack 프로필 > 멤버 ID 복사)" /></Field>}
                 </div>
               )}
             </div>
           ))}
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>트리거 유형 안내</div>
-            {TRIGGER_TYPES.map(t => (<div key={t.key} style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}><span className="mono" style={{ fontWeight: 500, minWidth: 160, color: "var(--tm)" }}>{t.key}</span><span style={{ color: "var(--ts)" }}>{t.label}</span></div>))}
+            {TRIGGER_TYPES.map(t => (<div key={t.key} style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}><span className="mono" style={{ fontWeight: 500, minWidth: 160, color: "var(--tm)" }}>{t.key}</span><span style={{ color: "var(--ts)" }}>{t.label}</span>{t.key === "seizure_collected" && <span style={{ fontSize: 11, color: "var(--err)" }}>(아직 자동 감지 미지원)</span>}</div>))}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--brd)", fontSize: 11, color: "var(--tm)", lineHeight: 1.6 }}>
+              분할상환 미납/회생 변제금 미납/고액 잔액/장기 미연락은 30분마다 서버가 자동 점검해 하루 1회 요약 발송하고,
+              신규 입금/신규 채권 등록/추심상태 변경은 발생 즉시 발송됩니다. DM 발송은 대상자의 Slack ID를 등록해야 실제로 개인에게 전달되며,
+              등록하지 않으면 알림 채널로 대체 발송됩니다.
+            </div>
           </div>
         </div>}
 

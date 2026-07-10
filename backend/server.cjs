@@ -160,6 +160,49 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"
   }
 }
 
+// ─── 알림 규칙 (알림 설정 화면에서 CRUD, 규칙 엔진이 주기적으로 평가) ─────
+// db/schema.sql에 이미 alert_rules 테이블/시드 정의가 있고 실제 debtflow.db에도 이미
+// 만들어져 있었다(설정 화면만 있고 백엔드 소비 로직이 없었던 상태) — 그 스키마를 그대로 쓰고
+// DM 발송에 필요한 컬럼만 추가한다.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS alert_rules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    trigger_type TEXT NOT NULL,
+    condition_text TEXT,
+    target TEXT NOT NULL DEFAULT 'channel',
+    channel TEXT,
+    assignee TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE TABLE IF NOT EXISTS alert_sent_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id TEXT NOT NULL,
+    sent_date TEXT NOT NULL,
+    entity_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    UNIQUE(rule_id, sent_date)
+  );
+`);
+try { db.exec("ALTER TABLE alert_rules ADD COLUMN assignee_slack_id TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE alert_rules ADD COLUMN updated_at TEXT"); } catch (e) {}
+// 최초 실행 시에만 기존 프론트엔드 기본값(DEFAULT_ALERT_RULES)과 동일한 규칙을 시드
+if (db.prepare("SELECT COUNT(*) c FROM alert_rules").get().c === 0) {
+  const seedRules = [
+    { id: "rule1", name: "분할상환 미납", enabled: 1, trigger_type: "installment_overdue", condition_text: "미납 1회 이상", target: "channel", channel: "#npl-알림", assignee: "" },
+    { id: "rule2", name: "회생 변제금 미납", enabled: 1, trigger_type: "rehab_overdue", condition_text: "미납 상태", target: "channel", channel: "#npl-알림", assignee: "" },
+    { id: "rule3", name: "고액 잔액", enabled: 1, trigger_type: "high_balance", condition_text: "잔액 1,000만원 초과", target: "dm", channel: "", assignee: "준원" },
+    { id: "rule4", name: "신규 입금", enabled: 0, trigger_type: "new_payment", condition_text: "입금 등록 시", target: "channel", channel: "#npl-입금", assignee: "" },
+    { id: "rule5", name: "장기 미연락", enabled: 0, trigger_type: "no_contact", condition_text: "30일 이상 활동 없음", target: "dm", channel: "", assignee: "" },
+  ];
+  const insSeed = db.prepare(`
+    INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee)
+    VALUES (@id, @name, @enabled, @trigger_type, @condition_text, @target, @channel, @assignee)
+  `);
+  db.transaction(() => seedRules.forEach(r => insSeed.run(r)))();
+}
+
 // 학습 매핑 테이블 (최초 실행 시 자동 생성)
 db.exec(`
   CREATE TABLE IF NOT EXISTS payer_name_mappings (
@@ -623,6 +666,9 @@ function ingestPayment(b) {
     return { payId, balanceAfter: after?.final_balance_legal ?? null };
   })();
 
+  // "신규 입금" 알림 규칙 즉시 평가 (동기 함수이므로 await 없이 fire-and-forget)
+  fireEventAlert("new_payment", { debtorName: debtor.name, hubName: debtor.hub_name, amount: total }).catch(() => {});
+
   return {
     ok: true,
     paymentId: result.payId,
@@ -783,6 +829,156 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
   } catch (e) {
     res.status(400).json({ ok: false, error: e.message });
   }
+});
+
+// ─── 알림 규칙 엔진 (관리자 > 알림 설정에서 만든 규칙을 실제로 평가/발송) ──
+// 상태 스캔형 규칙(installment_overdue/rehab_overdue/high_balance/no_contact)은
+// 30분마다 평가하되, 같은 규칙은 하루 1회만 발송(다이제스트)해 알림 폭주를 막는다.
+// 이벤트형 규칙(new_payment/new_debtor/status_change)은 해당 API 처리 성공 시 즉시 발송한다.
+// seizure_collected는 압류 회수액을 서버 DB에서 신뢰성 있게 추적할 데이터가 아직 없어 평가하지 않는다.
+function alertAlreadySentToday(ruleId) {
+  const today = new Date().toISOString().slice(0, 10);
+  return !!db.prepare("SELECT 1 FROM alert_sent_log WHERE rule_id = ? AND sent_date = ?").get(ruleId, today);
+}
+function markAlertSentToday(ruleId, count) {
+  const today = new Date().toISOString().slice(0, 10);
+  db.prepare("INSERT OR REPLACE INTO alert_sent_log (rule_id, sent_date, entity_count) VALUES (?, ?, ?)").run(ruleId, today, count);
+}
+
+async function deliverAlert(rule, text) {
+  if (!slackNotify) { console.warn(`[알림규칙] Slack 미설정 — "${rule.name}" 발송 건너뜀`); return false; }
+  try {
+    if (rule.target === "dm" && rule.assignee_slack_id) {
+      await slackNotify.chat.postMessage({ channel: rule.assignee_slack_id, text });
+      return true;
+    }
+    if (!NOTIFY_CHANNEL) { console.warn(`[알림규칙] 알림 채널 미설정 — "${rule.name}" 발송 건너뜀`); return false; }
+    // DM 대상인데 Slack ID가 등록 안 된 경우, 조용히 누락되지 않도록 채널로 대체 발송
+    const prefix = rule.target === "dm"
+      ? `*[DM 대상: ${rule.assignee || "미지정"} — Slack ID 미등록, 채널로 대체 발송]*\n`
+      : (rule.channel ? `*[${rule.channel}]*\n` : "");
+    await slackNotify.chat.postMessage({ channel: NOTIFY_CHANNEL, text: prefix + text });
+    return true;
+  } catch (e) {
+    console.warn(`[알림규칙] "${rule.name}" 발송 실패:`, e.message);
+    return false;
+  }
+}
+
+async function runAlertRules() {
+  if (!slackNotify) return; // Slack 미설정 시 평가 자체를 건너뜀 (불필요한 쿼리 방지)
+  const rules = db.prepare("SELECT * FROM alert_rules WHERE enabled = 1").all();
+
+  for (const rule of rules) {
+    if (alertAlreadySentToday(rule.id)) continue;
+    let matched = [];
+    let lines = [];
+
+    if (rule.trigger_type === "installment_overdue") {
+      matched = db.prepare(`
+        SELECT s.id, d.name AS debtor_name, d.hub_name, s.debt_source, s.scheduled_amount, s.due_date, s.due_month
+        FROM installment_schedules s
+        JOIN installment_plans p ON s.plan_id = p.id
+        JOIN debtors d ON p.debtor_id = d.id
+        WHERE s.status IN ('미납','지연')
+      `).all();
+      lines = matched.map(s => `• ${s.debtor_name} (${s.hub_name || "-"}) | ${s.debt_source || "-"} | ${(s.scheduled_amount || 0).toLocaleString()}원 | 기준일: ${s.due_date || s.due_month}`);
+    } else if (rule.trigger_type === "rehab_overdue") {
+      matched = db.prepare(`
+        SELECT r.id, d.name AS debtor_name, r.court, r.case_number, r.monthly_payment
+        FROM rehabilitations r JOIN debtors d ON r.debtor_id = d.id
+        WHERE r.overdue_status = '미납'
+      `).all();
+      lines = matched.map(r => `• ${r.debtor_name} | ${r.court || "-"} ${r.case_number || ""} | 월변제금 ${(r.monthly_payment || 0).toLocaleString()}원`);
+    } else if (rule.trigger_type === "high_balance") {
+      matched = db.prepare(`
+        SELECT id, name, hub_name, final_balance_legal FROM v_debtors
+        WHERE collection_status = '추심진행' AND final_balance_legal > 10000000
+      `).all();
+      lines = matched.map(d => `• ${d.name} (${d.hub_name || "-"}) | 잔액 ${(d.final_balance_legal || 0).toLocaleString()}원`);
+    } else if (rule.trigger_type === "no_contact") {
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      matched = db.prepare(`
+        SELECT d.id, d.name, d.hub_name FROM debtors d
+        WHERE d.collection_status = '추심진행'
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.debtor_id = d.id AND p.payment_date >= ?)
+          AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.debtor_id = d.id AND a.activity_date >= ?)
+      `).all(cutoff, cutoff);
+      lines = matched.map(d => `• ${d.name} (${d.hub_name || "-"})`);
+    } else {
+      continue; // 이벤트형 트리거는 해당 API 경로에서 즉시 발송하므로 여기서는 스킵
+    }
+
+    if (!matched.length) continue;
+    const text = `🔔 *[${rule.name}] ${matched.length}건*\n${lines.slice(0, 30).join("\n")}${matched.length > 30 ? `\n...외 ${matched.length - 30}건` : ""}`;
+    const sent = await deliverAlert(rule, text);
+    if (sent) markAlertSentToday(rule.id, matched.length);
+  }
+}
+
+// 이벤트형 규칙(입금 등록/신규 채권 등록/추심상태 변경) — 발생 즉시 평가·발송, 하루 dedup 없음
+async function fireEventAlert(triggerType, ctx) {
+  if (!slackNotify) return;
+  const rules = db.prepare("SELECT * FROM alert_rules WHERE enabled = 1 AND trigger_type = ?").all(triggerType);
+  for (const rule of rules) {
+    let text;
+    if (triggerType === "new_payment") {
+      text = `💰 *[${rule.name}]*\n${ctx.debtorName} (${ctx.hubName || "-"}) 입금 ${(ctx.amount || 0).toLocaleString()}원 등록`;
+    } else if (triggerType === "new_debtor") {
+      text = `🆕 *[${rule.name}]*\n${ctx.debtorName} (${ctx.brand || "-"}) 채권 신규 등록`;
+    } else if (triggerType === "status_change") {
+      text = `🔁 *[${rule.name}]*\n${ctx.debtorName}: 추심상태 "${ctx.oldStatus || "-"}" → "${ctx.newStatus}"`;
+    } else {
+      continue;
+    }
+    await deliverAlert(rule, text);
+  }
+}
+
+// ─── 알림 규칙 CRUD API (관리자 > 알림 설정) ─────────────────
+const ALERT_RULE_ROW_TO_JSON = (r) => ({
+  id: r.id, name: r.name, enabled: !!r.enabled, trigger: r.trigger_type, condition: r.condition_text,
+  target: r.target, channel: r.channel, assignee: r.assignee, assigneeSlackId: r.assignee_slack_id,
+});
+
+app.get("/api/alert-rules", (req, res) => {
+  const rows = db.prepare("SELECT * FROM alert_rules ORDER BY created_at").all();
+  res.json(rows.map(ALERT_RULE_ROW_TO_JSON));
+});
+
+app.post("/api/alert-rules", (req, res) => {
+  const b = req.body || {};
+  const id = b.id || ("rule" + Date.now() + Math.floor(Math.random() * 900 + 100));
+  try {
+    db.prepare(`
+      INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee, assignee_slack_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, b.name || "새 알림 규칙", b.enabled ? 1 : 0, b.trigger || "installment_overdue",
+      b.condition || "", b.target || "channel", b.channel || "", b.assignee || "", b.assigneeSlackId || "");
+    res.json({ ok: true, id });
+  } catch (e) { res.status(400).json({ ok: false, error: e.message }); }
+});
+
+app.patch("/api/alert-rules/:id", (req, res) => {
+  const cols = { name: "name", enabled: "enabled", trigger: "trigger_type", condition: "condition_text", target: "target", channel: "channel", assignee: "assignee", assigneeSlackId: "assignee_slack_id" };
+  const fields = [], vals = [];
+  for (const [k, col] of Object.entries(cols)) {
+    if (req.body[k] !== undefined) {
+      fields.push(`${col} = ?`);
+      vals.push(k === "enabled" ? (req.body[k] ? 1 : 0) : req.body[k]);
+    }
+  }
+  if (!fields.length) return res.json({ ok: true });
+  fields.push("updated_at = datetime('now','localtime')");
+  vals.push(req.params.id);
+  db.prepare(`UPDATE alert_rules SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+  res.json({ ok: true });
+});
+
+app.delete("/api/alert-rules/:id", (req, res) => {
+  db.prepare("DELETE FROM alert_rules WHERE id = ?").run(req.params.id);
+  db.prepare("DELETE FROM alert_sent_log WHERE rule_id = ?").run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ─── 분할상환 Slack 알림 헬퍼 ─────────────────────────────────
@@ -1455,6 +1651,7 @@ app.post("/api/debtors", (req, res) => {
       const insG = db.prepare("INSERT INTO debtor_guarantors (debtor_id, name) VALUES (?, ?)");
       for (const g of b.guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
+    fireEventAlert("new_debtor", { debtorName: b.name || "", brand: b.brand || "" }).catch(() => {});
     res.json({ ok: true, id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -1551,6 +1748,12 @@ app.patch("/api/debtors/:id", (req, res) => {
       db.prepare("DELETE FROM debtor_guarantors WHERE debtor_id = ?").run(id);
       const insG = db.prepare("INSERT INTO debtor_guarantors (debtor_id, name) VALUES (?, ?)");
       for (const g of guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
+    }
+
+    // "추심상태 변경" 알림 규칙 즉시 평가
+    if (oldRow && changedJsKeys.includes("collectionStatus") && String(oldRow.collectionStatus ?? "") !== String(req.body.collectionStatus ?? "")) {
+      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
+      fireEventAlert("status_change", { debtorName, oldStatus: oldRow.collectionStatus, newStatus: req.body.collectionStatus }).catch(() => {});
     }
 
     res.json({ ok: true });
@@ -2400,4 +2603,8 @@ app.listen(PORT, () => {
   if (todayDate === 1) {
     setTimeout(() => sendInstallmentMonthlyNotify(db).catch(() => {}), 5000);
   }
+
+  // 알림 규칙 엔진: 서버 시작 20초 후 1회 + 이후 30분마다 평가
+  setTimeout(() => { runAlertRules().catch(e => console.error("[알림규칙] 오류:", e.message)); }, 20000);
+  setInterval(() => { runAlertRules().catch(e => console.error("[알림규칙] 오류:", e.message)); }, 30 * 60 * 1000);
 });
