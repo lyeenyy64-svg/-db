@@ -846,7 +846,9 @@ const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
     <div ref={ref} style={{ position: "relative" }}>
       <KoreanInput value={text} onChange={e => { setText(e.target.value); setOpen(true); if (!e.target.value) onChange(""); }} onFocus={() => setOpen(true)} placeholder="채무자명, ID, 허브명으로 검색..." style={inp} />
       {open && filtered.length > 0 && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, maxHeight: 220, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
+        // minWidth: 좁은 칸(예: 주요 협의 대상자 테이블) 안에 있을 때도 목록이 트리거 입력창
+        // 폭만큼 눌려서 항목이 겹치거나 클릭하기 어려워지지 않도록 최소 폭을 보장
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, minWidth: 280, maxHeight: 220, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
           {filtered.map(d => (
             <div key={d.id} onClick={() => { onChange(d.id); setText(`${d.brandName} / ${d.name} (${d.id})`); setOpen(false); }}
               style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--brd)" }}
@@ -1489,7 +1491,9 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
 const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, currentUserName }) => {
   const cols = ["채무자명", "담당자", "주요협의사항", "삭제"];
   // 채무자명/담당자는 좁게, 주요협의사항이 남는 공간을 모두 가져가도록 폭 지정
-  const colWidths = [110, 64, undefined, 46];
+  // (채무자명은 자동완성 후보를 클릭하기 편하도록 130으로 살짝 넓힘 — 후보 목록 자체도
+  //  DebtorAutoComplete에서 최소 폭을 보장하도록 별도 처리)
+  const colWidths = [130, 64, undefined, 46];
 
   // 주요협의사항 텍스트를 해당 채무자의 히스토리(hist_m_)에도 반영한다.
   // 같은 협의건을 여러 번 고쳐도 새 기록이 계속 쌓이지 않도록 r.histId로 같은 항목을 갱신하고,
