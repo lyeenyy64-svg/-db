@@ -1695,7 +1695,7 @@ export default function App() {
   const [catFilter, setCatFilter] = useState("전체");
   const [statusFilter, setStatusFilter] = useState("전체");
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
-  const [sort, setSort] = useState({ f: "finalBalanceLegal", d: "desc" });
+  const [sort, setSort] = useState({ f: null, d: "desc" }); // f=null: 기본 정렬(히스토리>입금>연체에이징>채권액) 사용
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(null);
   const [alerts, setAlerts] = useState(false);
@@ -1739,7 +1739,7 @@ export default function App() {
   const [aiDebtorQ, setAiDebtorQ] = useState("");
   const [collectionChannels, setCollectionChannels] = useState({});
   const [collectionChannelsLoading, setCollectionChannelsLoading] = useState(false);
-  const PP = 25;
+  const PP = 50;
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
   const navigateToDebtor = (debtor, detailTabName = "히스토리") => {
@@ -2514,7 +2514,49 @@ export default function App() {
         grouped.push(d);
       }
     }
-    if (sort.f) grouped.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
+    if (sort.f) {
+      grouped.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
+    } else {
+      // 기본 정렬: ①최근 히스토리 기입순 → ②최근 입금순 → ③연체 에이징 구간(짧은 순) → ④채권액 큰 순
+      const normDate = (s) => String(s || "").replace(/\./g, "-");
+      const extractDate = (s) => { const m = String(s || "").match(/(\d{4})[.-](\d{1,2})[.-](\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; };
+      const lastPayByDebtor = {};
+      data.payments.forEach(p => {
+        if (!p.debtorId || !p.paymentDate) return;
+        if (!lastPayByDebtor[p.debtorId] || p.paymentDate > lastPayByDebtor[p.debtorId]) lastPayByDebtor[p.debtorId] = p.paymentDate;
+      });
+      const nowMs = Date.now();
+      const sortInfo = (d) => {
+        const histDates = [...(d.history || []).map(h => h.date), ...getHistM(d.id).map(h => h.date)].map(normDate).filter(Boolean);
+        const lastHistory = histDates.length ? histDates.reduce((x, y) => (x > y ? x : y)) : null;
+        const lastPayment = lastPayByDebtor[d.id] || null;
+        const anchor = extractDate(lastPayment || d.loanDate);
+        let agingIdx = AGING_BUCKETS.length;
+        if (anchor) {
+          const anchorMs = new Date(anchor + "T00:00:00").getTime();
+          if (!isNaN(anchorMs)) {
+            const days = Math.max(0, Math.floor((nowMs - anchorMs) / 86400000));
+            const idx = AGING_BUCKETS.findIndex(b => days >= b.min && days < b.max);
+            agingIdx = idx === -1 ? AGING_BUCKETS.length - 1 : idx;
+          }
+        }
+        return { lastHistory, lastPayment, agingIdx };
+      };
+      grouped.sort((a, b) => {
+        const ia = sortInfo(a), ib = sortInfo(b);
+        if (ia.lastHistory || ib.lastHistory) {
+          if (!ia.lastHistory) return 1;
+          if (!ib.lastHistory) return -1;
+          if (ia.lastHistory !== ib.lastHistory) return ia.lastHistory > ib.lastHistory ? -1 : 1;
+        } else if (ia.lastPayment || ib.lastPayment) {
+          if (!ia.lastPayment) return 1;
+          if (!ib.lastPayment) return -1;
+          if (ia.lastPayment !== ib.lastPayment) return ia.lastPayment > ib.lastPayment ? -1 : 1;
+        }
+        if (ia.agingIdx !== ib.agingIdx) return ia.agingIdx - ib.agingIdx;
+        return (b.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0);
+      });
+    }
     return grouped;
   }, [data, q, brandFilter, catFilter, statusFilter, assigneeFilter, sort]);
 
