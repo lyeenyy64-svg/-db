@@ -3638,8 +3638,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 { k: "finalBalanceFinance",l: "재무기준잔액",   w: 130 },
                 { k: "finalBalanceLegal",  l: "법무기준잔액",   w: 130 },
               ].map(c => (
-                <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>{c.l}{sort.f === c.k && <I name={sort.d === "asc" ? "arrowUp" : "arrowDown"} size={12} />}</div>
+                <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "center", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>{c.l}{sort.f === c.k && <I name={sort.d === "asc" ? "arrowUp" : "arrowDown"} size={12} />}</div>
                 </th>
               ))}
             </tr></thead>
