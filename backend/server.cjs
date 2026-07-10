@@ -2599,10 +2599,18 @@ app.listen(PORT, () => {
   slackBot.startBot(db, ingestPayment);
 
   // 매월 1일: 분할상환 월간 알림 자동 발송
-  const todayDate = new Date().getDate();
-  if (todayDate === 1) {
-    setTimeout(() => sendInstallmentMonthlyNotify(db).catch(() => {}), 5000);
-  }
+  // 예전에는 서버 부팅 시점에 "오늘이 1일이면" 딱 한 번만 검사했는데, 서버를 재시작하지
+  // 않고 몇 달째 켜둔 상태로 두면 그 이후로는 영원히 재검사하지 않아 알림이 끊겼다.
+  // sendInstallmentMonthlyNotify 자체가 kv_store에 "이번 달에 이미 보냈는지"를 기록해
+  // 중복 발송을 막아주므로, 몇 시간마다 반복 호출해도 안전하다 — 그 안전장치를 활용해
+  // 서버를 계속 띄워둔 채로도 매월 1일에 실제로 발송되도록 주기적으로 재확인한다.
+  const checkMonthlyInstallmentNotify = () => {
+    if (new Date().getDate() === 1) {
+      sendInstallmentMonthlyNotify(db).catch(e => console.error("[월간알림] 오류:", e.message));
+    }
+  };
+  setTimeout(checkMonthlyInstallmentNotify, 5000);
+  setInterval(checkMonthlyInstallmentNotify, 6 * 60 * 60 * 1000); // 6시간마다 날짜 재확인
 
   // 알림 규칙 엔진: 서버 시작 20초 후 1회 + 이후 30분마다 평가
   setTimeout(() => { runAlertRules().catch(e => console.error("[알림규칙] 오류:", e.message)); }, 20000);
