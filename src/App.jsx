@@ -2527,7 +2527,10 @@ export default function App() {
       });
       const nowMs = Date.now();
       const sortInfo = (d) => {
-        const histDates = [...(d.history || []).map(h => h.date), ...getHistM(d.id).map(h => h.date)].map(normDate).filter(Boolean);
+        // 엑셀 원본에서 넘어온 d.history는 원본 파일 파싱 오류로 엉뚱한 값이 섞여 들어간 경우가 있어
+        // (예: 브랜드명·담당자명이 날짜에 잘못 매칭됨) 정렬 기준에서 제외하고, 이 프로그램에서
+        // "히스토리 추가"로 직접 입력한 항목(히스토리 관리)만 "최근 히스토리"로 취급한다.
+        const histDates = getHistM(d.id).map(h => h.date).map(normDate).filter(Boolean);
         const lastHistory = histDates.length ? histDates.reduce((x, y) => (x > y ? x : y)) : null;
         const lastPayment = lastPayByDebtor[d.id] || null;
         const anchor = extractDate(lastPayment || d.loanDate);
