@@ -1489,11 +1489,9 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
 };
 
 const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, currentUserName }) => {
-  const cols = ["채무자명", "담당자", "주요협의사항", "삭제"];
-  // 채무자명/담당자는 좁게, 주요협의사항이 남는 공간을 모두 가져가도록 폭 지정
-  // (채무자명은 자동완성 후보를 클릭하기 편하도록 130으로 살짝 넓힘 — 후보 목록 자체도
-  //  DebtorAutoComplete에서 최소 폭을 보장하도록 별도 처리)
-  const colWidths = [130, 64, undefined, 46];
+  const cols = ["채무자명", "담당자", "주요 협의 사항", "삭제"];
+  // 채무자명/담당자는 좁게, 주요 협의 사항이 남는 공간을 모두 가져가도록 폭 지정
+  const colWidths = [170, 64, undefined, 46];
 
   // 주요협의사항 텍스트를 해당 채무자의 히스토리(hist_m_)에도 반영한다.
   // 같은 협의건을 여러 번 고쳐도 새 기록이 계속 쌓이지 않도록 r.histId로 같은 항목을 갱신하고,
@@ -1531,7 +1529,16 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
             <tr key={r.id}>
               <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
               <td style={{ ...issueTd, width: colWidths[1] }}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
-              <td style={issueTd}><KoreanInput value={r.note || ""} onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })} onBlur={e => syncNoteToHistory(r, r.debtorId, e.target.value)} style={issueInp} placeholder="주요협의사항" /></td>
+              <td style={issueTd}>
+                <KoreanTextarea
+                  value={r.note || ""}
+                  onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })}
+                  onBlur={e => syncNoteToHistory(r, r.debtorId, e.target.value)}
+                  placeholder="주요 협의 사항"
+                  rows={2}
+                  style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
+                />
+              </td>
               <td style={{ ...issueTd, width: colWidths[3], textAlign: "center" }}>{canDelete && <button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
