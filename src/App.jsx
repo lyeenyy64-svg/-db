@@ -184,6 +184,7 @@ const MK = {
   forcedExecutions: "manual_forced_executions",
   creditAnalyses:   "manual_credit_analyses",
   negotiations:     "manual_negotiations",
+  todoList:         "manual_todo_list",
 };
 function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function saveMR(key, recs) {
@@ -669,6 +670,7 @@ function loadExcelData(cfg) {
     forcedExecutions: getMR(MK.forcedExecutions),
     creditAnalyses:   getMR(MK.creditAnalyses),
     negotiations:     getMR(MK.negotiations),
+    todoList:         getMR(MK.todoList),
   };
 }
 
@@ -1548,6 +1550,47 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
   );
 };
 
+const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
+  const cols = ["담당자", "업무 내용", "결과", "진행상태", "삭제"];
+  const colWidths = [90, undefined, 220, 90, 46];
+  const approvedUsers = users.filter(u => u.approved);
+  return (
+    <IssueTableCard title="To Do List" count={rows.length}
+      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중" })}>
+      <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 항목이 없습니다 — [신규등록]으로 추가하세요</td></tr>}
+        {rows.map(r => {
+          const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
+          const strikeLine = r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+          return (
+            <tr key={r.id}>
+              <td style={strike({ width: colWidths[0] })}>
+                <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="">-- 선택 --</option>
+                  {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike()}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[2] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[3] })}>
+                <select value={r.status || "진행중"} onChange={e => updateKeyIssue("todoList", r.id, { status: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+                  <option value="진행중">진행중</option>
+                  <option value="보류">보류</option>
+                  <option value="완료">완료</option>
+                </select>
+                {strikeLine}
+              </td>
+              <td style={strike({ width: colWidths[4], textAlign: "center" })}>{canDelete && <button onClick={() => deleteKeyIssue("todoList", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </IssueTableCard>
+  );
+};
+
 export default function App() {
   // ─── Auth & Users ─────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(null);
@@ -1735,7 +1778,8 @@ export default function App() {
       const forcedExecutions = getMR(MK.forcedExecutions);
       const creditAnalyses   = getMR(MK.creditAnalyses);
       const negotiations     = getMR(MK.negotiations);
-      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations }));
+      const todoList         = getMR(MK.todoList);
+      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations, todoList }));
       setBackendStatus("connected");
       setLastSaved(new Date());
       setPendingRefreshKey(k => k + 1);
@@ -2731,6 +2775,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} currentUserName={currentUser?.name} />
+        <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={["배현진", "김준원"].includes(currentUser?.name)} />
         {/* 마지막 카드가 화면 하단에 바짝 붙어 잘려 보이지 않도록 여유 공간 확보 */}
         <div style={{ height: 24 }} />
       </div>
