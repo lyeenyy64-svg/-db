@@ -1766,12 +1766,10 @@ export default function App() {
         fetch("/api/activities").then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
-      const excelById = {};
       const excelByKey = {};
-      EXCEL_DEBTORS.forEach(e => { excelById[e.id] = e; excelByKey[`${e.brand}||${e.name}`] = e; });
+      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
       const debtors = debtorsRes.map(d => {
-        // id(NPL####)로 우선 매칭 — 이름을 나중에 수정(중복 구분 등)해도 히스토리/연대보증인이 끊기지 않도록
-        const ex = excelById[d.id] || excelByKey[`${d.brand}||${d.name}`];
+        const ex = excelByKey[`${d.brand}||${d.name}`];
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
@@ -2094,11 +2092,10 @@ export default function App() {
         fetch("/api/payments").then(r => r.json()),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
-      const excelById = {};
       const excelByKey = {};
-      EXCEL_DEBTORS.forEach(e => { excelById[e.id] = e; excelByKey[`${e.brand}||${e.name}`] = e; });
+      EXCEL_DEBTORS.forEach(e => { excelByKey[`${e.brand}||${e.name}`] = e; });
       const debtors = debtorsRes.map(d => {
-        const ex = excelById[d.id] || excelByKey[`${d.brand}||${d.name}`];
+        const ex = excelByKey[`${d.brand}||${d.name}`];
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
