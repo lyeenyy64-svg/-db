@@ -1773,6 +1773,18 @@ export default function App() {
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
   const [sort, setSort] = useState({ f: null, d: "desc" }); // f=null: 기본 정렬(히스토리>입금>연체에이징>채권액) 사용
   const [page, setPage] = useState(1);
+  // 좌측 "채무자 관리" 또는 상단 제목 클릭 시, 검색/필터/상세선택을 모두 지우고
+  // 전체 채무자 목록으로 되돌아가기 위한 헬퍼
+  const goToDebtorList = () => {
+    setTab("debtors");
+    setSel(null);
+    setQ("");
+    setBrandFilter("전체");
+    setCatFilter("전체");
+    setStatusFilter("전체");
+    setAssigneeFilter("전체");
+    setPage(1);
+  };
   const [modal, setModal] = useState(null);
   const [alerts, setAlerts] = useState(false);
   const [toast, setToast] = useState(null);
@@ -8856,8 +8868,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={t.k}>
                 <button
                   onClick={() => {
+                    if (t.k === "debtors") { goToDebtorList(); return; }
                     setTab(t.k);
-                    if (t.k !== "debtors") setSel(null);
+                    setSel(null);
                     if (t.sub) {
                       setExpandedNav(prev => {
                         const next = new Set(prev);
@@ -8934,7 +8947,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ height: 56, padding: "0 24px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {sel && tab === "debtors" && <button onClick={goBack} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
-            <span style={{ fontSize: 16, fontWeight: 700 }}>
+            <span
+              onClick={tab === "debtors" ? goToDebtorList : undefined}
+              style={{ fontSize: 16, fontWeight: 700, cursor: tab === "debtors" ? "pointer" : "default" }}>
               {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
               {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
