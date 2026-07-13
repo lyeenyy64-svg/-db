@@ -3731,7 +3731,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const cnt = k === "전체" ? data.debtors.length : data.debtors.filter(d => d.category === k).length;
               const active = catFilter === k;
               return (
-                <div key={k} onClick={() => setCatFilter(k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 95, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
+                <div key={k} onClick={() => setCatFilter(active && k !== "전체" ? "전체" : k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 95, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: active ? color : "var(--tm)", whiteSpace: "nowrap", marginBottom: 5 }}>{k}</div>
                   <div style={{ fontSize: 22, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}</div>
                 </div>
@@ -3742,10 +3742,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       })()}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
         <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 연대보증인, 허브명, 코드, 히스토리 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
-        <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
-        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
-        <select value={assigneeFilter} onChange={e => setAssigneeFilter(e.target.value)} style={{ width: 110 }}><option value="전체">담당자: 전체</option>{config.assignees.map(a => <option key={a} value={a}>{a}</option>)}</select>
         {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid var(--acc)40", cursor: "pointer" }}>등록</button>}
         <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
         <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
