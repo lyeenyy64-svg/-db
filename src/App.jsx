@@ -249,6 +249,14 @@ const getHistE = (id) => { try { return JSON.parse(localStorage.getItem(`hist_e_
 const saveHistE = (id, obj) => { localStorage.setItem(`hist_e_${id}`, JSON.stringify(obj)); kvPut(`hist_e_${id}`, obj); };
 const getHistD = (id) => { try { return JSON.parse(localStorage.getItem(`hist_d_${id}`) || "[]"); } catch { return []; } };
 const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.stringify(arr)); kvPut(`hist_d_${id}`, arr); };
+// 검색용: 채무자 히스토리(엑셀 원본 + 수동 추가, 수정/삭제 반영)를 한 문자열로 합친다
+const getDebtorHistoryText = (d) => {
+  const deletedSet = new Set(getHistD(d.id));
+  const edits = getHistE(d.id);
+  const excelTexts = (d.history || []).map((h, i) => deletedSet.has(i) ? "" : (edits[`e_${i}`]?.content ?? h.content ?? ""));
+  const manualTexts = getHistM(d.id).map(h => h.content || "");
+  return [...excelTexts, ...manualTexts].join(" ");
+};
 const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
 const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 
@@ -2567,6 +2575,7 @@ export default function App() {
         if ((d.hubCode || "").toLowerCase().includes(ql)) return true;
         if ((d.hubName || "").toLowerCase().includes(ql)) return true;
         if ((d.guarantors || []).some(g => (g || "").toLowerCase().includes(ql))) return true;
+        if (getDebtorHistoryText(d).toLowerCase().includes(ql)) return true;
         return false;
       });
     }
@@ -3720,7 +3729,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         );
       })()}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 연대보증인, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 연대보증인, 허브명, 코드, 히스토리 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
         <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
