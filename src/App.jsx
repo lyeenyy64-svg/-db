@@ -1445,10 +1445,9 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
         {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-          const onDeleteClick = () => {
-            if (viewMode === "trash") { if (confirm(`"${r.debtorName || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("forcedExecutions", r.id); }
-            else updateKeyIssue("forcedExecutions", r.id, { deleted: true });
-          };
+          const onRestoreClick = () => updateKeyIssue("forcedExecutions", r.id, { deleted: false });
+          const onPurgeClick = () => { if (confirm(`"${r.debtorName || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("forcedExecutions", r.id); };
+          const onDeleteClick = () => updateKeyIssue("forcedExecutions", r.id, { deleted: true });
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
@@ -1483,7 +1482,15 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[9], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[9], textAlign: "center" })}>
+                {canDelete && (viewMode === "trash"
+                  ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
+                      <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                    </div>
+                  : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                )}
+              </td>
             </tr>
           );
         })}
@@ -1509,10 +1516,9 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
         {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-          const onDeleteClick = () => {
-            if (viewMode === "trash") { if (confirm(`"${r.target || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("creditAnalyses", r.id); }
-            else updateKeyIssue("creditAnalyses", r.id, { deleted: true });
-          };
+          const onRestoreClick = () => updateKeyIssue("creditAnalyses", r.id, { deleted: false });
+          const onPurgeClick = () => { if (confirm(`"${r.target || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("creditAnalyses", r.id); };
+          const onDeleteClick = () => updateKeyIssue("creditAnalyses", r.id, { deleted: true });
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" />{strikeLine}</td>
@@ -1545,7 +1551,15 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[8], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[8], textAlign: "center" })}>
+                {canDelete && (viewMode === "trash"
+                  ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
+                      <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                    </div>
+                  : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                )}
+              </td>
             </tr>
           );
         })}
@@ -1594,10 +1608,9 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>{emptyMsg}</td></tr>}
         {shown.map(r => {
           const d = debtors.find(x => x.id === r.debtorId);
-          const onDeleteClick = () => {
-            if (viewMode === "trash") { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("negotiations", r.id); }
-            else updateKeyIssue("negotiations", r.id, { deleted: true });
-          };
+          const onRestoreClick = () => updateKeyIssue("negotiations", r.id, { deleted: false });
+          const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("negotiations", r.id); };
+          const onDeleteClick = () => updateKeyIssue("negotiations", r.id, { deleted: true });
           return (
             <tr key={r.id}>
               <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
@@ -1612,7 +1625,15 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
                   style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
                 />
               </td>
-              <td style={{ ...issueTd, width: colWidths[3], textAlign: "center" }}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={{ ...issueTd, width: viewMode === "trash" ? 88 : colWidths[3], textAlign: "center" }}>
+                {canDelete && (viewMode === "trash"
+                  ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
+                      <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                    </div>
+                  : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                )}
+              </td>
             </tr>
           );
         })}
@@ -1637,10 +1658,9 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
         {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-          const onDeleteClick = () => {
-            if (viewMode === "trash") { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); }
-            else updateKeyIssue("todoList", r.id, { deleted: true });
-          };
+          const onRestoreClick = () => updateKeyIssue("todoList", r.id, { deleted: false });
+          const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); };
+          const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}>
@@ -1660,7 +1680,15 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[4], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[4], textAlign: "center" })}>
+                {canDelete && (viewMode === "trash"
+                  ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
+                      <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                    </div>
+                  : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                )}
+              </td>
             </tr>
           );
         })}
