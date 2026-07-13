@@ -1947,29 +1947,40 @@ export default function App() {
   }, [sel?.id]);
 
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
+  // 변경이 있을 때마다 즉시 새로고침하지 않고, 변경이 멈춘 뒤 IDLE_REFRESH_MS만큼
+  // 조용하면 새로고침한다. 다만 변경이 계속 이어져 조용해질 틈이 없어도
+  // MAX_REFRESH_MS(최대 대기)마다는 강제로 한 번 새로고침한다.
   useEffect(() => {
     if (backendStatus !== "connected") return;
+    const IDLE_REFRESH_MS = 10 * 60 * 1000; // 데이터 변경이 멈춘 뒤 10분 지나면 새로고침
+    const MAX_REFRESH_MS  = 30 * 60 * 1000; // 변경이 계속돼도 최소 30분마다는 새로고침
     let debounce;
     let src;
     let retryTimer;
     let idleWaitTimer;
+    let maxTimer;
 
     // 입력 중(포커스가 입력 필드에 있음)이면 새로고침으로 값이 덮어써지지 않도록 대기
     const isUserTyping = () => {
       const el = document.activeElement;
       return !!el && ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName);
     };
+    const resetMaxTimer = () => {
+      clearTimeout(maxTimer);
+      maxTimer = setTimeout(reloadWhenIdle, MAX_REFRESH_MS);
+    };
     const reloadWhenIdle = () => {
       clearTimeout(idleWaitTimer);
       if (isUserTyping()) { idleWaitTimer = setTimeout(reloadWhenIdle, 2000); return; }
       loadData();
+      resetMaxTimer();
     };
 
     const connect = () => {
       src = new EventSource("/api/events");
       src.addEventListener("data-changed", () => {
         clearTimeout(debounce);
-        debounce = setTimeout(reloadWhenIdle, 500);
+        debounce = setTimeout(reloadWhenIdle, IDLE_REFRESH_MS);
       });
       src.onerror = () => {
         src.close();
@@ -1978,6 +1989,7 @@ export default function App() {
       };
     };
     connect();
+    resetMaxTimer();
 
     // 탭 복귀 시 놓친 변경사항 반영 (입력 중이면 대기)
     const onVisible = () => { if (document.visibilityState === "visible") reloadWhenIdle(); };
@@ -1988,6 +2000,7 @@ export default function App() {
       clearTimeout(debounce);
       clearTimeout(retryTimer);
       clearTimeout(idleWaitTimer);
+      clearTimeout(maxTimer);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [backendStatus, loadData]);
