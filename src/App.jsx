@@ -1579,9 +1579,9 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
 };
 
 const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, currentUserName }) => {
-  const cols = ["채무자명", "담당자", "주요 협의 사항", "삭제"];
-  // 채무자명/담당자는 좁게, 주요 협의 사항이 남는 공간을 모두 가져가도록 폭 지정
-  const colWidths = [170, 64, undefined, 46];
+  const cols = ["채무자명", "주요 협의 사항", "삭제"];
+  // 채무자명은 좁게, 주요 협의 사항이 남는 공간을 모두 가져가도록 폭 지정
+  const colWidths = [170, undefined, 46];
 
   // 주요협의사항 텍스트를 해당 채무자의 히스토리(hist_m_)에도 반영한다.
   // 같은 협의건을 여러 번 고쳐도 새 기록이 계속 쌓이지 않도록 r.histId로 같은 항목을 갱신하고,
@@ -1617,14 +1617,12 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>{emptyMsg}</td></tr>}
         {shown.map(r => {
-          const d = debtors.find(x => x.id === r.debtorId);
           const onRestoreClick = () => updateKeyIssue("negotiations", r.id, { deleted: false });
           const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("negotiations", r.id); };
           const onDeleteClick = () => updateKeyIssue("negotiations", r.id, { deleted: true });
           return (
             <tr key={r.id}>
               <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
-              <td style={{ ...issueTd, width: colWidths[1] }}><span style={issueAuto}>{d?.assignee || "-"}</span></td>
               <td style={issueTd}>
                 <KoreanTextarea
                   value={r.note || ""}
@@ -1635,7 +1633,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
                   style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
                 />
               </td>
-              <td style={{ ...issueTd, width: viewMode === "trash" ? 88 : colWidths[3], textAlign: "center" }}>
+              <td style={{ ...issueTd, width: viewMode === "trash" ? 88 : colWidths[2], textAlign: "center" }}>
                 {canDelete && (viewMode === "trash"
                   ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                       <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
