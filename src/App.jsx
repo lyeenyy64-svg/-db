@@ -2401,10 +2401,10 @@ export default function App() {
     delMR(MK[listKey], id);
   };
   // ─── 담당자별 월간 목표 금액 설정 ─────────────────────────
-  const setAssigneeTarget = (assignee, monthlyTarget) => {
+  const setAssigneeTarget = (assignee, field, value) => {
     const existing = (data.assigneeTargets || []).find(t => t.assignee === assignee);
-    if (existing) updateKeyIssue("assigneeTargets", existing.id, { monthlyTarget });
-    else addKeyIssue("assigneeTargets", { id: uid("TGT"), assignee, monthlyTarget });
+    if (existing) updateKeyIssue("assigneeTargets", existing.id, { [field]: value });
+    else addKeyIssue("assigneeTargets", { id: uid("TGT"), assignee, [field]: value });
   };
   // #4 브랜드 변경 시 채무자 연쇄 갱신
   const updateBrandInDebtors = (oldCode, newBrand) => {
@@ -2513,7 +2513,7 @@ export default function App() {
     const debtorAssignee = {};
     data.debtors.forEach(d => { debtorAssignee[d.id] = d.assignee; });
     const targetMap = {};
-    (data.assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t.monthlyTarget; });
+    (data.assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t; });
     const now = new Date();
     const y = now.getFullYear(), m = now.getMonth() + 1;
     const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
@@ -2521,13 +2521,20 @@ export default function App() {
       .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
       .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
       .reduce((s, p) => s + (p.totalAmount || 0), 0);
+    const sumForYear = (a, year) => data.payments
+      .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+      .filter(p => new Date(p.paymentDate).getFullYear() === year)
+      .reduce((s, p) => s + (p.totalAmount || 0), 0);
     const rows = config.assignees.map(a => {
       const thisMonth = sumFor(a, y, m);
       const lastMonth = sumFor(a, py, pm);
+      const thisYear = sumForYear(a, y);
       const momRate = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : (thisMonth > 0 ? 100 : 0);
-      const target = targetMap[a] || 0;
+      const target = targetMap[a]?.monthlyTarget || 0;
+      const annualTarget = targetMap[a]?.annualTarget || 0;
       const achieveRate = target > 0 ? (thisMonth / target) * 100 : null;
-      return { assignee: a, thisMonth, lastMonth, momRate, target, achieveRate };
+      const annualAchieveRate = annualTarget > 0 ? (thisYear / annualTarget) * 100 : null;
+      return { assignee: a, thisMonth, lastMonth, thisYear, momRate, target, annualTarget, achieveRate, annualAchieveRate };
     });
     rows.sort((a, b) => b.thisMonth - a.thisMonth);
     return rows;
@@ -3078,7 +3085,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: "var(--bg2)" }}>
-                    {["순위", "담당자", "이번달 회수액", "지난달 회수액", "전월대비", "월간 목표", "달성률"].map((h, i) => (
+                    {["순위", "담당자", "이번달 회수액", "연간 회수액", "지난달 회수액", "전월대비", "월간 목표", "연간 목표", "월간 달성률", "연간 달성률"].map((h, i) => (
                       <th key={h} style={{ padding: "8px 10px", textAlign: i === 1 ? "left" : "center", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -3089,13 +3096,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)" }}>{i + 1}</td>
                       <td style={{ padding: "10px", fontWeight: 600 }}>{a.assignee}</td>
                       <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisMonth)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisYear)}</td>
                       <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)" }}>{fmt(a.lastMonth)}</td>
                       <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)" }}>
                         {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
                         <input type="text" inputMode="numeric" value={a.target ? a.target.toLocaleString("ko-KR") : ""}
-                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, isNaN(n) ? 0 : n); }}
+                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "monthlyTarget", isNaN(n) ? 0 : n); }}
+                          placeholder="목표 미설정"
+                          style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                      </td>
+                      <td style={{ padding: "10px", textAlign: "center" }}>
+                        <input type="text" inputMode="numeric" value={a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : ""}
+                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "annualTarget", isNaN(n) ? 0 : n); }}
                           placeholder="목표 미설정"
                           style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
                       </td>
@@ -3105,6 +3119,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: a.achieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.achieveRate.toFixed(1)}%</span>
                             <div style={{ width: 80, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" }}>
                               <div style={{ width: `${Math.min(100, a.achieveRate)}%`, height: "100%", background: a.achieveRate >= 100 ? "#10b981" : "#3b82f6" }} />
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: "10px", textAlign: "center" }}>
+                        {a.annualAchieveRate == null ? <span style={{ color: "var(--tm)", fontSize: 12 }}>-</span> : (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                            <span className="mono" style={{ fontWeight: 700, fontSize: 13, color: a.annualAchieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.annualAchieveRate.toFixed(1)}%</span>
+                            <div style={{ width: 80, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" }}>
+                              <div style={{ width: `${Math.min(100, a.annualAchieveRate)}%`, height: "100%", background: a.annualAchieveRate >= 100 ? "#10b981" : "#3b82f6" }} />
                             </div>
                           </div>
                         )}
