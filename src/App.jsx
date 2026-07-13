@@ -2566,11 +2566,7 @@ export default function App() {
         if ((d.phone || "").toLowerCase().includes(ql)) return true;
         if ((d.hubCode || "").toLowerCase().includes(ql)) return true;
         if ((d.hubName || "").toLowerCase().includes(ql)) return true;
-        // 서브로우 코드/허브 검색
-        if (d.subRows && d.subRows.some(s =>
-          (s.code || "").toLowerCase().includes(ql) ||
-          (s.hubName || "").toLowerCase().includes(ql)
-        )) return true;
+        if ((d.guarantors || []).some(g => (g || "").toLowerCase().includes(ql))) return true;
         return false;
       });
     }
@@ -3724,7 +3720,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         );
       })()}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
-        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+        <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 연대보증인, 허브명, 코드 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
         <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
         <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ width: 120 }}><option value="전체">분류: 전체</option>{config.categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ width: 130 }}><option value="전체">추심상태: 전체</option>{config.collStatuses.map(s => <option key={s} value={s}>{s}</option>)}</select>
@@ -3766,14 +3762,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <tr key={d.id} onClick={() => { setSel(d); setDetailTab("히스토리"); }} style={{ cursor: "pointer", borderBottom: "1px solid var(--brd)" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <td style={{ padding: "10px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
-                    <td style={{ padding: "10px 10px", whiteSpace: "nowrap" }}><Badge status={d.category} small /></td>
-                    <td style={{ padding: "10px 10px", fontSize: 12 }}>{d.assignee}</td>
-                    <td style={{ padding: "10px 10px", fontWeight: 500 }}>{d.name}</td>
-                    <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)" }}>{d.guarantors?.join(", ") || "-"}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)" }}>{d.hubCode}</td>
-                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.hubName}</td>
-                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)" }}>{d.debtCause || "-"}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "center" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                    <td style={{ padding: "10px 10px", whiteSpace: "nowrap", textAlign: "center" }}><Badge status={d.category} small /></td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, textAlign: "center" }}>{d.assignee}</td>
+                    <td style={{ padding: "10px 10px", fontWeight: 500, textAlign: "center" }}>{d.name}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{d.guarantors?.join(", ") || "-"}</td>
+                    <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{d.hubCode}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{d.hubName}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{d.debtCause || "-"}</td>
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(d.principalBalance)}</td>
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(d.collectedAmount)}</td>
@@ -3794,8 +3790,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     onClick={() => { setSel(sub); setDetailTab("히스토리"); }}>
                     {isFirst && (
-                      <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", ...sharedBg }}>
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 5 }}>
+                      <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", textAlign: "center", ...sharedBg }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
                           <BrandBadge code={d.brand} brands={config.brands} />
                           {canEdit && (
                             <button onClick={e => { e.stopPropagation(); setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName } }); }}
@@ -3806,19 +3802,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                       </td>
                     )}
-                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", ...sharedBg }}><Badge status={d.category} small /></td>}
-                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", fontSize: 12, borderBottom: "1px solid var(--brd)", ...sharedBg }}>{d.assignee}</td>}
+                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", textAlign: "center", ...sharedBg }}><Badge status={d.category} small /></td>}
+                    {isFirst && <td rowSpan={span} style={{ padding: "10px 10px", fontSize: 12, borderBottom: "1px solid var(--brd)", textAlign: "center", ...sharedBg }}>{d.assignee}</td>}
                     {isFirst && (
-                      <td rowSpan={span} style={{ padding: "10px 10px", fontWeight: 600, borderBottom: "1px solid var(--brd)", borderRight: "1px solid var(--brd)", ...sharedBg }}
+                      <td rowSpan={span} style={{ padding: "10px 10px", fontWeight: 600, borderBottom: "1px solid var(--brd)", borderRight: "1px solid var(--brd)", textAlign: "center", ...sharedBg }}
                         onClick={e => { e.stopPropagation(); setSel(subs[0]); setDetailTab("히스토리"); }}>
                         {d.name}
                         <div style={{ fontSize: 10, color: "var(--tm)", fontWeight: 400, marginTop: 2 }}>{span}건</div>
                       </td>
                     )}
-                    <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)" }}>{sub.guarantors?.join(", ") || "-"}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)" }}>{sub.hubCode}</td>
-                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.hubName}</td>
-                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)" }}>{sub.debtCause || "-"}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{sub.guarantors?.join(", ") || "-"}</td>
+                    <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{sub.hubCode}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{sub.hubName}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{sub.debtCause || "-"}</td>
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(sub.principalBalance || 0)}</td>
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(sub.collectedAmount || 0)}</td>
