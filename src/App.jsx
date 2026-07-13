@@ -1405,17 +1405,27 @@ const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--br
 const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent", textAlign: "center" };
 const issueAuto = { fontSize: 12, color: "var(--tm)" };
 
-const IssueTableCard = ({ title, count, onAdd, children }) => (
-  <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
-      <button onClick={onAdd} style={{ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, background: "var(--bg2)", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer" }}>등록</button>
+// viewMode: "all"(기본, 삭제되지 않은 전체) | "completed"(완료만) | "trash"(삭제된 것만)
+// showComplete=false인 표(주요 협의 대상자)는 완료 개념이 없어 완료 버튼을 숨긴다
+const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, children }) => {
+  const toggle = (mode) => setViewMode(viewMode === mode ? "all" : mode);
+  const btn = (active) => ({ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer", background: active ? "#000" : "var(--bg2)", color: active ? "#fff" : "var(--acc)" });
+  return (
+    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={onAdd} style={btn(false)}>등록</button>
+          {showComplete && <button onClick={() => toggle("completed")} style={btn(viewMode === "completed")}>완료</button>}
+          <button onClick={() => toggle("trash")} style={btn(viewMode === "trash")}>삭제</button>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+      </div>
     </div>
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
-    </div>
-  </div>
-);
+  );
+};
 
 const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["채무자명", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
@@ -1423,15 +1433,22 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   // 가져가며 유독 넓어 보이던 문제 수정 — 각 칸에 비율에 맞는 폭을 지정
   const colWidths = [110, 90, 110, 110, 70, 90, 110, 110, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
+  const [viewMode, setViewMode] = useState("all");
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : !r.deleted);
+  const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
-    <IssueTableCard title="강제집행 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false })}>
+    <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
+      onAdd={() => { setViewMode("all"); addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false }); }}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
-        {rows.map(r => {
+        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+          const onDeleteClick = () => {
+            if (viewMode === "trash") { if (confirm(`"${r.debtorName || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("forcedExecutions", r.id); }
+            else updateKeyIssue("forcedExecutions", r.id, { deleted: true });
+          };
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
@@ -1466,7 +1483,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[9], textAlign: "center" })}>{canDelete && <button onClick={() => deleteKeyIssue("forcedExecutions", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: colWidths[9], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -1480,15 +1497,22 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   // 대상자/요청자가 폭 제한 없이 남는 공간을 다 가져가 유독 넓어 보이던 문제 수정
   const colWidths = [110, 90, 90, 110, 90, 110, 90, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
+  const [viewMode, setViewMode] = useState("all");
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : !r.deleted);
+  const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
-    <IssueTableCard title="신용분석 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false })}>
+    <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
+      onAdd={() => { setViewMode("all"); addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false }); }}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
-        {rows.map(r => {
+        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.completed && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+          const onDeleteClick = () => {
+            if (viewMode === "trash") { if (confirm(`"${r.target || "이 항목"}"을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) deleteKeyIssue("creditAnalyses", r.id); }
+            else updateKeyIssue("creditAnalyses", r.id, { deleted: true });
+          };
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" />{strikeLine}</td>
@@ -1521,7 +1545,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[8], textAlign: "center" })}>{canDelete && <button onClick={() => deleteKeyIssue("creditAnalyses", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: colWidths[8], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -1559,14 +1583,21 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
     updateKeyIssue("negotiations", r.id, { histId: newId });
   };
 
+  const [viewMode, setViewMode] = useState("all");
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : !r.deleted);
+  const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
-    <IssueTableCard title="주요 협의 대상자" count={rows.length}
-      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null })}>
+    <IssueTableCard title="주요 협의 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} showComplete={false}
+      onAdd={() => { setViewMode("all"); addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null, deleted: false }); }}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>등록된 대상자가 없습니다 — [등록]으로 추가하세요</td></tr>}
-        {rows.map(r => {
+        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.map(r => {
           const d = debtors.find(x => x.id === r.debtorId);
+          const onDeleteClick = () => {
+            if (viewMode === "trash") { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("negotiations", r.id); }
+            else updateKeyIssue("negotiations", r.id, { deleted: true });
+          };
           return (
             <tr key={r.id}>
               <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
@@ -1581,7 +1612,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
                   style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
                 />
               </td>
-              <td style={{ ...issueTd, width: colWidths[3], textAlign: "center" }}>{canDelete && <button onClick={() => deleteKeyIssue("negotiations", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={{ ...issueTd, width: colWidths[3], textAlign: "center" }}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
@@ -1594,15 +1625,22 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const cols = ["담당자", "업무 내용", "결과", "진행상태", "삭제"];
   const colWidths = [90, undefined, 220, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
+  const [viewMode, setViewMode] = useState("all");
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : !r.deleted);
+  const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
   return (
-    <IssueTableCard title="To Do List" count={rows.length}
-      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중" })}>
+    <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
+      onAdd={() => { setViewMode("all"); addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false }); }}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
-        {rows.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>등록된 항목이 없습니다 — [등록]으로 추가하세요</td></tr>}
-        {rows.map(r => {
+        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.map(r => {
           const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
           const strikeLine = r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+          const onDeleteClick = () => {
+            if (viewMode === "trash") { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); }
+            else updateKeyIssue("todoList", r.id, { deleted: true });
+          };
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}>
@@ -1622,7 +1660,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[4], textAlign: "center" })}>{canDelete && <button onClick={() => deleteKeyIssue("todoList", r.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
+              <td style={strike({ width: colWidths[4], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
             </tr>
           );
         })}
