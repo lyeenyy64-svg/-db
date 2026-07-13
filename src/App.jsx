@@ -1480,7 +1480,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
               <td style={strike({ width: colWidths[7] })}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
               <td style={strike({ width: colWidths[8], maxWidth: colWidths[8] })}>
                 <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
-                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
                 {strikeLine}
               </td>
               <td style={strike({ width: colWidths[9], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
@@ -1542,7 +1542,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
               </td>
               <td style={strike({ width: colWidths[7], maxWidth: colWidths[7] })}>
                 <button onClick={() => updateKeyIssue("creditAnalyses", r.id, { completed: !r.completed })}
-                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>완료</button>
+                  style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
                 {strikeLine}
               </td>
               <td style={strike({ width: colWidths[8], textAlign: "center" })}>{canDelete && <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>}</td>
