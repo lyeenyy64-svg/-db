@@ -1778,6 +1778,12 @@ export default function App() {
   // 실시간 동기화(SSE) 재렌더링 시 PaymentsView가 새로 마운트되어도 탭 선택이 유지되도록
   // legalSubTab/rehabSubTab과 동일하게 최상위에 둔다
   const [paymentsSubTab, setPaymentsSubTab] = useState("목록");
+  // InstallmentsView도 같은 이유로 최상위에 둔다 — 그렇지 않으면 CHECK 사항 패널 클릭 시
+  // installmentsFocusDate를 소비/초기화하는 과정에서 InstallmentsView가 다시 마운트되어
+  // 방금 연 dayPopup이 곧바로 사라져버린다
+  const [instTab, setInstTab] = useState("이번달");
+  const [viewMonth, setViewMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [dayPopup, setDayPopup] = useState(null);
   // 대시보드 CHECK 사항 패널에서 특정 건수를 클릭했을 때, 해당 탭으로 이동한 뒤
   // 그 날짜만 보도록 열어주기 위한 신호값 (설정되면 해당 뷰가 소비하고 다시 null로 되돌린다)
   const [installmentsFocusDate, setInstallmentsFocusDate] = useState(null);
@@ -4618,14 +4624,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Installments View ──────────────────────────────────
   const InstallmentsView = () => {
-    const [instTab, setInstTab] = useState("이번달");
     const now = new Date();
-    const [viewMonth, setViewMonth] = useState(now.toISOString().slice(0, 7));
     const [stFilter, setStFilter] = useState("전체");
     const [importing, setImporting] = useState(false);
     const [editDateId, setEditDateId] = useState(null);
     const [editDateVal, setEditDateVal] = useState("");
-    const [dayPopup, setDayPopup] = useState(null);
     const [dragSchedId, setDragSchedId] = useState(null);
     const [dragOverDate, setDragOverDate] = useState(null);
     const [cardSearch, setCardSearch] = useState("");
