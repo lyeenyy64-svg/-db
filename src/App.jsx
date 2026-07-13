@@ -1434,7 +1434,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   const colWidths = [110, 90, 110, 110, 70, 90, 110, 110, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : !r.deleted);
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
@@ -1498,7 +1498,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   const colWidths = [110, 90, 90, 110, 90, 110, 90, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : !r.deleted);
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
@@ -1626,7 +1626,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const colWidths = [90, undefined, 220, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : !r.deleted);
+  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
