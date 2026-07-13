@@ -877,12 +877,13 @@ const AutoComplete = ({ value, onChange, options, placeholder, displayFn, style:
     </div>
   );
 };
-const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
+const DebtorAutoComplete = ({ value, onChange, debtors, brands, nameOnly = false }) => {
   const [text, setText] = useState("");
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const selected = debtors.find(d => d.id === value);
-  useEffect(() => { if (selected) setText(`${selected.brandName} / ${selected.name} (${selected.id})`); }, [value]);
+  const label = (d) => nameOnly ? d.name : `${d.brandName} / ${d.name} (${d.id})`;
+  useEffect(() => { if (selected) setText(label(selected)); }, [value]);
   useEffect(() => {
     const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", handler);
@@ -900,7 +901,7 @@ const DebtorAutoComplete = ({ value, onChange, debtors, brands }) => {
         // 폭만큼 눌려서 항목이 겹치거나 클릭하기 어려워지지 않도록 최소 폭을 보장
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, minWidth: 280, maxHeight: 220, overflow: "auto", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 8, marginTop: 2, zIndex: 100, boxShadow: "0 4px 16px rgba(0,0,0,.1)" }}>
           {filtered.map(d => (
-            <div key={d.id} onClick={() => { onChange(d.id); setText(`${d.brandName} / ${d.name} (${d.id})`); setOpen(false); }}
+            <div key={d.id} onClick={() => { onChange(d.id); setText(label(d)); setOpen(false); }}
               style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--brd)" }}
               onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -1622,7 +1623,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
           const onDeleteClick = () => updateKeyIssue("negotiations", r.id, { deleted: true });
           return (
             <tr key={r.id}>
-              <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} /></td>
+              <td style={{ ...issueTd, width: colWidths[0] }}><DebtorAutoComplete value={r.debtorId} onChange={id => { updateKeyIssue("negotiations", r.id, { debtorId: id }); syncNoteToHistory(r, id, r.note); }} debtors={debtors} brands={brands} nameOnly /></td>
               <td style={issueTd}>
                 <KoreanTextarea
                   value={r.note || ""}
