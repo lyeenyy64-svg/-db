@@ -1707,6 +1707,9 @@ export default function App() {
   const [adminEditingRule, setAdminEditingRule] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
+  // 실시간 동기화(SSE) 재렌더링 시 PaymentsView가 새로 마운트되어도 탭 선택이 유지되도록
+  // legalSubTab/rehabSubTab과 동일하게 최상위에 둔다
+  const [paymentsSubTab, setPaymentsSubTab] = useState("목록");
   // 대시보드 CHECK 사항 패널에서 특정 건수를 클릭했을 때, 해당 탭으로 이동한 뒤
   // 그 날짜만 보도록 열어주기 위한 신호값 (설정되면 해당 뷰가 소비하고 다시 null로 되돌린다)
   const [installmentsFocusDate, setInstallmentsFocusDate] = useState(null);
@@ -4423,13 +4426,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Payments View ──────────────────────────────────────
   const PaymentsView = () => {
-    const [subTab, setSubTab] = useState("목록");
     const [pq, setPq] = useState(""); const [pBrand, setPBrand] = useState("전체"); const [pPage, setPPage] = useState(1);
     const [pFrom, setPFrom] = useState(""); const [pTo, setPTo] = useState("");
     // 대시보드 "오늘 입금 건수" 클릭 시 그 날짜로 필터를 걸어서 보여준다
     useEffect(() => {
       if (paymentsFocusDate) {
-        setSubTab("목록");
+        setPaymentsSubTab("목록");
         setPq(""); setPBrand("전체");
         setPFrom(paymentsFocusDate); setPTo(paymentsFocusDate); setPPage(1);
         setPaymentsFocusDate(null);
@@ -4460,11 +4462,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
           {[{ k: "목록", l: "입금 목록" }, { k: "미매칭", l: pendingCount > 0 ? "미매칭 관리 (" + pendingCount + ")" : "미매칭 관리" }].map(t => (
-            <button key={t.k} onClick={() => setSubTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: subTab === t.k ? "var(--bg)" : "transparent", color: subTab === t.k ? (t.k === "미매칭" && pendingCount > 0 ? "#ef4444" : "var(--tp)") : "var(--tm)" }}>{t.l}</button>
+            <button key={t.k} onClick={() => setPaymentsSubTab(t.k)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: paymentsSubTab === t.k ? "var(--bg)" : "transparent", color: paymentsSubTab === t.k ? (t.k === "미매칭" && pendingCount > 0 ? "#ef4444" : "var(--tp)") : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
-        {subTab === "미매칭" && <PendingPaymentsView refreshKey={pendingRefreshKey} />}
-        <div style={{ display: subTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
+        {paymentsSubTab === "미매칭" && <PendingPaymentsView refreshKey={pendingRefreshKey} />}
+        <div style={{ display: paymentsSubTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
           <KPI label="총 입금건수" value={`${pFiltered.length}건`} sub={`전체 ${data.payments.length}건`} color="#3b82f6" />
           <KPI label="총 입금액" value={fmt(totalAmt)} sub="필터 적용 합계" color="#10b981" />
