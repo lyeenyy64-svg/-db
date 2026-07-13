@@ -1500,16 +1500,16 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
 };
 
 const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
-  const cols = ["대상자", "브랜드", "요청자", "요청일", "담당자", "신용조회일", "신용조회 결과", "처리결과", "삭제"];
+  const cols = ["대상자", "주민등록번호", "연락처", "브랜드", "요청자", "요청일", "담당자", "신용조회일", "신용조회 결과", "처리결과", "삭제"];
   // 대상자/요청자가 폭 제한 없이 남는 공간을 다 가져가 유독 넓어 보이던 문제 수정
-  const colWidths = [110, 90, 90, 110, 90, 110, 90, 110, 46];
+  const colWidths = [110, 130, 110, 90, 90, 110, 90, 110, 90, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
   const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false }); }}>
+      onAdd={() => { setViewMode("all"); addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false }); }}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1522,36 +1522,38 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" />{strikeLine}</td>
-              <td style={strike({ width: colWidths[1] })}>
+              <td style={strike({ width: colWidths[1] })}><input value={r.residentId || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { residentId: e.target.value })} style={issueInp} placeholder="주민등록번호" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[2] })}><input value={r.phone || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { phone: e.target.value })} style={issueInp} placeholder="연락처" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[3] })}>
                 <select value={r.brand || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[2] })}><KoreanInput value={r.requester || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requester: e.target.value })} style={issueInp} placeholder="요청자" />{strikeLine}</td>
-              <td style={strike({ width: colWidths[3] })}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[4] })}>
+              <td style={strike({ width: colWidths[4] })}><KoreanInput value={r.requester || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requester: e.target.value })} style={issueInp} placeholder="요청자" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[5] })}><input type="date" value={r.requestDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { requestDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[6] })}>
                 <select value={r.assignee || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[5] })}><input type="date" value={r.checkDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[6] })}>
+              <td style={strike({ width: colWidths[7] })}><input type="date" value={r.checkDate || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[8] })}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
                   <input value={r.checkResult || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkResult: e.target.value.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="000" style={{ ...issueInp, width: 46, textAlign: "right", padding: "5px 4px" }} />
                   <span style={{ fontSize: 12, color: "var(--ts)" }}>점</span>
                 </div>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[7], maxWidth: colWidths[7] })}>
+              <td style={strike({ width: colWidths[9], maxWidth: colWidths[9] })}>
                 <button onClick={() => updateKeyIssue("creditAnalyses", r.id, { completed: !r.completed })}
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
                 {strikeLine}
               </td>
-              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[8], textAlign: "center" })}>
+              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[10], textAlign: "center" })}>
                 {canDelete && (viewMode === "trash"
                   ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                       <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
