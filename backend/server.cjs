@@ -2304,6 +2304,17 @@ app.post("/api/admin/heartbeat", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// 임시 진단용: "알수없음"으로 잡히는 요청이 정확히 어떤 경로(path)에서 오는지 확인하기
+// 위한 엔드포인트. 원인 확인 후 제거할 예정.
+app.get("/api/admin/stats-debug-unknown", (req, res) => {
+  try {
+    const rows = db.prepare(
+      "SELECT id, type, user_name, bytes, path, ts FROM user_activity_log WHERE user_name = '알수없음' ORDER BY id DESC LIMIT 50"
+    ).all();
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 어드민 통계: 사용자별 일/월/연 접속시간 · 데이터 입력량
 // 통계 집계 시작일 — 이전 테스트/오류 데이터(예: 깨진 사용자명)를 통계에서 배제하기 위한 기준일.
 // 이 날짜 이전 데이터는 화면에 표시하지 않는다 (데이터 자체를 지우지는 않음).
