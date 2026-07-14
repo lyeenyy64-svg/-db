@@ -262,6 +262,14 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v2] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v2', '1')").run();
   }
+  // v2 이후에도 로그인 전 app_users 동기화가 계속 "알수없음"으로 잡혔다
+  // (/api/kv/app_users를 통계 집계 대상에서 제외함) — 잔여분 정리.
+  const cleanupDoneV3 = db.prepare("SELECT value FROM kv_store WHERE key='stats_unknown_cleanup_v3'").get();
+  if (!cleanupDoneV3) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE user_name = '알수없음'").run();
+    console.log(`[stats_unknown_cleanup_v3] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v3', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
@@ -452,8 +460,11 @@ function extractUserName(req) {
   }
   return "알수없음";
 }
+// 로그인 전에도 반복적으로 저장되는 시스템 설정성 키 — 특정 사용자의 "데이터 입력"으로
+// 볼 수 없어 통계 집계 대상에서 제외한다 (그래도 실제 저장은 정상 동작함).
+const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat", "/api/kv/app_users"];
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && req.path !== "/api/admin/heartbeat") {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !STATS_EXCLUDED_PATHS.includes(req.path)) {
     const userName = extractUserName(req);
     let bytes = 0;
     try { bytes = JSON.stringify(req.body || {}).length; } catch {}
@@ -2319,21 +2330,31 @@ app.get("/api/admin/stats", (req, res) => {
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
 
+    // "총 수정 건수"는 채무자 필드 수정(debtor_edit_log)뿐 아니라, 신용분석/협의/TodoList
+    // 등 kvPut 기반 저장(user_activity_log의 data_input)까지 합산해야 실제 작업량을 반영한다 —
+    // debtor_edit_log만 세면 kvPut으로 저장되는 대부분의 작업이 0건으로 보이게 된다.
     const editSummary = db.prepare(`
-      SELECT changed_by AS user, COUNT(*) AS totalEdits, MAX(changed_at) AS lastEditAt
+      SELECT changed_by AS user, COUNT(*) AS cnt, MAX(changed_at) AS lastAt
       FROM debtor_edit_log WHERE changed_at >= ? GROUP BY changed_by
+    `).all(STATS_START_DATE);
+    const dataInputSummary = db.prepare(`
+      SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? GROUP BY user_name
     `).all(STATS_START_DATE);
     const heartbeatSummary = db.prepare(`
       SELECT user_name AS user, MAX(ts) AS lastAt
       FROM user_activity_log WHERE type='heartbeat' AND ts >= ? GROUP BY user_name
     `).all(STATS_START_DATE);
     const summaryMap = new Map();
-    for (const r of editSummary) summaryMap.set(r.user, { user: r.user, totalEdits: r.totalEdits, lastActiveAt: r.lastEditAt });
-    for (const r of heartbeatSummary) {
-      const cur = summaryMap.get(r.user) || { user: r.user, totalEdits: 0, lastActiveAt: null };
-      if (!cur.lastActiveAt || r.lastAt > cur.lastActiveAt) cur.lastActiveAt = r.lastAt;
-      summaryMap.set(r.user, cur);
-    }
+    const touch = (user, addCnt, lastAt) => {
+      const cur = summaryMap.get(user) || { user, totalEdits: 0, lastActiveAt: null };
+      cur.totalEdits += addCnt;
+      if (lastAt && (!cur.lastActiveAt || lastAt > cur.lastActiveAt)) cur.lastActiveAt = lastAt;
+      summaryMap.set(user, cur);
+    };
+    for (const r of editSummary) touch(r.user, r.cnt, r.lastAt);
+    for (const r of dataInputSummary) touch(r.user, r.cnt, r.lastAt);
+    for (const r of heartbeatSummary) touch(r.user, 0, r.lastAt);
     const summary = [...summaryMap.values()].sort((a, b) => (b.lastActiveAt || "").localeCompare(a.lastActiveAt || ""));
 
     res.json({ access, volume, summary });
