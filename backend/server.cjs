@@ -2416,6 +2416,26 @@ app.get("/api/admin/stats", (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 어드민 통계 진단용: "알수없음"/특정 사용자로 잡힌 원본 요청을 개별적으로 확인
+// (집계된 합계만으로는 어느 요청이 왜 그 사용자/바이트로 잡혔는지 추적할 수 없어 추가)
+app.get("/api/admin/activity-log", (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
+    const where = [];
+    const params = [];
+    if (req.query.user) { where.push("user_name = ?"); params.push(req.query.user); }
+    if (req.query.date) { where.push("substr(ts,1,10) = ?"); params.push(req.query.date); }
+    const rows = db.prepare(`
+      SELECT type, user_name AS user, bytes, path, ts
+      FROM user_activity_log
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY ts DESC
+      LIMIT ?
+    `).all(...params, limit);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // 채무자별 파일 후보 스캔
 app.get("/api/documents/:debtorId/scan", (req, res) => {
   try {
