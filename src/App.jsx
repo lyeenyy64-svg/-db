@@ -192,9 +192,25 @@ function matchExcelDebtor(d) {
   return EXCEL_BY_KEY[`${d.brand}||${d.name}`] || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`] || undefined;
 }
 
-// 현재 로그인한 사용자 이름 — App() 컴포넌트 밖(kvPut 등)에서도 참조할 수 있도록
+// 현재 로그인한 사용자 이름 — App() 컴포넌트 밖에서도 참조할 수 있도록
 // 모듈 전역 변수에 최신값을 유지한다 (어드민 통계의 "누가 입력했는지" 집계용).
 let CURRENT_USER_NAME = null;
+
+// 이 앱은 fetch()를 곳곳에서 개별적으로 직접 호출하고 있어(중앙 API 헬퍼가 없음),
+// kvPut 하나만 고쳐서는 다른 fetch 호출들이 여전히 사용자명 없이 나가 통계가 "알수없음"에
+// 계속 쌓인다. window.fetch 자체를 한 번만 감싸서, 사용자명 헤더가 아직 없는 모든 요청에
+// 자동으로 붙여준다 (호출부를 하나씩 고칠 필요 없음).
+if (typeof window !== "undefined" && !window.__fetchWrappedForUserName) {
+  window.__fetchWrappedForUserName = true;
+  const origFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const headers = new Headers(init.headers || {});
+    if (!headers.has("X-User-Name") && CURRENT_USER_NAME) {
+      headers.set("X-User-Name", encodeURIComponent(CURRENT_USER_NAME));
+    }
+    return origFetch(input, { ...init, headers });
+  };
+}
 
 // ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
 // 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
@@ -203,7 +219,7 @@ function kvPut(key, value) {
   // 원인 추적이 가능하도록 최소한 콘솔에는 남긴다.
   fetch(`/api/kv/${encodeURIComponent(key)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", "X-User-Name": encodeURIComponent(CURRENT_USER_NAME || "") },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(value),
   })
     .then(r => { if (!r.ok) console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); })
