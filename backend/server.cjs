@@ -270,6 +270,15 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v3] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v3', '1')").run();
   }
+  // /api/kv/:key 저장은 지금까지 "요청 본문 전체 크기"를 입력량으로 기록해서, 목록 하나에서
+  // 한 글자만 고쳐도 목록 전체 크기(수만 자)가 그 사람 몫으로 잡혔다. 이제부터는 실제
+  // 변경분만 기록하도록 고쳤으니, 그 전에 부풀려진 기록은 한 번만 지운다.
+  const kvBytesFixDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_kv_bytes_fix_v1'").get();
+  if (!kvBytesFixDone) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE type='data_input' AND path LIKE '/api/kv/%'").run();
+    console.log(`[stats_kv_bytes_fix_v1] 부풀려진 kv 입력량 기록 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_kv_bytes_fix_v1', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
@@ -462,9 +471,13 @@ function extractUserName(req) {
 }
 // 로그인 전에도 반복적으로 저장되는 시스템 설정성 키 — 특정 사용자의 "데이터 입력"으로
 // 볼 수 없어 통계 집계 대상에서 제외한다 (그래도 실제 저장은 정상 동작함).
-const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat", "/api/kv/app_users"];
+// /api/kv/:key 저장은 이 배열/객체 전체를 매번 다시 쓰는 방식이라(예: 목록 하나에서
+// 한 항목만 고쳐도 전체 목록을 다시 저장) 요청 본문 전체 크기를 세면 실제로 입력한 양보다
+// 훨씬 크게 잡힌다 — 아래 kv 핸들러에서 실제 변경분만 따로 정확히 계산해서 기록하므로
+// 여기서는 중복 집계하지 않도록 제외한다.
+const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat"];
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !STATS_EXCLUDED_PATHS.includes(req.path)) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path)) {
     const userName = extractUserName(req);
     let bytes = 0;
     try { bytes = JSON.stringify(req.body || {}).length; } catch {}
@@ -2184,10 +2197,38 @@ app.get("/api/kv-all", (req, res) => {
   res.json(result);
 });
 
+// 배열(주로 id 있는 레코드 목록) 전체를 통째로 다시 저장하는 kvPut 특성상, 요청 본문
+// 전체 크기를 "입력량"으로 세면 목록 하나에서 한 글자만 고쳐도 목록 전체 크기가 잡힌다.
+// 이전 값과 비교해서 실제로 추가/변경된 항목의 크기만 합산 — 그 외 타입은 늘어난 만큼만.
+function diffByteEstimate(oldVal, newVal) {
+  if (Array.isArray(oldVal) && Array.isArray(newVal)) {
+    const oldById = new Map();
+    for (const item of oldVal) { if (item && typeof item === "object" && item.id != null) oldById.set(item.id, item); }
+    let total = 0;
+    for (const item of newVal) {
+      if (!item || typeof item !== "object" || item.id == null) { total += JSON.stringify(item ?? "").length; continue; }
+      const prev = oldById.get(item.id);
+      if (!prev || JSON.stringify(prev) !== JSON.stringify(item)) total += JSON.stringify(item).length;
+    }
+    return total;
+  }
+  const len = (v) => { try { return JSON.stringify(v ?? "").length; } catch { return 0; } };
+  return Math.max(0, len(newVal) - len(oldVal));
+}
+
 // PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
 app.put("/api/kv/:key", (req, res) => {
   const key = req.params.key;
   if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
+  // 시스템 설정성 키(app_users)는 통계 집계 대상이 아니므로 diff 계산 없이 바로 저장
+  if (key !== "app_users") {
+    try {
+      const oldRow = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
+      const oldVal = oldRow ? JSON.parse(oldRow.value) : null;
+      const bytes = diffByteEstimate(oldVal, req.body);
+      if (bytes > 0) insertActivityLog.run("data_input", extractUserName(req), bytes, req.path);
+    } catch {}
+  }
   db.prepare(`
     INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
@@ -2302,17 +2343,6 @@ app.post("/api/admin/heartbeat", (req, res) => {
     insertActivityLog.run("heartbeat", userName || "알수없음", 0, "/api/admin/heartbeat");
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
-});
-
-// 임시 진단용: "알수없음"으로 잡히는 요청이 정확히 어떤 경로(path)에서 오는지 확인하기
-// 위한 엔드포인트. 원인 확인 후 제거할 예정.
-app.get("/api/admin/stats-debug-unknown", (req, res) => {
-  try {
-    const rows = db.prepare(
-      "SELECT id, type, user_name, bytes, path, ts FROM user_activity_log WHERE user_name = '알수없음' ORDER BY id DESC LIMIT 50"
-    ).all();
-    res.json(rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // 어드민 통계: 사용자별 일/월/연 접속시간 · 데이터 입력량
