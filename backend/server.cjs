@@ -231,6 +231,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_edit_log_changed ON debtor_edit_log(changed_at);
 `);
 
+// 어드민 통계용 사용자 활동 로그 (접속 하트비트 / API 쓰기 요청 데이터량)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_activity_log (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    type      TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    bytes     INTEGER NOT NULL DEFAULT 0,
+    path      TEXT,
+    ts        TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ual_ts        ON user_activity_log(ts);
+  CREATE INDEX IF NOT EXISTS idx_ual_user_type ON user_activity_log(user_name, type);
+`);
+
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
 db.exec(`
   CREATE TABLE IF NOT EXISTS collection_channels (
@@ -396,6 +410,32 @@ app.use((req, res, next) => {
     res.on("finish", () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         broadcast("data-changed", { method: req.method, path: req.path, at: Date.now() });
+      }
+    });
+  }
+  next();
+});
+
+// 어드민 통계용: 모든 API 쓰기 요청의 본문 크기를 사용자별로 집계
+const insertActivityLog = db.prepare(
+  "INSERT INTO user_activity_log (type, user_name, bytes, path) VALUES (?, ?, ?, ?)"
+);
+const USER_FIELD_CANDIDATES = ["_userName", "userName", "createdByName", "createdBy", "changedBy", "changed_by", "author", "actorName"];
+function extractUserName(body) {
+  if (!body || typeof body !== "object") return "알수없음";
+  for (const f of USER_FIELD_CANDIDATES) {
+    if (typeof body[f] === "string" && body[f].trim()) return body[f].trim();
+  }
+  return "알수없음";
+}
+app.use((req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && req.path !== "/api/admin/heartbeat") {
+    const userName = extractUserName(req.body);
+    let bytes = 0;
+    try { bytes = JSON.stringify(req.body || {}).length; } catch {}
+    res.on("finish", () => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try { insertActivityLog.run("data_input", userName, bytes, req.path); } catch {}
       }
     });
   }
@@ -2204,6 +2244,72 @@ app.post("/api/admin/reindex", (req, res) => {
     });
     worker.on("error", err => { clearTimeout(timer); res.status(500).json({ ok: false, error: err.message }); });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 어드민 통계: 접속 하트비트 수신
+app.post("/api/admin/heartbeat", (req, res) => {
+  try {
+    const userName = (req.body && req.body.userName) ? String(req.body.userName).trim() : "";
+    insertActivityLog.run("heartbeat", userName || "알수없음", 0, "/api/admin/heartbeat");
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 어드민 통계: 사용자별 일/월/연 접속시간 · 데이터 입력량
+app.get("/api/admin/stats", (req, res) => {
+  try {
+    const BUCKET_LEN = { daily: 10, monthly: 7, yearly: 4 };
+
+    const accessBuckets = (len) => db.prepare(`
+      SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) * 60 AS seconds
+      FROM user_activity_log WHERE type='heartbeat'
+      GROUP BY period, user
+      ORDER BY period DESC
+    `).all();
+
+    const volumeBuckets = (len) => {
+      const fromActivity = db.prepare(`
+        SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
+        FROM user_activity_log WHERE type='data_input'
+        GROUP BY period, user
+      `).all();
+      const fromEditLog = db.prepare(`
+        SELECT substr(changed_at,1,${len}) AS period, changed_by AS user, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
+        FROM debtor_edit_log
+        GROUP BY period, user
+      `).all();
+      const merged = new Map();
+      for (const r of [...fromActivity, ...fromEditLog]) {
+        const key = r.period + " " + r.user;
+        merged.set(key, (merged.get(key) || 0) + (r.bytes || 0));
+      }
+      return [...merged.entries()]
+        .map(([key, bytes]) => { const [period, user] = key.split(" "); return { period, user, bytes }; })
+        .sort((a, b) => b.period.localeCompare(a.period));
+    };
+
+    const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
+    const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
+
+    const editSummary = db.prepare(`
+      SELECT changed_by AS user, COUNT(*) AS totalEdits, MAX(changed_at) AS lastEditAt
+      FROM debtor_edit_log GROUP BY changed_by
+    `).all();
+    const heartbeatSummary = db.prepare(`
+      SELECT user_name AS user, MAX(ts) AS lastAt
+      FROM user_activity_log WHERE type='heartbeat' GROUP BY user_name
+    `).all();
+    const summaryMap = new Map();
+    for (const r of editSummary) summaryMap.set(r.user, { user: r.user, totalEdits: r.totalEdits, lastActiveAt: r.lastEditAt });
+    for (const r of heartbeatSummary) {
+      const cur = summaryMap.get(r.user) || { user: r.user, totalEdits: 0, lastActiveAt: null };
+      if (!cur.lastActiveAt || r.lastAt > cur.lastActiveAt) cur.lastActiveAt = r.lastAt;
+      summaryMap.set(r.user, cur);
+    }
+    const summary = [...summaryMap.values()].sort((a, b) => (b.lastActiveAt || "").localeCompare(a.lastActiveAt || ""));
+
+    res.json({ access, volume, summary });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // 채무자별 파일 후보 스캔

@@ -1756,6 +1756,17 @@ export default function App() {
     setCurrentUser({ ...user });
   };
   const handleLogout = () => { setCurrentUser(null); setLoginError(""); };
+  // 어드민 통계용 접속 하트비트 — 로그인 중이고 화면이 활성 상태일 때만 60초마다 전송
+  useEffect(() => {
+    if (!currentUser) return;
+    const sendHeartbeat = () => {
+      if (document.visibilityState !== "visible") return;
+      fetch("/api/admin/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userName: currentUser.name }) }).catch(() => {});
+    };
+    sendHeartbeat();
+    const id = setInterval(sendHeartbeat, 60000);
+    return () => clearInterval(id);
+  }, [currentUser]);
   const userPerms = currentUser ? (PERM_MAP[currentUser.role] || PERM_MAP.member) : PERM_MAP.member;
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
@@ -1811,6 +1822,10 @@ export default function App() {
   const [paymentsFocusDate, setPaymentsFocusDate] = useState(null);
   const [adminEditLogs, setAdminEditLogs] = useState(null); // null=미로드, []~=로드됨
   const [adminEditLogsLoading, setAdminEditLogsLoading] = useState(false);
+  const [adminStats, setAdminStats] = useState(null); // null=미로드
+  const [adminStatsLoading, setAdminStatsLoading] = useState(false);
+  const [statsAccessGran, setStatsAccessGran] = useState("daily"); // daily|monthly|yearly
+  const [statsVolumeGran, setStatsVolumeGran] = useState("daily");
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   const [legalSubTab, setLegalSubTab] = useState("지급명령");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
@@ -8545,8 +8560,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* 상단 4탭 */}
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }].map(t => (
-            <button key={t.k} onClick={() => { setMainTab(t.k); if (t.k === "logs") setAdminEditLogs(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
+          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }, ...(currentUser?.name === "김준원" ? [{ k: "stats", l: "통계" }] : [])].map(t => (
+            <button key={t.k} onClick={() => { setMainTab(t.k); if (t.k === "logs") setAdminEditLogs(null); if (t.k === "stats") setAdminStats(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
 
@@ -8806,6 +8821,107 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* 통계 (김준원 전용) */}
+        {mainTab === "stats" && currentUser?.name === "김준원" && (() => {
+          const stats = adminStats || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] };
+          const loadStats = () => {
+            setAdminStatsLoading(true);
+            fetch("/api/admin/stats")
+              .then(r => r.ok ? r.json() : null)
+              .then(data => { setAdminStats(data || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] }); setAdminStatsLoading(false); })
+              .catch(() => setAdminStatsLoading(false));
+          };
+          const knownNames = users.map(u => u.name);
+          const GRAN = [{ k: "daily", l: "일별", limit: 30 }, { k: "monthly", l: "월별", limit: 12 }, { k: "yearly", l: "연간", limit: 5 }];
+          const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
+          const fmtChars = (n) => { if (!n) return "-"; const kb = n / 1024; return kb >= 1 ? `${n.toLocaleString()}자 (약 ${kb.toFixed(1)}KB)` : `${n.toLocaleString()}자`; };
+
+          const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint) => {
+            const g = GRAN.find(x => x.k === gran);
+            const rows = rowsByGran[gran] || [];
+            const extra = [...new Set(rows.map(r => r.user))].filter(u => !knownNames.includes(u)).sort();
+            const cols = [...knownNames, ...extra];
+            const periods = [...new Set(rows.map(r => r.period))].sort((a, b) => b.localeCompare(a)).slice(0, g.limit);
+            const cellVal = (period, user) => { const r = rows.find(x => x.period === period && x.user === user); return r ? r[valueKey] : 0; };
+            return (
+              <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{title}</span>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {GRAN.map(x => (
+                      <button key={x.k} onClick={() => setGran(x.k)} style={{ padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: gran === x.k ? "var(--acc)" : "var(--bg)", color: gran === x.k ? "#fff" : "var(--tm)" }}>{x.l}</button>
+                    ))}
+                    <button onClick={() => {
+                      const headers = ["기간", ...cols];
+                      const csvRows = periods.map(p => [p, ...cols.map(u => cellVal(p, u))]);
+                      downloadCSV(`${csvNamePrefix}_${today()}.csv`, headers, csvRows);
+                    }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}>
+                      <I name="arrowDown" size={12} />엑셀
+                    </button>
+                  </div>
+                </div>
+                <div style={{ overflow: "auto", maxHeight: 420 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: "var(--bg2)" }}>
+                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", left: 0, background: "var(--bg2)" }}>기간</th>
+                        {cols.map(u => <th key={u} style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{u}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {periods.length === 0 && (
+                        <tr><td colSpan={cols.length + 1} style={{ padding: 30, textAlign: "center", color: "var(--tm)" }}>{emptyHint}</td></tr>
+                      )}
+                      {periods.map(p => (
+                        <tr key={p} style={{ borderTop: "1px solid var(--brd)" }}>
+                          <td className="mono" style={{ padding: "8px 12px", position: "sticky", left: 0, background: "var(--card)" }}>{p}</td>
+                          {cols.map(u => <td key={u} style={{ padding: "8px 12px", textAlign: "right" }}>{formatFn(cellVal(p, u))}</td>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={loadStats} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640", cursor: "pointer" }}>
+                  {adminStatsLoading ? "불러오는 중…" : "통계 새로고침"}
+                </button>
+              </div>
+              {renderStatTable(stats.access, statsAccessGran, setStatsAccessGran, "seconds", fmtSeconds, "사용자별 접속시간", "접속시간", "오늘부터 접속시간을 수집합니다. 잠시 후 새로고침해 주세요.")}
+              {renderStatTable(stats.volume, statsVolumeGran, setStatsVolumeGran, "bytes", fmtChars, "사용자별 데이터 입력량 (글자 1개 = 1바이트 가정)", "데이터입력량", "표시할 데이터가 없습니다")}
+              <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)" }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>사용자별 요약</span>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg2)" }}>
+                      <th style={{ padding: "8px 12px", textAlign: "left" }}>사용자</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right" }}>총 수정 건수</th>
+                      <th style={{ padding: "8px 12px", textAlign: "right" }}>마지막 활동</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.summary.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--tm)" }}>표시할 데이터가 없습니다</td></tr>}
+                    {stats.summary.map(s => (
+                      <tr key={s.user} style={{ borderTop: "1px solid var(--brd)" }}>
+                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{s.user}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right" }}>{(s.totalEdits || 0).toLocaleString()}</td>
+                        <td className="mono" style={{ padding: "8px 12px", textAlign: "right", color: "var(--tm)" }}>{s.lastActiveAt || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           );
