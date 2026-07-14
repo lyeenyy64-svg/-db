@@ -777,6 +777,21 @@ const Field = ({ label, children, span }) => (
 );
 const inp = { width: "100%", padding: "8px 10px", fontSize: 13 };
 
+// App() 내부에 중첩 정의된 "XxxView" 컴포넌트(예: PaymentsView, LegalView 등)를
+// <XxxView/>처럼 JSX로 렌더링하면, App이 리렌더링될 때마다(예: 한 글자 타이핑할 때마다)
+// 매번 새 함수 레퍼런스가 되어 React가 그 컴포넌트를 완전히 마운트 해제 후 재마운트한다.
+// 이 과정에서 하위 입력 필드의 DOM이 통째로 교체되어 포커스/커서 위치가 초기화되고,
+// 한글 입력 중 글자 순서가 뒤섞이는 등의 버그가 발생한다 (원인: KoreanInput이 아니라 이 재마운트).
+// 이 훅은 컴포넌트의 "정체성"(레퍼런스)만 useRef로 고정해서 재마운트를 막고,
+// 그 안의 최신 클로저(내부에서 쓰는 data/config/currentUser 등)는 매 렌더마다 갈아끼운다 —
+// 내부에서 쓰는 useState/useEffect/useMemo는 그대로 유지되며 Rules of Hooks도 위반하지 않는다.
+function useStableComponent(render) {
+  const renderRef = useRef(render);
+  renderRef.current = render;
+  const componentRef = useRef((props) => renderRef.current(props));
+  return componentRef.current;
+}
+
 // 한글 IME 버그 방지 — uncontrolled + ref 방식으로 React가 DOM value를 건드리지 않게 함
 // controlled input(value prop)은 조합 중 React가 value attribute를 덮어써서 IME를 끊어버림
 const KoreanInput = ({ value, onChange, ...rest }) => {
@@ -2733,7 +2748,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // ═══ MODALS ═════════════════════════════════════════════
 
   // ─── Debtor Add/Edit Modal ──────────────────────────────
-  const DebtorFormModal = () => {
+  const DebtorFormModal = useStableComponent(() => {
     // "+항목"(같은 채무자의 신규 서브로우 추가)은 id 없이 brand/name 등 기본값만 담은
     // modal.data를 넘긴다 — modal.data의 truthy 여부만으로는 이 경우와 실제 수정을
     // 구분할 수 없어 신규 등록인데도 updateDebtor(undefined, ...)가 호출되는 버그가 있었다.
@@ -2817,10 +2832,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel={isEdit ? "수정" : "등록"} />
       </Overlay>
     );
-  };
+  });
 
   // ─── Payment Add Modal ──────────────────────────────────
-  const PaymentFormModal = () => {
+  const PaymentFormModal = useStableComponent(() => {
     const debtorId = modal.debtorId || "";
     const debtor = data.debtors.find(d => d.id === debtorId);
     const [f, setF] = useState({
@@ -2861,12 +2876,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="등록" />
       </Overlay>
     );
-  };
+  });
 
   // RematchModal → RematchModalStandalone (module-level) 사용
 
   // ─── Activity Add Modal ─────────────────────────────────
-  const ActivityFormModal = () => {
+  const ActivityFormModal = useStableComponent(() => {
     const debtorId = modal.debtorId || "";
     const debtor = data.debtors.find(d => d.id === debtorId);
     const [f, setF] = useState({
@@ -2898,7 +2913,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="기록" />
       </Overlay>
     );
-  };
+  });
 
   // ═══ VIEWS ══════════════════════════════════════════════
 
@@ -3234,7 +3249,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   };
 
   // ─── Issues View (주요현안: 강제집행/신용분석/협의/TodoList) ─
-  const IssuesView = () => {
+  // 주의: <IssuesView/>처럼 JSX 컴포넌트로 렌더링하면 App()이 리렌더링될 때마다(예: 입력 필드 타이핑 시)
+  // 매번 새 함수 레퍼런스가 되어 React가 하위 트리를 통째로 마운트 해제 후 재마운트한다 —
+  // 이 때문에 한글 입력 중 커서가 초기화되어 글자 순서가 뒤섞이는 버그가 있었다.
+  // 컴포넌트가 아니라 값으로 즉시 호출해 그 결과(JSX 엘리먼트)를 그대로 끼워 넣으면 재마운트가 없다.
+  const issuesView = (() => {
     const canDelete = ["배현진", "김준원"].includes(currentUser?.name);
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -3244,10 +3263,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
       </div>
     );
-  };
+  })();
 
   // ─── 공통: 채무자 검색 드롭다운 (폼 내부용) ──────────────
-  const DebtorSearchField = ({ value, onChange, label = "채무자 연결" }) => {
+  const DebtorSearchField = useStableComponent(({ value, onChange, label = "채무자 연결" }) => {
     const [q, setQ] = useState(value ? (data.debtors.find(d => d.id === value)?.name || "") : "");
     const [open, setOpen] = useState(false);
     const candidates = useMemo(() => {
@@ -3280,10 +3299,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {value && <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 3 }}>연결됨 ✓</div>}
       </div>
     );
-  };
+  });
 
   // ─── 분할상환 추가 모달 ────────────────────────────────────
-  const InstallmentAddModal = () => {
+  const InstallmentAddModal = useStableComponent(() => {
     const initDebtorId = modal?.debtorId || "";
     const [debtorId, setDebtorId] = useState(initDebtorId);
     const [firstDueDate, setFirstDueDate] = useState(today());
@@ -3482,10 +3501,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ModalFooter onCancel={() => setModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : repeat && previewDates.length > 1 ? `플랜 추가 (일정 ${previewDates.length}건)` : "플랜 추가"} />
       </Overlay>
     );
-  };
+  });
 
   // ─── 회생/파산 추가 모달 ──────────────────────────────────
-  const RehabAddModal = () => {
+  const RehabAddModal = useStableComponent(() => {
     const [f, setF] = useState({ debtorId: "", type: "회생", court: "", caseNumber: "", creditorNumber: "", debtAmount: "", approvedAmount: "", monthlyPayment: "", currentRound: "", repaymentNote: "" });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const debtor = data.debtors.find(d => d.id === f.debtorId);
@@ -3542,10 +3561,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </Overlay>
     );
-  };
+  });
 
   // ─── 법적절차 추가 모달 ────────────────────────────────────
-  const LegalAddModal = () => {
+  const LegalAddModal = useStableComponent(() => {
     const initType = modal?.legalType || "압류";
     const [f, setF] = useState({ type: initType, brand: config.brands[0]?.code || "B", defendant: "", debtorId: "", court: "", caseNumber: "", caseStatus: "채권자", filingDate: today(), progressStatus: "진행", applicationDate: today(), decisionDate: "", status: "", hasInquiryOrder: false });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -3628,10 +3647,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </Overlay>
     );
-  };
+  });
 
   // ─── 민사소송 추가 모달 ────────────────────────────────────
-  const MinsaAddModal = () => {
+  const MinsaAddModal = useStableComponent(() => {
     const [f, setF] = useState({ brand: config.brands[0]?.code || "B", defendant: "", debtorId: "", court: "", caseNumber: "", caseStatus: "원고", filingDate: today(), progressStatus: "진행", plaintiff: "" });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const debtor = data.debtors.find(d => d.id === f.debtorId);
@@ -3680,10 +3699,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </Overlay>
     );
-  };
+  });
 
   // ─── 형사고소 추가 모달 ────────────────────────────────────
-  const ComplaintAddModal = () => {
+  const ComplaintAddModal = useStableComponent(() => {
     const [f, setF] = useState({ brand: config.brands[0]?.code || "B", debtorId: "", debtorName: "", complainant: "", charge: "사기", goodsAmount: "", loanAmount: "", complaintDate: today(), policeStation: "", status: "수사중" });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const debtor = data.debtors.find(d => d.id === f.debtorId);
@@ -3731,7 +3750,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </Overlay>
     );
-  };
+  });
 
   // ─── Debtor List ────────────────────────────────────────
   const debtorListView = (
@@ -3872,7 +3891,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   );
 
   // ─── Debtor Detail ──────────────────────────────────────
-  const DebtorDetail = ({ d }) => {
+  const DebtorDetail = useStableComponent(({ d }) => {
     // ── 히스토리 로컬 state (hooks must be first) ──
     const [histManual, setHistManual_] = useState(() => getHistM(d.id));
     const [histEdits,  setHistEdits_]  = useState(() => getHistE(d.id));
@@ -4562,10 +4581,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>}
       </div>
     );
-  };
+  });
 
   // ─── Payments View ──────────────────────────────────────
-  const PaymentsView = () => {
+  const PaymentsView = useStableComponent(() => {
     const [pq, setPq] = useState(""); const [pBrand, setPBrand] = useState("전체"); const [pPage, setPPage] = useState(1);
     const [pFrom, setPFrom] = useState(""); const [pTo, setPTo] = useState("");
     // 대시보드 "오늘 입금 건수" 클릭 시 그 날짜로 필터를 걸어서 보여준다
@@ -4648,11 +4667,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </div>
     );
-  };
+  });
 
 
   // ─── Installments View ──────────────────────────────────
-  const InstallmentsView = () => {
+  const InstallmentsView = useStableComponent(() => {
     const now = new Date();
     const [stFilter, setStFilter] = useState("전체");
     const [importing, setImporting] = useState(false);
@@ -4814,7 +4833,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const calPanelH = 37 + calBodyH + undatedSectionH;
 
     // ── 일정 추가 모달 (달력 + 버튼) ──────────────────────────
-    const AddSchedModal = () => {
+    const AddSchedModal = useStableComponent(() => {
       const initDate = addSchedModal?.date || "";
       const initPlanId = addSchedModal?.planId || null;
       const initDebtorId = initPlanId ? (data.installmentPlans.find(p => p.id === initPlanId)?.debtorId || "") : "";
@@ -5009,7 +5028,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <ModalFooter onCancel={() => setAddSchedModal(null)} onSave={handleSave} saveLabel={saving ? "저장중…" : `일정 ${previewDates.length}건 추가`} />
         </Overlay>
       );
-    };
+    });
 
     // ── PlanDetailPopup 핸들러 (InstallmentsView 스코프 — 리렌더 시 참조 안정) ──
     const onPlanClose = () => { setPlanPopup(null); setPPlanEditing(false); setPSchedEditId(null); };
@@ -5232,7 +5251,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       );
     };
 
-    const DayPopup = ({ date, onClose }) => {
+    const DayPopup = useStableComponent(({ date, onClose }) => {
       const scheds = schedsByDate[date] || [];
       const parts = date.split("-");
       const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(date + "T00:00:00").getDay()];
@@ -5454,7 +5473,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </Overlay>
       );
-    };
+    });
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -5741,10 +5760,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {dayPopup && <DayPopup date={dayPopup} onClose={() => setDayPopup(null)} />}
       </div>
     );
-  };
+  });
 
   // ─── Legal View ─────────────────────────────────────────
-  const LegalView = () => {
+  const LegalView = useStableComponent(() => {
     const legalTab = legalSubTab;
     const setLegalTab = setLegalSubTab;
     const [brandF,            setBrandF]            = useState("전체");
@@ -6079,7 +6098,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     // 수동 매칭 패널 (인라인, 행 아래에 표시)
-    const ManualMatchPanel = ({ caseId, ovKey, dataKey, onClose }) => (
+    const ManualMatchPanel = useStableComponent(({ caseId, ovKey, dataKey, onClose }) => (
       <div style={{ background: "var(--bg2)", borderRadius: 10, border: "1px solid var(--acc)", padding: 14, marginTop: -4 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--acc)", flex: 1 }}>채무자 수동 연결</div>
@@ -6107,10 +6126,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           ))}
         </div>
       </div>
-    );
+    ));
 
     // 단일 사건 행 (지급명령/압류)
-    const LegalRow = ({ c, ovKey, dataKey }) => {
+    const LegalRow = useStableComponent(({ c, ovKey, dataKey }) => {
       const debtor = getDebtor(c.debtorId);
       const isMatching = matchingCase?.id === c.id;
       return (
@@ -6143,10 +6162,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {isMatching && <ManualMatchPanel caseId={c.id} ovKey={ovKey} dataKey={dataKey} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
         </div>
       );
-    };
+    });
 
     // 재산명시·재산조회 행
-    const ADRow = ({ c }) => {
+    const ADRow = useStableComponent(({ c }) => {
       const debtor    = getDebtor(c.debtorId);
       const isMatching = matchingCase?.id === c.id;
       const inquiryBadge = (
@@ -6184,10 +6203,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {isMatching && <ManualMatchPanel caseId={c.id} ovKey={AD_OVERRIDES_KEY} dataKey="assetDisclosures" onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
         </div>
       );
-    };
+    });
 
     // 상세 모달 내용
-    const DetailModal = () => {
+    const DetailModal = useStableComponent(() => {
       if (!selCase) return null;
       const debtor = getDebtor(selCase.debtorId);
       const isAD   = selCase._kind === "ad";
@@ -6365,7 +6384,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </Overlay>
       );
-    };
+    });
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -6484,10 +6503,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {ComplaintDetailModal()}
       </div>
     );
-  };
+  });
 
   // ─── Rehab/Bankruptcy View ───────────────────────────────
-  const RehabBankruptcyView = () => {
+  const RehabBankruptcyView = useStableComponent(() => {
     const rehabTab = rehabSubTab;
     const [rBrand, setRBrand] = useState("전체");
     const [rq, setRq] = useState("");
@@ -6520,7 +6539,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (rq) { const q = rq.toLowerCase(); l = l.filter(r => r.debtorName.toLowerCase().includes(q) || r.caseNumber.includes(q) || (r.repaymentNote || "").includes(q)); }
       return l;
     }, [data.rehabilitations, rehabTab, rBrand, rq]);
-    const RehabDetailModal = () => {
+    const RehabDetailModal = useStableComponent(() => {
       if (!selRehab) return null;
       const r = selRehab;
       const debtor = r.debtorId ? data.debtors.find(d => d.id === r.debtorId) : null;
@@ -6604,7 +6623,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </Overlay>
       );
-    };
+    });
 
     return (
       <>
@@ -6686,10 +6705,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       )}
       </>
     );
-  };
+  });
 
   // ─── 추심의뢰 View ──────────────────────────────────────
-  const CollectionView = () => {
+  const CollectionView = useStableComponent(() => {
     const orders = data.collectionOrders || [];
     const [brandF,  setBrandF]  = useState("전체");
     const [agencyF, setAgencyF] = useState("전체");
@@ -7220,10 +7239,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       )}
       </>
     );
-  };
+  });
 
   // ─── 미매칭 대기열 View ──────────────────────────────────
-  const PendingPaymentsView = ({ refreshKey }) => {
+  const PendingPaymentsView = useStableComponent(({ refreshKey }) => {
     const [items, setItems] = useState([]);
     const [loadingList, setLoadingList] = useState(true);
     const [resolving, setResolving] = useState(null);
@@ -7538,7 +7557,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         )}
       </div>
     );
-  };
+  });
 
   // ─── 문건 자동 생성 ─────────────────────────────────────────
   const PRESET_BANKS = [
@@ -7567,7 +7586,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   ];
 
 
-  const AiDocsView = () => {
+  const AiDocsView = useStableComponent(() => {
     const [selTemplate,   setSelTemplate]   = useState("압류별지");
     const [execType,      setExecType]      = useState("공정증서");
     const [debtorQ,       setDebtorQ]       = useState("");
@@ -8030,10 +8049,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
       </div>
     );
-  };
+  });
 
   // ─── 민사소송 View ───────────────────────────────────────
-  const MinSaView = () => {
+  const MinSaView = useStableComponent(() => {
     const [brandF,       setBrandF]       = useState("전체");
     const [typeF,        setTypeF]        = useState("전체");
     const [searchQ,      setSearchQ]      = useState("");
@@ -8100,7 +8119,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       showToast(debtorId ? "수동 매칭 완료 — 저장됨" : "연결 해제됨");
     };
 
-    const ManualMatchPanel = ({ caseId, onClose }) => (
+    const ManualMatchPanel = useStableComponent(({ caseId, onClose }) => (
       <div style={{ background: "var(--bg2)", borderRadius: 10, border: "1px solid var(--acc)", padding: 14, marginTop: -4 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--acc)", flex: 1 }}>채무자 수동 연결</div>
@@ -8128,7 +8147,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           ))}
         </div>
       </div>
-    );
+    ));
 
     const handleAddNote = () => {
       if (!selCase || !noteDraft.trim()) return;
@@ -8351,7 +8370,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         }
       </div>
     );
-  };
+  });
 
   // ─── Admin View ─────────────────────────────────────────
   const [adminAddUserForm, setAdminAddUserForm] = useState(null);
@@ -8363,7 +8382,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const newItem = adminNewItem, setNewItem = setAdminNewItem;
     const editingRule = adminEditingRule, setEditingRule = setAdminEditingRule;
 
-    const ListEditor = ({ title, items, onAdd, onRemove, onEdit }) => {
+    const ListEditor = useStableComponent(({ title, items, onAdd, onRemove, onEdit }) => {
       const [editIdx, setEditIdx] = useState(-1);
       const [editVal, setEditVal] = useState("");
       return (
@@ -8394,9 +8413,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
       );
-    };
+    });
 
-    const DocsFolderConfig = () => {
+    const DocsFolderConfig = useStableComponent(() => {
       const [rootPath, setRootPath] = useState("");
       const [saved, setSaved] = useState(null);
       const [saving, setSaving] = useState(false);
@@ -8476,9 +8495,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
       );
-    };
+    });
 
-    const BrandEditor = () => {
+    const BrandEditor = useStableComponent(() => {
       const [nb, setNb] = useState({ code: "", name: "", color: "#3b82f6" });
       const [editIdx, setEditIdx] = useState(-1);
       const [eb, setEb] = useState({ code: "", name: "", color: "" });
@@ -8519,7 +8538,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
       );
-    };
+    });
 
     const CONFIG_TO_DEBTOR_FIELD = {
       assignees: "assignee", hubNames: "hubName", debtCauses: "debtCause",
@@ -9079,7 +9098,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
           {tab === "dashboard" && Dashboard()}
-          {tab === "issues" && <IssuesView />}
+          {tab === "issues" && issuesView}
           {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : debtorListView)}
           {tab === "collection" && <CollectionView />}
           {tab === "payments" && <PaymentsView />}
