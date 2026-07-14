@@ -254,6 +254,14 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v1] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v1', '1')").run();
   }
+  // v1 이후에도 kvPut 외의 다른 fetch 호출들이 사용자명 없이 나가 "알수없음"이 계속 새어
+  // 나갔다 (window.fetch 전역 래핑으로 수정됨) — 그 잔여분을 한 번 더 정리.
+  const cleanupDoneV2 = db.prepare("SELECT value FROM kv_store WHERE key='stats_unknown_cleanup_v2'").get();
+  if (!cleanupDoneV2) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE user_name = '알수없음'").run();
+    console.log(`[stats_unknown_cleanup_v2] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v2', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
