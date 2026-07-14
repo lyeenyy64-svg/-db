@@ -8875,7 +8875,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const knownNames = users.map(u => u.name);
           const GRAN = [{ k: "daily", l: "일별", limit: 30 }, { k: "monthly", l: "월별", limit: 12 }, { k: "yearly", l: "연간", limit: 5 }];
           const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
-          const fmtChars = (n) => { if (!n) return "-"; const kb = n / 1024; return kb >= 1 ? `${n.toLocaleString()}자 (약 ${kb.toFixed(1)}KB)` : `${n.toLocaleString()}자`; };
+          const fmtChars = (n) => { if (!n) return "-"; return `${n.toLocaleString()}자`; };
 
           const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint) => {
             const g = GRAN.find(x => x.k === gran);
