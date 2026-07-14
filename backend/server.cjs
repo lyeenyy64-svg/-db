@@ -1747,6 +1747,11 @@ app.delete("/api/debtors/:id", (req, res) => {
 });
 
 // ─── 채무자 정보 수정 ────────────────────────────
+// debtors 테이블에 실제로 존재하는 컬럼만 추림 — fieldMap에 있는 필드 중
+// 테이블에 없는 게 하나라도 있으면(예: 더 이상 안 쓰는 legacy 필드) 그 컬럼을
+// 조회하려다 전체 PATCH가 실패해서 아무 필드도 저장되지 않는 문제를 방지한다.
+const DEBTOR_TABLE_COLS = new Set(db.prepare("PRAGMA table_info(debtors)").all().map(c => c.name));
+
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
@@ -1778,6 +1783,7 @@ app.patch("/api/debtors/:id", (req, res) => {
     const fields = [], vals = [], changedJsKeys = [];
     for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
       if (jsKey === '_userName') continue;
+      if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
       if (req.body[jsKey] !== undefined) {
         fields.push(`${dbCol} = ?`);
         vals.push(req.body[jsKey]);
@@ -1786,10 +1792,12 @@ app.patch("/api/debtors/:id", (req, res) => {
     }
     if (fields.length === 0 && req.body.guarantors === undefined) return res.json({ ok: true });
 
-    // 수정 전 현재 값 조회 (로그 기록용)
+    // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
     let oldRow = null;
     if (fields.length > 0) {
-      const selectParts = Object.entries(fieldMap).map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
+      const selectParts = Object.entries(fieldMap)
+        .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
+        .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
       oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
     }
 
