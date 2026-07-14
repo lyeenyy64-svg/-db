@@ -1746,17 +1746,35 @@ export default function App() {
   const REMOVED_USER_EMAILS = ["junwon@barogo.com"]; // 삭제된 계정 목록
   // DEFAULT_USERS 기준으로 이름/역할 등 강제 동기화할 필드 (이메일 키)
   const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" } };
-  const [users, setUsers] = useState(() => {
+  // localStorage에 저장된(혹은 서버에서 막 받아온) 사용자 목록을 REMOVED_USER_EMAILS/
+  // USER_OVERRIDES 규칙에 맞춰 정리한다. useState 초기값과 loadData의 서버 동기화 양쪽에서
+  // 같은 로직을 써야, 다른 기기·브라우저에서 사용자 관리 화면에서 바꾼 권한(예: 관리자 승격)이
+  // 이 세션에도 그대로 반영된다 — 안 그러면 localStorage가 비어있는(처음 접속하는) 브라우저는
+  // 항상 DEFAULT_USERS의 기본 권한으로만 로그인되어 "어드민 탭이 없어졌다"처럼 보인다.
+  const normalizeUsers = (stored) => {
     try {
-      const stored = JSON.parse(localStorage.getItem(APP_USERS_KEY));
       const base = (stored && stored.length ? stored : DEFAULT_USERS)
         .filter(u => !REMOVED_USER_EMAILS.includes(u.email))
         .map(u => USER_OVERRIDES[u.email] ? { ...u, ...USER_OVERRIDES[u.email] } : u);
       const extras = DEFAULT_USERS.filter(d => !base.find(s => s.email === d.email));
       return extras.length ? [...base, ...extras] : base;
     } catch { return DEFAULT_USERS; }
+  };
+  const [users, setUsers] = useState(() => {
+    try {
+      return normalizeUsers(JSON.parse(localStorage.getItem(APP_USERS_KEY)));
+    } catch { return DEFAULT_USERS; }
   });
-  useEffect(() => { localStorage.setItem(APP_USERS_KEY, JSON.stringify(users)); kvPut(APP_USERS_KEY, users); }, [users]);
+  // 마운트 직후엔 이 브라우저의 localStorage(비어있거나 오래된 값일 수 있음)로 users가
+  // 먼저 초기화되는데, 이 상태에서 곧바로 kvPut을 쏘면 loadData()가 서버의 최신 값을
+  // 받아오기도 전에 서버 kv_store를 이 브라우저의 (기본값일 수 있는) users로 덮어써버린다 —
+  // 다른 기기에서 부여한 관리자 권한 등이 그렇게 사라진 적이 있었다. loadData()가 서버 값을
+  // 한 번 받아올 때까지는 kvPut을 보류한다 (로컬 저장은 그대로 즉시 반영).
+  const usersHydratedRef = useRef(false);
+  useEffect(() => {
+    localStorage.setItem(APP_USERS_KEY, JSON.stringify(users));
+    if (usersHydratedRef.current) kvPut(APP_USERS_KEY, users);
+  }, [users]);
   const [alertRules, setAlertRules] = useState(DEFAULT_ALERT_RULES);
   // 알림 규칙은 서버 DB(alert_rules 테이블)에 영구 저장되고, 백엔드의 알림 규칙 엔진이
   // 주기적으로 평가해 실제 Slack 발송까지 수행한다 (더 이상 새로고침하면 사라지는 화면 전용 상태가 아님).
@@ -1917,16 +1935,25 @@ export default function App() {
       try {
         const kvAll = await fetch("/api/kv-all").then(r => r.ok ? r.json() : {});
         for (const [key, value] of Object.entries(kvAll)) {
-          // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호)
+          // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호).
+          // localStorage뿐 아니라 React 상태(users)도 같이 갱신해야 다른 기기·브라우저에서
+          // 바뀐 권한(예: 관리자 승격)이 이 세션에도 반영된다 — useState 초기값은 마운트 시
+          // 1회만 읽고 끝나서, 여기서 갱신 안 하면 어드민 탭이 계속 안 보일 수 있다.
           if (key === APP_USERS_KEY) {
             if (Array.isArray(value) && value.length > 0) {
               localStorage.setItem(key, JSON.stringify(value));
+              // 실제로 내용이 달라졌을 때만 setUsers — 매번 새 배열을 만들면 [users] 이펙트가
+              // 매 로드마다 kvPut을 다시 쏴서 서버에 같은 값을 계속 재전송하게 된다.
+              const next = normalizeUsers(value);
+              setUsers(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
             }
           } else {
             localStorage.setItem(key, JSON.stringify(value));
           }
         }
       } catch {}
+      // 서버 kv_store를 한 번 받아온 뒤부터는 [users] 이펙트의 kvPut을 허용한다.
+      usersHydratedRef.current = true;
 
       const [debtorsRes, paymentsRes, installmentsRes, complaintsRes, activitiesRes] = await Promise.all([
         fetch("/api/debtors").then(r => { if (!r.ok) throw new Error(`debtors ${r.status}`); return r.json(); }),
