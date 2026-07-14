@@ -1780,13 +1780,19 @@ app.patch("/api/debtors/:id", (req, res) => {
       principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
     };
 
-    const fields = [], vals = [], changedJsKeys = [];
+    const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
     for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
       if (jsKey === '_userName') continue;
       if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
       if (req.body[jsKey] !== undefined) {
+        // exec_title 등 INTEGER 컬럼에 프론트가 boolean(true/false)을 보내는 경우가 있는데
+        // better-sqlite3는 boolean을 bind 파라미터로 받지 않아 저장 자체가 500으로 전부
+        // 실패한다 (분류 등 다른 필드까지 같이 저장 안 됨). 0/1로 변환해서 방지.
+        let v = req.body[jsKey];
+        if (typeof v === "boolean") v = v ? 1 : 0;
+        coercedVals[jsKey] = v;
         fields.push(`${dbCol} = ?`);
-        vals.push(req.body[jsKey]);
+        vals.push(v);
         changedJsKeys.push(jsKey);
       }
     }
@@ -1816,7 +1822,7 @@ app.patch("/api/debtors/:id", (req, res) => {
       const logTx = db.transaction(() => {
         for (const jsKey of changedJsKeys) {
           const oldVal = String(oldRow[jsKey] ?? '');
-          const newVal = String(req.body[jsKey] ?? '');
+          const newVal = String(coercedVals[jsKey] ?? '');
           if (oldVal !== newVal) {
             insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
           }
