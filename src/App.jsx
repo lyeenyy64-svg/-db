@@ -1545,7 +1545,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
           const onDeleteClick = () => updateKeyIssue("creditAnalyses", r.id, { deleted: true });
           return (
             <tr key={r.id}>
-              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" /></td>
               <td style={strike({ width: colWidths[1] })}><input value={r.residentId || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { residentId: e.target.value })} style={issueInp} placeholder="주민등록번호" />{strikeLine}</td>
               <td style={strike({ width: colWidths[2] })}><input value={r.phone || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { phone: e.target.value })} style={issueInp} placeholder="연락처" />{strikeLine}</td>
               <td style={strike({ width: colWidths[3] })}>
@@ -1570,12 +1570,10 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
                   <input value={r.checkResult || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { checkResult: e.target.value.replace(/[^0-9]/g, "") })} inputMode="numeric" placeholder="000" style={{ ...issueInp, width: 46, textAlign: "right", padding: "5px 4px" }} />
                   <span style={{ fontSize: 12, color: "var(--ts)" }}>점</span>
                 </div>
-                {strikeLine}
               </td>
               <td style={strike({ width: colWidths[9], maxWidth: colWidths[9] })}>
                 <button onClick={() => updateKeyIssue("creditAnalyses", r.id, { completed: !r.completed })}
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
-                {strikeLine}
               </td>
               <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[10], textAlign: "center" })}>
                 {canDelete && (viewMode === "trash"
