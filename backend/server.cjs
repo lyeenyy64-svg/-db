@@ -245,6 +245,17 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ual_user_type ON user_activity_log(user_name, type);
 `);
 
+// kvPut(/api/kv/:key)이 사용자 이름을 안 보내던 시절에 쌓인 "알수없음" 통계 노이즈를
+// 한 번만 정리 (실제 사용자명이 붙은 기록은 그대로 둔다). 서버 재시작 시 1회만 실행.
+{
+  const cleanupDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_unknown_cleanup_v1'").get();
+  if (!cleanupDone) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE user_name = '알수없음'").run();
+    console.log(`[stats_unknown_cleanup_v1] "알수없음" 통계 노이즈 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v1', '1')").run();
+  }
+}
+
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
 db.exec(`
   CREATE TABLE IF NOT EXISTS collection_channels (
