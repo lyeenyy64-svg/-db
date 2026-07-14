@@ -8902,11 +8902,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </div>
                 </div>
                 <div style={{ overflow: "auto", maxHeight: 420 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
+                    <colgroup>
+                      <col style={{ width: 130 }} />
+                      {cols.map(u => <col key={u} style={{ width: 120 }} />)}
+                    </colgroup>
                     <thead>
                       <tr style={{ background: "var(--bg2)" }}>
-                        <th style={{ padding: "8px 12px", textAlign: "left", position: "sticky", left: 0, background: "var(--bg2)" }}>기간</th>
-                        {cols.map(u => <th key={u} style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap" }}>{u}</th>)}
+                        <th style={{ padding: "8px 12px", textAlign: "center", position: "sticky", left: 0, background: "var(--bg2)", borderRight: "1px solid var(--brd)" }}>기간</th>
+                        {cols.map(u => <th key={u} style={{ padding: "8px 12px", textAlign: "center", whiteSpace: "nowrap", borderRight: "1px solid var(--brd)" }}>{u}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -8915,8 +8919,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       )}
                       {periods.map(p => (
                         <tr key={p} style={{ borderTop: "1px solid var(--brd)" }}>
-                          <td className="mono" style={{ padding: "8px 12px", position: "sticky", left: 0, background: "var(--card)" }}>{p}</td>
-                          {cols.map(u => <td key={u} style={{ padding: "8px 12px", textAlign: "right" }}>{formatFn(cellVal(p, u))}</td>)}
+                          <td className="mono" style={{ padding: "8px 12px", textAlign: "center", position: "sticky", left: 0, background: "var(--card)", borderRight: "1px solid var(--brd)" }}>{p}</td>
+                          {cols.map(u => <td key={u} style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)" }}>{formatFn(cellVal(p, u))}</td>)}
                         </tr>
                       ))}
                     </tbody>
@@ -8939,21 +8943,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)" }}>
                   <span style={{ fontSize: 14, fontWeight: 600 }}>사용자별 요약</span>
                 </div>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: 130 }} />
+                    <col style={{ width: 120 }} />
+                    <col />
+                  </colgroup>
                   <thead>
                     <tr style={{ background: "var(--bg2)" }}>
-                      <th style={{ padding: "8px 12px", textAlign: "left" }}>사용자</th>
-                      <th style={{ padding: "8px 12px", textAlign: "right" }}>총 수정 건수</th>
-                      <th style={{ padding: "8px 12px", textAlign: "right" }}>마지막 활동</th>
+                      <th style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)" }}>사용자</th>
+                      <th style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)" }}>총 수정 건수</th>
+                      <th style={{ padding: "8px 12px", textAlign: "center" }}>마지막 활동</th>
                     </tr>
                   </thead>
                   <tbody>
                     {stats.summary.length === 0 && <tr><td colSpan={3} style={{ padding: 30, textAlign: "center", color: "var(--tm)" }}>표시할 데이터가 없습니다</td></tr>}
                     {stats.summary.map(s => (
                       <tr key={s.user} style={{ borderTop: "1px solid var(--brd)" }}>
-                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{s.user}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right" }}>{(s.totalEdits || 0).toLocaleString()}</td>
-                        <td className="mono" style={{ padding: "8px 12px", textAlign: "right", color: "var(--tm)" }}>{s.lastActiveAt || "-"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, borderRight: "1px solid var(--brd)" }}>{s.user}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)" }}>{(s.totalEdits || 0).toLocaleString()}</td>
+                        <td className="mono" style={{ padding: "8px 12px", textAlign: "center", color: "var(--tm)" }}>{s.lastActiveAt || "-"}</td>
                       </tr>
                     ))}
                   </tbody>
