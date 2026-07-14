@@ -2256,28 +2256,32 @@ app.post("/api/admin/heartbeat", (req, res) => {
 });
 
 // 어드민 통계: 사용자별 일/월/연 접속시간 · 데이터 입력량
+// 통계 집계 시작일 — 이전 테스트/오류 데이터(예: 깨진 사용자명)를 통계에서 배제하기 위한 기준일.
+// 이 날짜 이전 데이터는 화면에 표시하지 않는다 (데이터 자체를 지우지는 않음).
+const STATS_START_DATE = "2026-07-14 00:00:00";
+
 app.get("/api/admin/stats", (req, res) => {
   try {
     const BUCKET_LEN = { daily: 10, monthly: 7, yearly: 4 };
 
     const accessBuckets = (len) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) * 60 AS seconds
-      FROM user_activity_log WHERE type='heartbeat'
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ?
       GROUP BY period, user
       ORDER BY period DESC
-    `).all();
+    `).all(STATS_START_DATE);
 
     const volumeBuckets = (len) => {
       const fromActivity = db.prepare(`
         SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-        FROM user_activity_log WHERE type='data_input'
+        FROM user_activity_log WHERE type='data_input' AND ts >= ?
         GROUP BY period, user
-      `).all();
+      `).all(STATS_START_DATE);
       const fromEditLog = db.prepare(`
         SELECT substr(changed_at,1,${len}) AS period, changed_by AS user, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
-        FROM debtor_edit_log
+        FROM debtor_edit_log WHERE changed_at >= ?
         GROUP BY period, user
-      `).all();
+      `).all(STATS_START_DATE);
       const merged = new Map();
       for (const r of [...fromActivity, ...fromEditLog]) {
         const key = r.period + " " + r.user;
@@ -2293,12 +2297,12 @@ app.get("/api/admin/stats", (req, res) => {
 
     const editSummary = db.prepare(`
       SELECT changed_by AS user, COUNT(*) AS totalEdits, MAX(changed_at) AS lastEditAt
-      FROM debtor_edit_log GROUP BY changed_by
-    `).all();
+      FROM debtor_edit_log WHERE changed_at >= ? GROUP BY changed_by
+    `).all(STATS_START_DATE);
     const heartbeatSummary = db.prepare(`
       SELECT user_name AS user, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='heartbeat' GROUP BY user_name
-    `).all();
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? GROUP BY user_name
+    `).all(STATS_START_DATE);
     const summaryMap = new Map();
     for (const r of editSummary) summaryMap.set(r.user, { user: r.user, totalEdits: r.totalEdits, lastActiveAt: r.lastEditAt });
     for (const r of heartbeatSummary) {
