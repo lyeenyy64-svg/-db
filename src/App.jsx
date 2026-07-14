@@ -1474,7 +1474,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
           const onDeleteClick = () => updateKeyIssue("forcedExecutions", r.id, { deleted: true });
           return (
             <tr key={r.id}>
-              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" /></td>
               <td style={strike({ width: colWidths[1] })}>
                 <select value={r.brand || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
@@ -1504,7 +1504,6 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
               <td style={strike({ width: colWidths[8], maxWidth: colWidths[8] })}>
                 <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
-                {strikeLine}
               </td>
               <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[9], textAlign: "center" })}>
                 {canDelete && (viewMode === "trash"
@@ -1692,7 +1691,6 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
                   <option value="">-- 선택 --</option>
                   {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
                 </select>
-                {strikeLine}
               </td>
               <td style={strike()}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine}</td>
               <td style={strike({ width: colWidths[2] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine}</td>
@@ -1702,7 +1700,6 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
                   <option value="보류">보류</option>
                   <option value="완료">완료</option>
                 </select>
-                {strikeLine}
               </td>
               <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[4], textAlign: "center" })}>
                 {canDelete && (viewMode === "trash"
