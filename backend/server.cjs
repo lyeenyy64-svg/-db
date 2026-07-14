@@ -421,7 +421,12 @@ const insertActivityLog = db.prepare(
   "INSERT INTO user_activity_log (type, user_name, bytes, path) VALUES (?, ?, ?, ?)"
 );
 const USER_FIELD_CANDIDATES = ["_userName", "userName", "createdByName", "createdBy", "changedBy", "changed_by", "author", "actorName"];
-function extractUserName(body) {
+function extractUserName(req) {
+  const headerName = req.headers["x-user-name"];
+  if (typeof headerName === "string" && headerName.trim()) {
+    try { const decoded = decodeURIComponent(headerName).trim(); if (decoded) return decoded; } catch {}
+  }
+  const body = req.body;
   if (!body || typeof body !== "object") return "알수없음";
   for (const f of USER_FIELD_CANDIDATES) {
     if (typeof body[f] === "string" && body[f].trim()) return body[f].trim();
@@ -430,7 +435,7 @@ function extractUserName(body) {
 }
 app.use((req, res, next) => {
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && req.path !== "/api/admin/heartbeat") {
-    const userName = extractUserName(req.body);
+    const userName = extractUserName(req);
     let bytes = 0;
     try { bytes = JSON.stringify(req.body || {}).length; } catch {}
     res.on("finish", () => {

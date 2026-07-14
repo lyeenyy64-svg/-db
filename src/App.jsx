@@ -192,6 +192,10 @@ function matchExcelDebtor(d) {
   return EXCEL_BY_KEY[`${d.brand}||${d.name}`] || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`] || undefined;
 }
 
+// 현재 로그인한 사용자 이름 — App() 컴포넌트 밖(kvPut 등)에서도 참조할 수 있도록
+// 모듈 전역 변수에 최신값을 유지한다 (어드민 통계의 "누가 입력했는지" 집계용).
+let CURRENT_USER_NAME = null;
+
 // ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
 // 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
 function kvPut(key, value) {
@@ -199,7 +203,7 @@ function kvPut(key, value) {
   // 원인 추적이 가능하도록 최소한 콘솔에는 남긴다.
   fetch(`/api/kv/${encodeURIComponent(key)}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-User-Name": encodeURIComponent(CURRENT_USER_NAME || "") },
     body: JSON.stringify(value),
   })
     .then(r => { if (!r.ok) console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); })
@@ -1777,6 +1781,8 @@ export default function App() {
     const id = setInterval(sendHeartbeat, 60000);
     return () => clearInterval(id);
   }, [currentUser]);
+  // kvPut 등 App() 밖의 저장 함수도 "누가 저장했는지" 알 수 있도록 모듈 전역에 동기화
+  useEffect(() => { CURRENT_USER_NAME = currentUser?.name || null; }, [currentUser]);
   const userPerms = currentUser ? (PERM_MAP[currentUser.role] || PERM_MAP.member) : PERM_MAP.member;
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
