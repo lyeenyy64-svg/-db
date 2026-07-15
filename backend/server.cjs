@@ -2451,6 +2451,20 @@ app.get("/api/admin/stats", (req, res) => {
     for (const r of editSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of dataInputSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of heartbeatSummary) touch(r.user, 0, r.lastAt);
+
+    // 활동 로그가 하나도 없는 사용자도 "0건/활동 없음"으로 표시되도록, 등록된 전체
+    // 사용자 목록(app_users)을 기준으로 빠진 사용자를 채워 넣는다 (LEFT JOIN과 동일한 효과).
+    try {
+      const appUsersRow = db.prepare("SELECT value FROM kv_store WHERE key='app_users'").get();
+      const allUsers = appUsersRow ? JSON.parse(appUsersRow.value) : [];
+      for (const u of allUsers) {
+        const name = u && u.name;
+        if (name && !summaryMap.has(name)) {
+          summaryMap.set(name, { user: name, totalEdits: 0, lastActiveAt: null });
+        }
+      }
+    } catch { /* app_users 파싱 실패 시 로그 기반 요약만 표시 */ }
+
     const summary = [...summaryMap.values()].sort((a, b) => (b.lastActiveAt || "").localeCompare(a.lastActiveAt || ""));
 
     res.json({ access, volume, summary });
