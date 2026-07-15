@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
@@ -414,21 +414,6 @@ function applyCollectionOv(orders, debtors) {
     });
 }
 
-// ─── 제3채무자 편집 override (localStorage 영구 저장) ────────
-const THIRDS_OV_KEY = "legal_thirds_overrides";
-function getThirdsOv() { try { return JSON.parse(localStorage.getItem(THIRDS_OV_KEY) || "{}"); } catch { return {}; } }
-function saveThirdsOv(caseId, thirds) {
-  const ov = getThirdsOv();
-  ov[caseId] = thirds;
-  localStorage.setItem(THIRDS_OV_KEY, JSON.stringify(ov));
-  kvPut(THIRDS_OV_KEY, ov);
-}
-function applyThirdsOv(cases) {
-  const ov = getThirdsOv();
-  if (!Object.keys(ov).length) return cases;
-  return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
-}
-
 // ─── 사건 정보 편집 override (localStorage 영구 저장) ────────
 const CASE_FIELD_OV_KEY = "legal_case_field_overrides";
 function getCaseFieldOv() { try { return JSON.parse(localStorage.getItem(CASE_FIELD_OV_KEY) || "{}"); } catch { return {}; } }
@@ -443,121 +428,6 @@ function applyCaseFieldOv(cases) {
   if (!Object.keys(ov).length) return cases;
   return cases.map(c => ov[c.id] !== undefined ? { ...c, ...ov[c.id] } : c);
 }
-
-// ─── 제3채무자 편집 섹션 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
-const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
-  const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
-  const [isEditing, setIsEditing] = useState(false);
-  const [checked, setChecked] = useState(() => new Set());
-
-  const setRow = useCallback((i, k, v) => {
-    setRows(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
-  }, []);
-
-  const startEdit = useCallback(() => {
-    setRows(thirds.map(t => ({ ...t })));
-    setChecked(new Set());
-    setIsEditing(true);
-  }, [thirds]);
-
-  const handleSave = useCallback(() => {
-    const cleaned = rows.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
-    saveThirdsOv(caseId, cleaned);
-    onSave(cleaned);
-    setRows(cleaned);
-    setChecked(new Set());
-    setIsEditing(false);
-  }, [rows, caseId, onSave]);
-
-  const handleCancel = useCallback(() => {
-    setRows(thirds.map(t => ({ ...t })));
-    setChecked(new Set());
-    setIsEditing(false);
-  }, [thirds]);
-
-  const addRow = useCallback(() => {
-    setRows(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }]);
-  }, []);
-
-  const toggleCheck = useCallback((i) => {
-    setChecked(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
-  }, []);
-
-  const deleteChecked = useCallback(() => {
-    if (checked.size === 0) return;
-    setRows(prev => prev.filter((_, ri) => !checked.has(ri)));
-    setChecked(new Set());
-  }, [checked]);
-
-  const display = isEditing ? rows : thirds;
-  const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
-  const numInpS = { ...inpS, textAlign: "right", width: 90 };
-
-  return (
-    <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 (압류 은행)</div>
-        <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>{display.length}건</span>
-        {!isEditing && (
-          <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
-            잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        {!isEditing ? (
-          <button onClick={startEdit} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
-        ) : (
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={addRow} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 행 추가</button>
-            <button onClick={deleteChecked} disabled={checked.size === 0} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: checked.size === 0 ? "var(--bg2)" : "#fef2f2", color: checked.size === 0 ? "var(--tm)" : "#ef4444", border: `1px solid ${checked.size === 0 ? "var(--brd)" : "#fecaca"}`, cursor: checked.size === 0 ? "default" : "pointer" }}>행삭제{checked.size > 0 ? ` (${checked.size})` : ""}</button>
-            <button onClick={handleSave} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
-            <button onClick={handleCancel} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
-          </div>
-        )}
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ borderBottom: "2px solid var(--brd)" }}>
-              {isEditing && <th style={{ padding: "4px 6px", width: 20 }} />}
-              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
-              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
-              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
-              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>잔액</th>
-              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
-              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
-              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
-            </tr>
-          </thead>
-          <tbody>
-            {display.map((t, i) => isEditing ? (
-              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: checked.has(i) ? "#fef2f2" : "transparent" }}>
-                <td style={{ padding: "4px 6px", textAlign: "center" }}><input type="checkbox" checked={checked.has(i)} onChange={() => toggleCheck(i)} style={{ cursor: "pointer" }} /></td>
-                <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
-                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
-                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.claimAmount || "")} onChange={v => setRow(i, "claimAmount", Number(v) || 0)} style={numInpS} /></td>
-                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.balance || "")} onChange={v => setRow(i, "balance", Number(v) || 0)} style={numInpS} /></td>
-                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.collected || "")} onChange={v => setRow(i, "collected", Number(v) || 0)} style={numInpS} /></td>
-                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
-                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
-              </tr>
-            ) : (
-              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
-                <td style={{ padding: "5px 8px", color: "var(--ts)" }}>{t.seqNo}</td>
-                <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.bankName}</td>
-                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: "var(--tm)" }}>{t.claimAmount > 0 ? fmt(t.claimAmount) : "-"}</td>
-                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: t.balance > 0 ? "var(--ok)" : "var(--tp)" }}>{t.balance > 0 ? fmt(t.balance) : "-"}</td>
-                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: t.collected > 0 ? "#3b82f6" : "var(--tm)" }}>{t.collected > 0 ? fmt(t.collected) : "-"}</td>
-                <td style={{ padding: "5px 8px", color: "var(--ts)", whiteSpace: "nowrap" }}>{t.responseDate || "-"}</td>
-                <td style={{ padding: "5px 8px", color: "var(--ts)", fontSize: 11, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.remarks || ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-});
 
 // ─── 강화된 이름 정규화 (전자소송 피고명용) ────────────────
 function normLegalName(raw) {
@@ -728,7 +598,7 @@ function loadExcelData(cfg) {
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
     rehabilitations:  applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]),
-    legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
+    legalCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]),
     minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
     assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
@@ -1976,7 +1846,7 @@ export default function App() {
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
-      const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
+      const legalCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]);
       const minsaCases      = [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)];
       const assetDisclosures  = [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)];
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
@@ -5820,7 +5690,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [searchQ,           setSearchQ]           = useState("");
     useEffect(() => { if (legalSearchInit) { setSearchQ(legalSearchInit); setLegalSearchInit(null); } }, [legalSearchInit]);
     const [selCase,           setSelCase]            = useState(null);
-    // editThirds 상태는 ThirdsEditorSection 내부로 이전 (딸깍거림 방지)
+    const [caseNotes,         setCaseNotes]          = useState([]);   // 진행상황 메모
+    const [noteDraft,         setNoteDraft]          = useState("");
+    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); }, [selCase?.id]);
     const [matchingCase,      setMatchingCase]       = useState(null);
     const [matchQ,            setMatchQ]             = useState("");
     const [selComplaint,      setSelComplaint]       = useState(null);  // 형사고소 팝업
@@ -6268,6 +6140,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       );
     });
 
+    const handleAddNote = () => {
+      if (!selCase || !noteDraft.trim()) return;
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+      setNoteDraft("");
+    };
+    const handleDeleteNote = (noteId) => {
+      if (!selCase || !confirm("이 메모를 삭제하시겠습니까?")) return;
+      const arr = caseNotes.filter(n => n.id !== noteId);
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+    };
+
     // 상세 모달 내용
     const DetailModal = useStableComponent(() => {
       if (!selCase) return null;
@@ -6316,8 +6202,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {selCase.brand && <BrandBadge code={selCase.brand} brands={config.brands} />}
               <span style={{ fontSize: 17, fontWeight: 700 }}>{title}</span>
-              <Badge status={isAD ? "재산명시" : selCase.type} />
-              {!isAD && selCase.caseStatus && <Badge status={selCase.caseStatus} small />}
             </div>
             <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
@@ -6391,18 +6275,35 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           )}
 
-          {/* 제3채무자 (압류인 경우) */}
-          {!isAD && selCase.thirdParties != null && (
-            <ThirdsEditorSection
-              key={selCase.id}
-              thirds={selCase.thirdParties}
-              caseId={selCase.id}
-              onSave={cleaned => {
-                setSelCase(prev => ({ ...prev, thirdParties: cleaned }));
-                setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, thirdParties: cleaned } : c) }));
-              }}
-            />
-          )}
+          {/* 진행상황 메모 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <KoreanTextarea
+                value={noteDraft} onChange={e => setNoteDraft(e.target.value)} rows={2}
+                placeholder="진행상황을 입력하세요... (날짜·작성자 자동 기재)"
+                style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }}
+              />
+              <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
+            </div>
+            {caseNotes.length === 0
+              ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
+              : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                  {caseNotes.map(n => (
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", padding: "8px 10px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
+                          <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
+                          <span style={{ fontSize: 10, color: "var(--tm)" }}>{n.createdBy}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
+                      </div>
+                      {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
 
           {/* OneDrive 문서 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
