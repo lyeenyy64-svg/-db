@@ -2778,8 +2778,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 @keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spinning{animation:spin .8s linear infinite}`;
 
-  const KPI = ({ label, value, sub, color }) => (
-    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
+  const KPI = ({ label, value, sub, color, onClick, active }) => (
+    <div
+      onClick={onClick}
+      style={{
+        background: "var(--card)", borderRadius: 12, padding: 20,
+        border: `1px solid ${active ? color : "var(--brd)"}`, position: "relative", overflow: "hidden",
+        cursor: onClick ? "pointer" : "default",
+        boxShadow: active ? `0 0 0 1px ${color}40` : "none",
+        transition: "border-color 0.1s, box-shadow 0.1s",
+      }}
+      onMouseEnter={onClick ? (e => e.currentTarget.style.background = "var(--hover)") : undefined}
+      onMouseLeave={onClick ? (e => e.currentTarget.style.background = "var(--card)") : undefined}
+    >
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${color},${color}00)` }} />
       <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 8, fontWeight: 500 }}>{label}</div>
       <div className="mono" style={{ fontSize: 22, fontWeight: 700, color, marginBottom: 4 }}>{value}</div>
@@ -6442,20 +6453,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {selCase && <DetailModal />}
 
-        {/* KPI 카드 */}
+        {/* KPI 카드 — 클릭하면 해당 유형만 필터링 (다시 클릭하면 전체 유형으로 해제) */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
           <KPI label="지급명령" value={`${payOrders.length}건`}
             sub={`브랜드 B:${payOrders.filter(c=>c.brand==="B").length} / M:${payOrders.filter(c=>c.brand==="M").length} / D:${payOrders.filter(c=>c.brand==="D").length}`}
-            color="#3b82f6" />
+            color="#3b82f6" active={legalTypeFilter === "지급명령"}
+            onClick={() => setLegalTypeFilter(f => f === "지급명령" ? "전체" : "지급명령")} />
           <KPI label="압류" value={`${seizures.length}건`}
             sub={`브랜드 B:${seizures.filter(c=>c.brand==="B").length} / M:${seizures.filter(c=>c.brand==="M").length} / D:${seizures.filter(c=>c.brand==="D").length}`}
-            color="#8b5cf6" />
+            color="#8b5cf6" active={legalTypeFilter === "압류"}
+            onClick={() => setLegalTypeFilter(f => f === "압류" ? "전체" : "압류")} />
           <KPI label="재산명시·재산조회" value={`${ad.length}건`}
             sub={`재산조회 명령 ${ad.filter(c=>c.hasInquiryOrder).length}건`}
-            color="#f59e0b" />
+            color="#f59e0b" active={legalTypeFilter === "재산명시·재산조회"}
+            onClick={() => setLegalTypeFilter(f => f === "재산명시·재산조회" ? "전체" : "재산명시·재산조회")} />
           <KPI label="형사고소" value={`${cmp.length}건`}
             sub={`수사중 ${cmp.filter(c=>c.status==="수사중").length}건`}
-            color="#ef4444" />
+            color="#ef4444" active={legalTypeFilter === "형사고소"}
+            onClick={() => setLegalTypeFilter(f => f === "형사고소" ? "전체" : "형사고소")} />
         </div>
 
         {/* 필터 + 다운로드 */}
