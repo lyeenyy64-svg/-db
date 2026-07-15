@@ -8979,7 +8979,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             const yestStr = dOffset(-1), todayStr = dOffset(0), tmrwStr = dOffset(1);
             const scheds = data.installmentSchedules || [];
             const items = [
-              { l: "긴급 알림", v: `${alertList.filter(a => a.p === "high").length}건`, onClick: () => setAlerts(true) },
               { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
@@ -8991,7 +8990,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                 style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: "2px 6px", margin: "0 -6px", borderRadius: 6 }}>
                 <div style={{ fontSize: 11, color: "#000" }}>{x.l}</div>
-                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#000" }}>{x.v}</div>
+                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{x.v}</div>
               </div>
             ));
           })()}
