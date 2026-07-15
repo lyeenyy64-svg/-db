@@ -5511,7 +5511,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                               style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
                           )}
                         </div>
-                        {dayScheds.slice(0, 4).map((s) => {
+                        {dayScheds.map((s) => {
                           const c = scColor(s.status);
                           return (
                             <div key={s.id}
@@ -5533,7 +5533,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             </div>
                           );
                         })}
-                        {dayScheds.length > 4 && <div style={{ fontSize: 9, color: "var(--tm)", paddingLeft: 4 }}>+{dayScheds.length - 4}</div>}
                       </div>
                     );
                   })}
