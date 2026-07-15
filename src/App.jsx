@@ -6322,8 +6322,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
             {debtor ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <DL label="이름"     val={debtor.name} />
-                <DL label="브랜드"   val={debtor.brandName || debtor.brand} />
                 <DL label="분류"     val={debtor.category} />
                 <DL label="담당자"   val={debtor.assignee} />
                 <DL label="연락처"   val={debtor.phone} />
