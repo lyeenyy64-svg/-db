@@ -107,6 +107,10 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"
     ["resident_copy_url",   "TEXT"],
     ["exec_title_url",      "TEXT"],
     ["subrogation_doc_url", "TEXT"],
+    ["latest_address",      "TEXT"],
+    ["latest_address_lat",  "REAL"],
+    ["latest_address_lng",  "REAL"],
+    ["latest_address_updated_at", "TEXT"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -599,6 +603,9 @@ app.get("/api/debtors", (req, res) => {
            resident_copy_date AS residentCopy, resident_copy_url AS residentCopyUrl,
            birth_date AS birthDate,
            resident_number AS residentNumber,
+           latest_address AS latestAddress,
+           latest_address_lat AS latestAddressLat,
+           latest_address_lng AS latestAddressLng,
            sales_rep AS salesRep,
            key_notes AS keyNotes,
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
@@ -1801,6 +1808,7 @@ app.patch("/api/debtors/:id", (req, res) => {
       birthDate:"birth_date",residentNumber:"resident_number",
       salesRep:"sales_rep",keyNotes:"key_notes",
       principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
+      latestAddress:"latest_address",
     };
     const fieldLabels = {
       category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
@@ -1812,6 +1820,7 @@ app.patch("/api/debtors/:id", (req, res) => {
       birthDate:"생년월일",residentNumber:"주민등록번호",
       salesRep:"영업담당자",keyNotes:"주요사항",
       principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
+      latestAddress:"최신 주소",
     };
 
     const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
@@ -1842,6 +1851,11 @@ app.patch("/api/debtors/:id", (req, res) => {
     }
 
     if (fields.length > 0) {
+      // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
+      // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
+      if (changedJsKeys.includes('latestAddress')) {
+        fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
+      }
       fields.push("updated_at = datetime('now','localtime')");
       vals.push(id);
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
@@ -2552,6 +2566,7 @@ const { spawn } = require("child_process");
 const OCR_SCRIPT = path.join(__dirname, "ocr_resident.py");
 const OCR_CREDIT_SCRIPT = path.join(__dirname, "ocr_credit_score.py");
 const OCR_SUBROGATION_SCRIPT = path.join(__dirname, "ocr_subrogation_date.py");
+const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
 
 // pythonw.exe = GUI subsystem, never opens a console window
 const PYTHON_BIN = "C:\\Users\\hjbae\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe";
@@ -2583,6 +2598,18 @@ function ocrPdfForSubrogationDate(pdfPath) {
 function ocrPdfForCreditScore(pdfPath) {
   return new Promise((resolve) => {
     const proc = spawn(PYTHON_BIN, [OCR_CREDIT_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    let out = "";
+    proc.stdout.on("data", d => { out += d.toString(); });
+    proc.on("close", () => {
+      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+    });
+    proc.on("error", () => resolve({ ok: false }));
+  });
+}
+
+function ocrPdfForCreditAddress(pdfPath) {
+  return new Promise((resolve) => {
+    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2692,6 +2719,89 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 
     res.json({ ok: true, entries });
   } catch (e) { res.status(500).json({ ok: false, entries: [], error: e.message }); }
+});
+
+// ─── 최신 주소지 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
+// 채무자 위치 지도에 쓸 주소라서 연대보증인은 대상에서 제외하고 주채무자만 추출한다.
+// 추출에 성공하면 DB에 저장해서(latest_address) 다음부터는 OCR을 다시 돌리지 않고 캐시를 쓴다.
+app.get("/api/debtor/:id/credit-address", async (req, res) => {
+  try {
+    const debtor = db.prepare("SELECT id, name, latest_address FROM debtors WHERE id = ?").get(req.params.id);
+    if (!debtor) return res.json({ ok: false, address: null });
+
+    if (debtor.latest_address) {
+      return res.json({ ok: true, address: debtor.latest_address, source: "cache" });
+    }
+
+    const kor = korName3(debtor.name);
+    if (!kor) return res.json({ ok: false, address: null, error: "이름 인식 불가" });
+
+    const rows = db.prepare(
+      `SELECT file_path, filename FROM file_index
+       WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+       AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
+       AND ext = 'pdf'
+       ORDER BY parsed_date DESC LIMIT 5`
+    ).all(`%${kor}%`, `%${kor}%`);
+
+    for (const c of rows) {
+      const r = await ocrPdfForCreditAddress(c.file_path);
+      if (r.ok && r.address) {
+        db.prepare("UPDATE debtors SET latest_address = ?, latest_address_lat = NULL, latest_address_lng = NULL, latest_address_updated_at = datetime('now','localtime') WHERE id = ?").run(r.address, debtor.id);
+        return res.json({ ok: true, address: r.address, source: "ocr", filename: c.filename });
+      }
+    }
+
+    res.json({ ok: false, address: null, error: "주소 인식 실패" });
+  } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
+});
+
+// ─── 채무자 위치 지도 ────────────────────────────────
+// 네이버 지도 Client ID는 비밀값이 아니라(JS SDK에 그대로 노출됨) 프론트에 그냥 내려줘도 되지만,
+// Client Secret(지오코딩용)은 서버에만 두고 절대 프론트로 보내지 않는다.
+app.get("/api/config/naver-map", (req, res) => {
+  res.json({ clientId: process.env.NAVER_MAP_CLIENT_ID || null });
+});
+
+// 위치가 캐시돼 있는(또는 주소만 있고 좌표가 없는) 채무자 목록 — 지도 마커용
+app.get("/api/debtors/locations", (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT id, name, brand_code AS brand, brand_name AS brandName, category, assignee,
+             collection_status AS collectionStatus,
+             latest_address AS latestAddress, latest_address_lat AS lat, latest_address_lng AS lng
+      FROM v_debtors
+      WHERE latest_address IS NOT NULL AND latest_address != ''
+    `).all();
+    res.json({ ok: true, debtors: rows });
+  } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
+});
+
+// 주소 → 좌표 지오코딩 (네이버 Maps Geocoding API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
+app.post("/api/debtor/:id/geocode", async (req, res) => {
+  try {
+    const debtor = db.prepare("SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng FROM debtors WHERE id = ?").get(req.params.id);
+    if (!debtor) return res.json({ ok: false, error: "채무자 없음" });
+    if (!debtor.latest_address) return res.json({ ok: false, error: "주소 없음" });
+    if (debtor.lat != null && debtor.lng != null) return res.json({ ok: true, lat: debtor.lat, lng: debtor.lng, source: "cache" });
+
+    const clientId = process.env.NAVER_MAP_CLIENT_ID;
+    const clientSecret = process.env.NAVER_MAP_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return res.json({ ok: false, error: "네이버 지도 API 키가 설정되지 않았습니다 (backend/.env)" });
+
+    const url = `https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=${encodeURIComponent(debtor.latest_address)}`;
+    const r = await fetch(url, {
+      headers: { "X-NCP-APIGW-API-KEY-ID": clientId, "X-NCP-APIGW-API-KEY": clientSecret },
+    });
+    const data = await r.json();
+    if (!r.ok || data.status !== "OK" || !data.addresses?.length) {
+      return res.json({ ok: false, error: data.errorMessage || "주소를 좌표로 변환할 수 없습니다" });
+    }
+    const lat = parseFloat(data.addresses[0].y);
+    const lng = parseFloat(data.addresses[0].x);
+    db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+    res.json({ ok: true, lat, lng, source: "geocode" });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ─── 대위변제일 자동 추출 (대위변제증명서 PDF → Python Windows OCR) ──

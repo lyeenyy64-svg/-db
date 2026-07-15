@@ -1750,11 +1750,13 @@ export default function App() {
   // legalTypeFilter는 탭 전환이 아니라 "유형" 드롭다운 값이다 (SSE 재렌더링에도 유지되도록 최상위에 둔다)
   const [legalTypeFilter, setLegalTypeFilter] = useState("전체");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
+  const [debtorsSubTab, setDebtorsSubTab] = useState("채무자 목록");
   const [expandedNav, setExpandedNav] = useState(() => new Set());
   const [autoResidentNums, setAutoResidentNums] = useState({});
   const [residentRevealed, setResidentRevealed] = useState(() => new Set());
   const [autoCreditScores, setAutoCreditScores] = useState({});
   const [autoSubrogationDates, setAutoSubrogationDates] = useState({});
+  const [autoAddresses, setAutoAddresses] = useState({});
   const [prevTab, setPrevTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
@@ -1912,6 +1914,19 @@ export default function App() {
         setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: data.ok && data.date ? { date: data.date, filename: data.filename } : false }));
       })
       .catch(() => { setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: false })); });
+  }, [sel?.id]);
+
+  // 채무자 선택 시 CB종합보고서에서 최신 주소지 자동 추출 (채무자 위치 지도용) — DB에 이미 있으면 재조회 안 함
+  useEffect(() => {
+    if (!sel || autoAddresses[sel.id] !== undefined) return;
+    if (sel.latestAddress) { setAutoAddresses(prev => ({ ...prev, [sel.id]: { address: sel.latestAddress, filename: null } })); return; }
+    setAutoAddresses(prev => ({ ...prev, [sel.id]: null }));
+    fetch(`/api/debtor/${sel.id}/credit-address`)
+      .then(r => r.json())
+      .then(data => {
+        setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, filename: data.filename } : false }));
+      })
+      .catch(() => { setAutoAddresses(prev => ({ ...prev, [sel.id]: false })); });
   }, [sel?.id]);
 
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
@@ -2739,6 +2754,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="집행권원 PDF (OneDrive)"><KoreanInput value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
           <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
           <Field label="신용점수"><KoreanInput value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
+          <Field label="최신 주소" span={2}><KoreanInput value={f.latestAddress || ""} onChange={e => set("latestAddress", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력 — 채무자 위치 지도에 사용" /></Field>
           <Field label="영업담당자"><KoreanInput value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
           <Field label="주민등록번호" span={2}><KoreanInput value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
           <Field label="주요사항" span={3}><KoreanTextarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
@@ -3976,7 +3992,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               }
               const subResult = autoSubrogationDates[d.id];
               const autoSubDate = (subResult && subResult.date) ? subResult.date : d.subrogationMonth || "";
-              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate } });
+              const addrResult = autoAddresses[d.id];
+              const autoAddress = d.latestAddress || (addrResult && addrResult.address) || "";
+              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress } });
             }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
             <button onClick={goBack} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
@@ -4072,6 +4090,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(0, half).map((e, i) => renderScore(e, i))}</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allEntries.slice(half).map((e, i) => renderScore(e, half+i))}</div>
                 </div>;
+              })()}
+            </div>
+            {/* 최신 주소 (채무자 위치 지도용) */}
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>최신 주소 <span style={{ color: "var(--ts)" }}>(채무자 위치 지도)</span></div>
+              {(() => {
+                const addrResult = autoAddresses[d.id];
+                const address = d.latestAddress || (addrResult && addrResult.address) || null;
+                if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
+                return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음 — CB 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
               })()}
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
@@ -5671,6 +5699,151 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {planPopup && PlanDetailPopup()}
         {addSchedModal && <AddSchedModal />}
         {dayPopup && <DayPopup date={dayPopup} onClose={() => setDayPopup(null)} />}
+      </div>
+    );
+  });
+
+  // ─── Debtor Locations View (채무자 위치 지도) ─────────────
+  const DebtorLocationsView = useStableComponent(() => {
+    const [mapClientId, setMapClientId] = useState(undefined); // undefined=조회중, null=키없음, string=사용가능
+    const [locations, setLocations] = useState(null); // null=로딩중
+    const [mapReady, setMapReady] = useState(false);
+    const [searchQ, setSearchQ] = useState("");
+    const [geocoding, setGeocoding] = useState(false);
+    const [geocodeProgress, setGeocodeProgress] = useState(null);
+    const mapElRef = useRef(null);
+    const mapObjRef = useRef(null);
+    const markersRef = useRef([]);
+
+    const loadLocations = () => {
+      fetch("/api/debtors/locations").then(r => r.json()).then(d => setLocations(d.ok ? d.debtors : [])).catch(() => setLocations([]));
+    };
+    useEffect(() => {
+      fetch("/api/config/naver-map").then(r => r.json()).then(d => setMapClientId(d.clientId || null)).catch(() => setMapClientId(null));
+      loadLocations();
+    }, []);
+
+    // 네이버 지도 JS SDK 동적 로드 (Client ID는 비밀값 아님 — URL에 그대로 노출돼도 안전)
+    useEffect(() => {
+      if (!mapClientId) return;
+      if (window.naver && window.naver.maps) { setMapReady(true); return; }
+      const existing = document.getElementById("naver-maps-sdk");
+      if (existing) { existing.addEventListener("load", () => setMapReady(true)); return; }
+      const script = document.createElement("script");
+      script.id = "naver-maps-sdk";
+      script.src = `https://openapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${mapClientId}`;
+      script.onload = () => setMapReady(true);
+      document.head.appendChild(script);
+    }, [mapClientId]);
+
+    // 지도 초기화 (1회)
+    useEffect(() => {
+      if (!mapReady || !mapElRef.current || mapObjRef.current) return;
+      mapObjRef.current = new window.naver.maps.Map(mapElRef.current, {
+        center: new window.naver.maps.LatLng(36.5, 127.8), // 대한민국 중앙 부근 기본값
+        zoom: 7,
+      });
+    }, [mapReady]);
+
+    // 마커 렌더링
+    useEffect(() => {
+      if (!mapObjRef.current || !locations) return;
+      markersRef.current.forEach(m => m.setMap(null));
+      markersRef.current = [];
+      const withCoords = locations.filter(d => d.lat != null && d.lng != null);
+      withCoords.forEach(d => {
+        const color = config.brands.find(b => b.code === d.brand)?.color || "#64748b";
+        const marker = new window.naver.maps.Marker({
+          position: new window.naver.maps.LatLng(d.lat, d.lng),
+          map: mapObjRef.current,
+          title: `${d.brandName || d.brand} ${d.name}`,
+          icon: {
+            content: `<div style="padding:3px 8px;border-radius:6px;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35)">${d.brand} ${d.name}</div>`,
+            anchor: new window.naver.maps.Point(10, 10),
+          },
+        });
+        window.naver.maps.Event.addListener(marker, "click", () => {
+          const debtor = data.debtors.find(x => x.id === d.id);
+          if (debtor) navigateToDebtor(debtor);
+        });
+        markersRef.current.push(marker);
+      });
+    }, [locations, mapReady]);
+
+    const noCoords = (locations || []).filter(d => d.lat == null || d.lng == null);
+    const withCoordsCount = (locations || []).length - noCoords.length;
+
+    const runBulkGeocode = async () => {
+      if (geocoding || noCoords.length === 0) return;
+      setGeocoding(true);
+      setGeocodeProgress({ done: 0, total: noCoords.length });
+      for (let i = 0; i < noCoords.length; i++) {
+        try { await fetch(`/api/debtor/${noCoords[i].id}/geocode`, { method: "POST" }); } catch {}
+        setGeocodeProgress({ done: i + 1, total: noCoords.length });
+      }
+      setGeocoding(false);
+      loadLocations();
+    };
+
+    const panTo = (d) => {
+      if (!mapObjRef.current || d.lat == null) return;
+      mapObjRef.current.setCenter(new window.naver.maps.LatLng(d.lat, d.lng));
+      mapObjRef.current.setZoom(16);
+    };
+
+    const q = searchQ.trim().toLowerCase();
+    const searched = (locations || []).filter(d => !q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q));
+
+    return (
+      <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 16px", border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)" }}>
+            주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
+          </div>
+          {mapClientId && noCoords.length > 0 && (
+            <button onClick={runBulkGeocode} disabled={geocoding}
+              style={{ padding: "8px 14px", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)", color: geocoding ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: geocoding ? "default" : "pointer" }}>
+              {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
+            </button>
+          )}
+          <span style={{ flex: 1 }} />
+          <div style={{ position: "relative", width: 260 }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+            <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·브랜드 검색"
+              style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
+          </div>
+        </div>
+
+        {mapClientId === null && (
+          <div style={{ padding: "12px 16px", borderRadius: 10, background: "#f59e0b18", border: "1px solid #f59e0b40", color: "#b45309", fontSize: 12 }}>
+            네이버 지도 API 키가 설정되지 않았습니다. <code>backend/.env</code>에 <code>NAVER_MAP_CLIENT_ID</code>/<code>NAVER_MAP_CLIENT_SECRET</code>을 추가한 뒤 서버를 재시작해주세요.
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 520 }}>
+          <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }}>
+            {locations === null
+              ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
+              : searched.length === 0
+                ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소가 확보된 채무자가 없습니다.\n채무자 상세 페이지에서 CB보기로 주소를 자동추출해보세요."}</div>
+                : searched.map(d => (
+                    <div key={d.id} onClick={() => panTo(d)}
+                      style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: d.lat != null ? "pointer" : "default", opacity: d.lat != null ? 1 : 0.55 }}
+                      onMouseEnter={e => { if (d.lat != null) e.currentTarget.style.background = "var(--hover)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <BrandBadge code={d.brand} brands={config.brands} />
+                        <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
+                        {d.lat == null && <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>좌표 없음</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.latestAddress}</div>
+                    </div>
+                  ))
+            }
+          </div>
+          <div ref={mapElRef} style={{ flex: 1, borderRadius: 12, border: "1px solid var(--brd)", minHeight: 520, background: "var(--bg2)" }} />
+        </div>
       </div>
     );
   });
@@ -8882,10 +9055,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "회생",     cnt: (data.rehabilitations||[]).filter(r => r.type === "회생").length },
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
   ];
+  const debtorsSubItems = [
+    { k: "채무자 목록", cnt: (data.debtors||[]).length },
+    { k: "채무자 위치", cnt: (data.debtors||[]).filter(d => d.latestAddress).length },
+  ];
   const navTabs = [
     { k: "dashboard",       l: "종합현황",        i: "dashboard" },
     { k: "issues",          l: "주요현안",         i: "flag" },
-    { k: "debtors",         l: "채무자 관리",      i: "users" },
+    { k: "debtors",         l: "채무자 관리",      i: "users",   sub: debtorsSubItems, subState: debtorsSubTab, setSub: (v) => { setDebtorsSubTab(v); if (v === "채무자 목록") goToDebtorList(); else { setTab("debtors"); setSel(null); } } },
     { k: "payments",        l: "입금내역",         i: "won" },
     { k: "installments",    l: "분할상환",         i: "calendar" },
     { k: "collection",      l: "추심의뢰",         i: "arrowRight" },
@@ -8922,7 +9099,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={t.k}>
                 <button
                   onClick={() => {
-                    if (t.k === "debtors") { goToDebtorList(); return; }
+                    if (t.k === "debtors") {
+                      setDebtorsSubTab("채무자 목록");
+                      goToDebtorList();
+                      setExpandedNav(prev => {
+                        const next = new Set(prev);
+                        if (next.has(t.k)) next.delete(t.k); else next.add(t.k);
+                        return next;
+                      });
+                      return;
+                    }
                     setTab(t.k);
                     setSel(null);
                     if (t.sub) {
@@ -9001,9 +9187,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {sel && tab === "debtors" && <button onClick={goBack} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
             <span
-              onClick={tab === "debtors" ? goToDebtorList : undefined}
+              onClick={tab === "debtors" ? () => { setDebtorsSubTab("채무자 목록"); goToDebtorList(); } : undefined}
               style={{ fontSize: 16, fontWeight: 700, cursor: tab === "debtors" ? "pointer" : "default" }}>
               {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
+              {tab === "debtors" && !sel && debtorsSubTab !== "채무자 목록" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {debtorsSubTab}</span>}
               {tab === "legal" && legalTypeFilter !== "전체" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalTypeFilter}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
             </span>
@@ -9019,7 +9206,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
           {tab === "dashboard" && Dashboard()}
           {tab === "issues" && issuesView}
-          {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : debtorListView)}
+          {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : (debtorsSubTab === "채무자 위치" ? <DebtorLocationsView /> : debtorListView))}
           {tab === "collection" && <CollectionView />}
           {tab === "payments" && <PaymentsView />}
           {tab === "installments" && <InstallmentsView />}
