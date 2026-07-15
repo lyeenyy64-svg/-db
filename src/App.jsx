@@ -1858,7 +1858,7 @@ export default function App() {
   const [pendingCount, setPendingCount] = useState(0);
   const [pendingRefreshKey, setPendingRefreshKey] = useState(0);
   // 실시간 동기화(SSE) 재렌더링 시 PaymentsView가 새로 마운트되어도 탭 선택이 유지되도록
-  // legalSubTab/rehabSubTab과 동일하게 최상위에 둔다
+  // legalTypeFilter/rehabSubTab과 동일하게 최상위에 둔다
   const [paymentsSubTab, setPaymentsSubTab] = useState("목록");
   // InstallmentsView도 같은 이유로 최상위에 둔다 — 그렇지 않으면 CHECK 사항 패널 클릭 시
   // installmentsFocusDate를 소비/초기화하는 과정에서 InstallmentsView가 다시 마운트되어
@@ -1877,7 +1877,9 @@ export default function App() {
   const [statsAccessGran, setStatsAccessGran] = useState("daily"); // daily|monthly|yearly
   const [statsVolumeGran, setStatsVolumeGran] = useState("daily");
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
-  const [legalSubTab, setLegalSubTab] = useState("지급명령");
+  // 법적절차 화면은 이제 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 통합 조회하므로
+  // legalTypeFilter는 탭 전환이 아니라 "유형" 드롭다운 값이다 (SSE 재렌더링에도 유지되도록 최상위에 둔다)
+  const [legalTypeFilter, setLegalTypeFilter] = useState("전체");
   const [rehabSubTab, setRehabSubTab] = useState("회생");
   const [expandedNav, setExpandedNav] = useState(() => new Set());
   const [autoResidentNums, setAutoResidentNums] = useState({});
@@ -1885,7 +1887,6 @@ export default function App() {
   const [autoCreditScores, setAutoCreditScores] = useState({});
   const [autoSubrogationDates, setAutoSubrogationDates] = useState({});
   const [prevTab, setPrevTab] = useState(null);
-  const [prevLegalSubTab, setPrevLegalSubTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
@@ -1907,7 +1908,6 @@ export default function App() {
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
   const navigateToDebtor = (debtor, detailTabName = "히스토리") => {
     setPrevTab(tab);
-    setPrevLegalSubTab(legalSubTab);
     setSel(debtor);
     setTab("debtors");
     setDetailTab(detailTabName);
@@ -1916,9 +1916,7 @@ export default function App() {
     setSel(null);
     if (prevTab) {
       setTab(prevTab);
-      if (prevTab === "legal" && prevLegalSubTab) setLegalSubTab(prevLegalSubTab);
       setPrevTab(null);
-      setPrevLegalSubTab(null);
     }
   };
   const [backendStatus, setBackendStatus] = useState("loading"); // loading / connected / failed
@@ -4425,13 +4423,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {detailTab === "법적절차내역" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {debtorLegalAll.length === 0 && <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>법적절차 내역 없음</div>}
           {debtorLegalAll.map((c, i) => {
-            const _typeToSubTab = { "지급명령": "지급명령", "압류": "압류", "재산명시": "재산명시·재산조회", "형사고소": "형사고소" };
+            const _legalTypes = ["지급명령", "압류", "재산명시", "형사고소"];
             const _handleCardNav = () => {
               if (c.type === "민사소송") {
                 setMinsaSearchInit(d.name); setPrevTab(tab); setSel(null); setTab("minsa");
-              } else {
-                const sub = _typeToSubTab[c.type];
-                if (sub) { setLegalSearchInit(d.name); setPrevLegalSubTab(legalSubTab); setPrevTab(tab); setSel(null); setLegalSubTab(sub); setTab("legal"); }
+              } else if (_legalTypes.includes(c.type)) {
+                setLegalSearchInit(d.name); setLegalTypeFilter("전체"); setPrevTab(tab); setSel(null); setTab("legal");
               }
             };
             return (
@@ -5808,8 +5805,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Legal View ─────────────────────────────────────────
   const LegalView = useStableComponent(() => {
-    const legalTab = legalSubTab;
-    const setLegalTab = setLegalSubTab;
     const [brandF,            setBrandF]            = useState("전체");
     const [searchQ,           setSearchQ]           = useState("");
     useEffect(() => { if (legalSearchInit) { setSearchQ(legalSearchInit); setLegalSearchInit(null); } }, [legalSearchInit]);
@@ -5841,7 +5836,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         r = r.filter(c =>
           (c[nameKey] || "").toLowerCase().includes(q) ||
           (c.caseNumber || "").toLowerCase().includes(q) ||
-          (c.court || "").toLowerCase().includes(q)
+          (c.court || "").toLowerCase().includes(q) ||
+          (c.charge || "").toLowerCase().includes(q) ||
+          (c.policeStation || "").toLowerCase().includes(q)
         );
       }
       return r;
@@ -5863,6 +5860,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const sortedSz  = sortByStatus(filteredSz,  c => c.progressStatus || "");
     const sortedAD  = sortByStatus(filteredAD,  c => c.status || "진행");
     const sortedCmp = sortByStatus(filteredCmp, c => c.status || "준비중");
+
+    // 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 함께 검색·조회할 수 있도록 통합
+    // (유형 드롭다운이 "전체"가 아니면 해당 유형만 남긴다)
+    const KIND_COLOR = { "지급명령": "#3b82f6", "압류": "#8b5cf6", "재산명시·재산조회": "#f59e0b", "형사고소": "#ef4444" };
+    const allItems = [
+      ...sortedPO.map(c => ({ c, kind: "지급명령" })),
+      ...sortedSz.map(c => ({ c, kind: "압류" })),
+      ...sortedAD.map(c => ({ c, kind: "재산명시·재산조회" })),
+      ...sortedCmp.map(c => ({ c, kind: "형사고소" })),
+    ].filter(({ kind }) => legalTypeFilter === "전체" || legalTypeFilter === kind);
 
     // 연동 채무자 찾기
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
@@ -6173,46 +6180,45 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     ));
 
     // 단일 사건 행 (지급명령/압류)
-    const LegalRow = useStableComponent(({ c, ovKey, dataKey }) => {
-      const debtor = getDebtor(c.debtorId);
-      const isMatching = matchingCase?.id === c.id;
-      return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-          <div
-            onClick={() => !isMatching && setSelCase({ ...c, _kind: "legal" })}
-            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
-            onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
-            onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
-          >
-            {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
-            <span style={{ fontWeight: 600, minWidth: 80 }}>{c.defendant || "-"}</span>
-            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
-            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.filingDate || "-"}</span>
-            {c.progressStatus ? <Badge status={c.progressStatus} /> : null}
-            {c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
-            <span style={{ flex: 1 }} />
-            {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
-            {debtor
-              ? <>
-                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
-                  <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                    style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
-                </>
-              : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
-            }
-          </div>
-          {isMatching && <ManualMatchPanel caseId={c.id} ovKey={ovKey} dataKey={dataKey} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
-        </div>
+    // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
+    const CaseRow = useStableComponent(({ c, kind }) => {
+      const kindBadge = (
+        <span style={{ minWidth: 88, textAlign: "center", flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30` }}>{kind}</span>
       );
-    });
 
-    // 재산명시·재산조회 행
-    const ADRow = useStableComponent(({ c }) => {
-      const debtor    = getDebtor(c.debtorId);
+      if (kind === "형사고소") {
+        const debtor = getDebtor(c.debtorId);
+        return (
+          <div
+            onClick={() => openComplaint(c)}
+            style={{ background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", cursor: "pointer", transition: "background 0.1s" }}
+            onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+            onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", flexWrap: "wrap" }}>
+              {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
+              {kindBadge}
+              <span style={{ fontWeight: 600, minWidth: 80 }}>{c.debtorName || "-"}</span>
+              <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.policeStation || "-"}</span>
+              <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.charge || "-"}</span>
+              <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.complaintDate || "-"}</span>
+              <Badge status={c.status || "준비중"} small />
+              <span style={{ flex: 1 }} />
+              {debtor && <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>}
+            </div>
+          </div>
+        );
+      }
+
+      const isAD      = kind === "재산명시·재산조회";
+      const debtor     = getDebtor(c.debtorId);
       const isMatching = matchingCase?.id === c.id;
-      const inquiryBadge = (
+      const name       = isAD ? c.debtorName : c.defendant;
+      const dateVal    = isAD ? c.applicationDate : c.filingDate;
+      const statusVal  = isAD ? (c.status || "진행") : c.progressStatus;
+      const ovKey      = isAD ? AD_OVERRIDES_KEY : LEGAL_OVERRIDES_KEY;
+      const dataKey    = isAD ? "assetDisclosures" : "legalCases";
+      const inquiryBadge = isAD && (
         <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, fontSize: 12, fontWeight: 700, background: c.hasInquiryOrder ? "#10b98118" : "#f1f5f9", color: c.hasInquiryOrder ? "#047857" : "#94a3b8", border: `1px solid ${c.hasInquiryOrder ? "#10b98140" : "#e2e8f0"}` }}>
           {c.hasInquiryOrder ? "O" : "X"}
         </span>
@@ -6220,17 +6226,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       return (
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           <div
-            onClick={() => !isMatching && setSelCase({ ...c, _kind: "ad" })}
+            onClick={() => !isMatching && setSelCase({ ...c, _kind: isAD ? "ad" : "legal" })}
             style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
             onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
             onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
           >
             {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
-            <span style={{ fontWeight: 600, minWidth: 80 }}>{c.debtorName || "-"}</span>
+            {kindBadge}
+            <span style={{ fontWeight: 600, minWidth: 80 }}>{name || "-"}</span>
             <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
             <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
-            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.applicationDate || "-"}</span>
-            {c.status ? <Badge status={c.status} /> : <Badge status="진행" />}
+            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{dateVal || "-"}</span>
+            {statusVal ? <Badge status={statusVal} /> : null}
+            {!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
             {inquiryBadge}
             <span style={{ flex: 1 }} />
             {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
@@ -6244,7 +6252,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
             }
           </div>
-          {isMatching && <ManualMatchPanel caseId={c.id} ovKey={AD_OVERRIDES_KEY} dataKey="assetDisclosures" onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+          {isMatching && <ManualMatchPanel caseId={c.id} ovKey={ovKey} dataKey={dataKey} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
         </div>
       );
     });
@@ -6456,94 +6464,56 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <option value="전체">전체 브랜드</option>
             {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
           </select>
+          <select value={legalTypeFilter} onChange={e => setLegalTypeFilter(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
+            <option value="전체">전체 유형</option>
+            <option value="지급명령">지급명령</option>
+            <option value="압류">압류</option>
+            <option value="재산명시·재산조회">재산명시·재산조회</option>
+            <option value="형사고소">형사고소</option>
+          </select>
           <div style={{ position: "relative", flex: 1 }}>
             <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
             <KoreanInput
               value={searchQ} onChange={e => setSearchQ(e.target.value)}
-              placeholder="채무자명·사건번호·법원 검색"
+              placeholder="채무자명·사건번호·법원·죄명·경찰서 검색 (지급명령/압류/재산명시·재산조회/형사고소 통합)"
               style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 13, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}
             />
           </div>
-          <button onClick={() => setModal(legalTab === "형사고소" ? { type: "addComplaint" } : { type: "addLegal", legalType: legalTab === "재산명시·재산조회" ? "재산명시" : legalTab })}
+          <button onClick={() => setModal(legalTypeFilter === "형사고소" ? { type: "addComplaint" } : { type: "addLegal", legalType: legalTypeFilter === "전체" ? "지급명령" : (legalTypeFilter === "재산명시·재산조회" ? "재산명시" : legalTypeFilter) })}
             style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}>
             <I name="plus" size={14} />데이터 추가
           </button>
           <button onClick={() => {
-            const rows = [];
-            filteredPO.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["지급명령", c.brand||"", c.defendant||"", c.court, c.caseNumber, c.filingDate||"", c.progressStatus||"", d ? (d.finalBalanceLegal||0) : ""]); });
-            filteredSz.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["압류",   c.brand||"", c.defendant||"", c.court, c.caseNumber, c.filingDate||"", c.progressStatus||"", d ? (d.finalBalanceLegal||0) : ""]); });
-            filteredAD.forEach(c  => { const d = getDebtor(c.debtorId); rows.push(["재산명시", c.brand||"", c.debtorName||"", c.court, c.caseNumber, c.applicationDate||"", c.status||"", d ? (d.finalBalanceLegal||0) : ""]); });
-            downloadCSV(`법적절차_${today()}.csv`, ["유형","브랜드","채무자","법원","사건번호","접수일","상태","잔액"], rows);
+            const rows = allItems.map(({ c, kind }) => {
+              const d = getDebtor(c.debtorId);
+              const name   = kind === "형사고소" ? c.debtorName : (kind === "재산명시·재산조회" ? c.debtorName : c.defendant);
+              const org    = kind === "형사고소" ? c.policeStation : c.court;
+              const caseNo = kind === "형사고소" ? c.charge : c.caseNumber;
+              const date   = kind === "형사고소" ? c.complaintDate : (kind === "재산명시·재산조회" ? c.applicationDate : c.filingDate);
+              const status = kind === "형사고소" ? c.status : (kind === "재산명시·재산조회" ? (c.status || "진행") : c.progressStatus);
+              return [kind, c.brand || "", name || "", org || "", caseNo || "", date || "", status || "", d ? (d.finalBalanceLegal || 0) : ""];
+            });
+            downloadCSV(`법적절차_${today()}.csv`, ["유형","브랜드","채무자","법원/기관","사건번호/죄명","접수일","상태","잔액"], rows);
           }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", whiteSpace: "nowrap" }}>
             <I name="arrowDown" size={14} />엑셀
           </button>
         </div>
 
         {/* 리스트 헤더 */}
-        {legalTab !== "형사고소" && (
-          <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
-            <span style={{ width: 22 }} /><span style={{ minWidth: 80 }}>채무자명</span>
-            <span style={{ minWidth: 100 }}>법원</span><span style={{ minWidth: 130 }}>사건번호</span>
-            <span style={{ minWidth: 90 }}>{legalTab === "재산명시·재산조회" ? "신청일" : "접수일"}</span>
-            <span style={{ minWidth: 58, cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
-            {legalTab === "재산명시·재산조회" && <span style={{ minWidth: 50 }}>재산조회</span>}
-            <span style={{ flex: 1 }} /><span>잔액</span>
-          </div>
-        )}
-        {legalTab === "형사고소" && (
-          <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
-            <span style={{ width: 22 }} /><span style={{ minWidth: 70 }}>채무자명</span>
-            <span style={{ flex: 1 }}>죄명</span>
-            <span style={{ minWidth: 120 }}>경찰서</span>
-            <span style={{ cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
-          </div>
-        )}
+        <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
+          <span style={{ width: 22 }} /><span style={{ minWidth: 88 }}>구분</span>
+          <span style={{ minWidth: 80 }}>채무자명</span>
+          <span style={{ minWidth: 100 }}>법원/기관</span><span style={{ minWidth: 130 }}>사건번호/죄명</span>
+          <span style={{ minWidth: 90 }}>접수일</span>
+          <span style={{ minWidth: 58, cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
+          <span style={{ flex: 1 }} /><span>잔액</span>
+        </div>
 
-        {/* 지급명령 리스트 */}
-        {legalTab === "지급명령" && (
-          filteredPO.length === 0
-            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>지급명령 사건이 없습니다.</div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedPO.map(c => <LegalRow key={c.id} c={c} ovKey={LEGAL_OVERRIDES_KEY} dataKey="legalCases" />)}</div>
-        )}
-
-        {/* 압류 리스트 */}
-        {legalTab === "압류" && (
-          filteredSz.length === 0
-            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>압류 사건이 없습니다.</div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedSz.map(c => <LegalRow key={c.id} c={c} ovKey={LEGAL_OVERRIDES_KEY} dataKey="legalCases" />)}</div>
-        )}
-
-        {/* 재산명시·재산조회 리스트 */}
-        {legalTab === "재산명시·재산조회" && (
-          filteredAD.length === 0
-            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>재산명시 사건이 없습니다.</div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{sortedAD.map(c => <ADRow key={c.id} c={c} />)}</div>
-        )}
-
-        {/* 형사고소 리스트 */}
-        {legalTab === "형사고소" && (
-          cmp.length === 0
-            ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>형사고소 사건이 없습니다.</div>
-            : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {sortedCmp.map(c => (
-                  <div key={c.id}
-                    onClick={() => openComplaint(c)}
-                    style={{ background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", cursor: "pointer", transition: "background 0.1s" }}
-                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px" }}>
-                      <BrandBadge code={c.brand} brands={config.brands} />
-                      <span style={{ fontWeight: 700, fontSize: 14, minWidth: 70 }}>{c.debtorName}</span>
-                      <Badge status={c.charge} />
-                      <span style={{ fontSize: 12, color: "var(--ts)", flex: 1 }}>{c.policeStation}</span>
-                      <Badge status={c.status || "준비중"} small />
-                      <span style={{ color: "var(--tm)", fontSize: 14 }}>›</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-        )}
+        {/* 지급명령/압류/재산명시·재산조회/형사고소 통합 리스트 */}
+        {allItems.length === 0
+          ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>조건에 맞는 법적절차 사건이 없습니다.</div>
+          : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>{allItems.map(({ c, kind }) => <CaseRow key={`${kind}-${c.id}`} c={c} kind={kind} />)}</div>
+        }
         {ComplaintDetailModal()}
       </div>
     );
@@ -9003,12 +8973,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   })();
 
   // ─── Layout ─────────────────────────────────────────────
-  const legalSubItems = [
-    { k: "지급명령",       cnt: (data.legalCases||[]).filter(c => c.type === "지급명령").length },
-    { k: "압류",           cnt: (data.legalCases||[]).filter(c => c.type === "압류").length },
-    { k: "재산명시·재산조회", cnt: (data.assetDisclosures||[]).length },
-    { k: "형사고소",       cnt: (data.complaints||[]).length },
-  ];
   const rehabSubItems = [
     { k: "회생",     cnt: (data.rehabilitations||[]).filter(r => r.type === "회생").length },
     { k: "파산/면책", cnt: (data.rehabilitations||[]).filter(r => r.type === "파산/면책").length },
@@ -9020,7 +8984,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "payments",        l: "입금내역",         i: "won" },
     { k: "installments",    l: "분할상환",         i: "calendar" },
     { k: "collection",      l: "추심의뢰",         i: "arrowRight" },
-    { k: "legal",           l: "법적절차",         i: "gavel",   sub: legalSubItems,   subState: legalSubTab,  setSub: (v) => { setLegalSubTab(v); setTab("legal"); } },
+    { k: "legal",           l: "법적절차",         i: "gavel" },
     { k: "rehabBankruptcy", l: "회생/파산",        i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
     { k: "minsa",           l: "민사소송",         i: "scale" },
     { k: "aiDocs",          l: "문건 자동 생성",   i: "fileText" },
@@ -9136,7 +9100,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               onClick={tab === "debtors" ? goToDebtorList : undefined}
               style={{ fontSize: 16, fontWeight: 700, cursor: tab === "debtors" ? "pointer" : "default" }}>
               {tab !== "dashboard" && navTabs.find(t => t.k === tab)?.l}
-              {tab === "legal" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalSubTab}</span>}
+              {tab === "legal" && legalTypeFilter !== "전체" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {legalTypeFilter}</span>}
               {tab === "rehabBankruptcy" && <span style={{ color: "var(--tm)", fontWeight: 400 }}> / {rehabSubTab}</span>}
             </span>
           </div>
