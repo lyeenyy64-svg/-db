@@ -2756,11 +2756,11 @@ app.get("/api/debtor/:id/credit-address", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
 
-// ─── 채무자 위치 지도 ────────────────────────────────
-// 네이버 지도 Client ID는 비밀값이 아니라(JS SDK에 그대로 노출됨) 프론트에 그냥 내려줘도 되지만,
-// Client Secret(지오코딩용)은 서버에만 두고 절대 프론트로 보내지 않는다.
-app.get("/api/config/naver-map", (req, res) => {
-  res.json({ clientId: process.env.NAVER_MAP_CLIENT_ID || null });
+// ─── 채무자 위치 지도 (카카오맵) ──────────────────────
+// JavaScript 키는 비밀값이 아니라(도메인 제한으로 보호되고 JS SDK에 그대로 노출됨) 프론트에
+// 그냥 내려줘도 되지만, REST API 키(지오코딩용)는 서버에만 두고 절대 프론트로 보내지 않는다.
+app.get("/api/config/kakao-map", (req, res) => {
+  res.json({ appKey: process.env.KAKAO_MAP_APP_KEY || null });
 });
 
 // 위치가 캐시돼 있는(또는 주소만 있고 좌표가 없는) 채무자 목록 — 지도 마커용
@@ -2777,7 +2777,7 @@ app.get("/api/debtors/locations", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
 });
 
-// 주소 → 좌표 지오코딩 (네이버 Maps Geocoding API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
+// 주소 → 좌표 지오코딩 (카카오 로컬 API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
 app.post("/api/debtor/:id/geocode", async (req, res) => {
   try {
     const debtor = db.prepare("SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng FROM debtors WHERE id = ?").get(req.params.id);
@@ -2785,20 +2785,26 @@ app.post("/api/debtor/:id/geocode", async (req, res) => {
     if (!debtor.latest_address) return res.json({ ok: false, error: "주소 없음" });
     if (debtor.lat != null && debtor.lng != null) return res.json({ ok: true, lat: debtor.lat, lng: debtor.lng, source: "cache" });
 
-    const clientId = process.env.NAVER_MAP_CLIENT_ID;
-    const clientSecret = process.env.NAVER_MAP_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return res.json({ ok: false, error: "네이버 지도 API 키가 설정되지 않았습니다 (backend/.env)" });
+    const restKey = process.env.KAKAO_REST_API_KEY;
+    if (!restKey) return res.json({ ok: false, error: "카카오맵 API 키가 설정되지 않았습니다 (backend/.env)" });
 
-    const url = `https://naveropenapi.apigw.ntruss.com/map-geocode/v2/geocode?query=${encodeURIComponent(debtor.latest_address)}`;
-    const r = await fetch(url, {
-      headers: { "X-NCP-APIGW-API-KEY-ID": clientId, "X-NCP-APIGW-API-KEY": clientSecret },
-    });
-    const data = await r.json();
-    if (!r.ok || data.status !== "OK" || !data.addresses?.length) {
-      return res.json({ ok: false, error: data.errorMessage || "주소를 좌표로 변환할 수 없습니다" });
+    const headers = { Authorization: `KakaoAK ${restKey}` };
+    const q = encodeURIComponent(debtor.latest_address);
+
+    // 1차: 지번/도로명 주소 검색 → 실패하면 2차: 키워드(장소) 검색으로 재시도
+    let doc = null;
+    let r = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${q}`, { headers });
+    let data = await r.json();
+    if (r.ok && data.documents?.length) doc = data.documents[0];
+    if (!doc) {
+      r = await fetch(`https://dapi.kakao.com/v2/local/search/keyword.json?query=${q}`, { headers });
+      data = await r.json();
+      if (r.ok && data.documents?.length) doc = data.documents[0];
     }
-    const lat = parseFloat(data.addresses[0].y);
-    const lng = parseFloat(data.addresses[0].x);
+    if (!doc) return res.json({ ok: false, error: "주소를 좌표로 변환할 수 없습니다" });
+
+    const lat = parseFloat(doc.y);
+    const lng = parseFloat(doc.x);
     db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
     res.json({ ok: true, lat, lng, source: "geocode" });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }

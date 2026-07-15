@@ -5705,7 +5705,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Debtor Locations View (채무자 위치 지도) ─────────────
   const DebtorLocationsView = useStableComponent(() => {
-    const [mapClientId, setMapClientId] = useState(undefined); // undefined=조회중, null=키없음, string=사용가능
+    const [mapAppKey, setMapAppKey] = useState(undefined); // undefined=조회중, null=키없음, string=사용가능
     const [locations, setLocations] = useState(null); // null=로딩중
     const [mapReady, setMapReady] = useState(false);
     const [searchQ, setSearchQ] = useState("");
@@ -5713,60 +5713,60 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [geocodeProgress, setGeocodeProgress] = useState(null);
     const mapElRef = useRef(null);
     const mapObjRef = useRef(null);
-    const markersRef = useRef([]);
+    const overlaysRef = useRef([]);
 
     const loadLocations = () => {
       fetch("/api/debtors/locations").then(r => r.json()).then(d => setLocations(d.ok ? d.debtors : [])).catch(() => setLocations([]));
     };
     useEffect(() => {
-      fetch("/api/config/naver-map").then(r => r.json()).then(d => setMapClientId(d.clientId || null)).catch(() => setMapClientId(null));
+      fetch("/api/config/kakao-map").then(r => r.json()).then(d => setMapAppKey(d.appKey || null)).catch(() => setMapAppKey(null));
       loadLocations();
     }, []);
 
-    // 네이버 지도 JS SDK 동적 로드 (Client ID는 비밀값 아님 — URL에 그대로 노출돼도 안전)
+    // 카카오맵 JS SDK 동적 로드 (JavaScript 키는 비밀값 아님 — URL에 그대로 노출돼도 안전)
     useEffect(() => {
-      if (!mapClientId) return;
-      if (window.naver && window.naver.maps) { setMapReady(true); return; }
-      const existing = document.getElementById("naver-maps-sdk");
-      if (existing) { existing.addEventListener("load", () => setMapReady(true)); return; }
+      if (!mapAppKey) return;
+      if (window.kakao && window.kakao.maps) { setMapReady(true); return; }
+      const existing = document.getElementById("kakao-maps-sdk");
+      if (existing) { existing.addEventListener("load", () => window.kakao.maps.load(() => setMapReady(true))); return; }
       const script = document.createElement("script");
-      script.id = "naver-maps-sdk";
-      script.src = `https://openapi.map.naver.com/openapi/v3/maps.js?ncpKeyId=${mapClientId}`;
-      script.onload = () => setMapReady(true);
+      script.id = "kakao-maps-sdk";
+      script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${mapAppKey}&autoload=false`;
+      script.onload = () => window.kakao.maps.load(() => setMapReady(true));
       document.head.appendChild(script);
-    }, [mapClientId]);
+    }, [mapAppKey]);
 
     // 지도 초기화 (1회)
     useEffect(() => {
       if (!mapReady || !mapElRef.current || mapObjRef.current) return;
-      mapObjRef.current = new window.naver.maps.Map(mapElRef.current, {
-        center: new window.naver.maps.LatLng(36.5, 127.8), // 대한민국 중앙 부근 기본값
-        zoom: 7,
+      mapObjRef.current = new window.kakao.maps.Map(mapElRef.current, {
+        center: new window.kakao.maps.LatLng(36.5, 127.8), // 대한민국 중앙 부근 기본값
+        level: 13,
       });
     }, [mapReady]);
 
-    // 마커 렌더링
+    // 마커(커스텀 오버레이) 렌더링
     useEffect(() => {
       if (!mapObjRef.current || !locations) return;
-      markersRef.current.forEach(m => m.setMap(null));
-      markersRef.current = [];
+      overlaysRef.current.forEach(o => o.setMap(null));
+      overlaysRef.current = [];
       const withCoords = locations.filter(d => d.lat != null && d.lng != null);
       withCoords.forEach(d => {
         const color = config.brands.find(b => b.code === d.brand)?.color || "#64748b";
-        const marker = new window.naver.maps.Marker({
-          position: new window.naver.maps.LatLng(d.lat, d.lng),
-          map: mapObjRef.current,
-          title: `${d.brandName || d.brand} ${d.name}`,
-          icon: {
-            content: `<div style="padding:3px 8px;border-radius:6px;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35)">${d.brand} ${d.name}</div>`,
-            anchor: new window.naver.maps.Point(10, 10),
-          },
-        });
-        window.naver.maps.Event.addListener(marker, "click", () => {
+        const el = document.createElement("div");
+        el.style.cssText = `padding:3px 8px;border-radius:6px;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;`;
+        el.textContent = `${d.brand} ${d.name}`;
+        el.addEventListener("click", () => {
           const debtor = data.debtors.find(x => x.id === d.id);
           if (debtor) navigateToDebtor(debtor);
         });
-        markersRef.current.push(marker);
+        const overlay = new window.kakao.maps.CustomOverlay({
+          position: new window.kakao.maps.LatLng(d.lat, d.lng),
+          content: el,
+          yAnchor: 1,
+        });
+        overlay.setMap(mapObjRef.current);
+        overlaysRef.current.push(overlay);
       });
     }, [locations, mapReady]);
 
@@ -5787,8 +5787,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const panTo = (d) => {
       if (!mapObjRef.current || d.lat == null) return;
-      mapObjRef.current.setCenter(new window.naver.maps.LatLng(d.lat, d.lng));
-      mapObjRef.current.setZoom(16);
+      mapObjRef.current.setCenter(new window.kakao.maps.LatLng(d.lat, d.lng));
+      mapObjRef.current.setLevel(3);
     };
 
     const q = searchQ.trim().toLowerCase();
@@ -5800,7 +5800,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 16px", border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)" }}>
             주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
           </div>
-          {mapClientId && noCoords.length > 0 && (
+          {mapAppKey && noCoords.length > 0 && (
             <button onClick={runBulkGeocode} disabled={geocoding}
               style={{ padding: "8px 14px", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)", color: geocoding ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: geocoding ? "default" : "pointer" }}>
               {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
@@ -5814,9 +5814,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
 
-        {mapClientId === null && (
+        {mapAppKey === null && (
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "#f59e0b18", border: "1px solid #f59e0b40", color: "#b45309", fontSize: 12 }}>
-            네이버 지도 API 키가 설정되지 않았습니다. <code>backend/.env</code>에 <code>NAVER_MAP_CLIENT_ID</code>/<code>NAVER_MAP_CLIENT_SECRET</code>을 추가한 뒤 서버를 재시작해주세요.
+            카카오맵 API 키가 설정되지 않았습니다. <code>backend/.env</code>에 <code>KAKAO_MAP_APP_KEY</code>/<code>KAKAO_REST_API_KEY</code>를 추가한 뒤 서버를 재시작해주세요.
           </div>
         )}
 
