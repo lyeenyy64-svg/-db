@@ -1718,7 +1718,6 @@ export default function App() {
     setPage(1);
   };
   const [modal, setModal] = useState(null);
-  const [alerts, setAlerts] = useState(false);
   const [toast, setToast] = useState(null);
   const [detailTab, setDetailTab] = useState("히스토리");
   const [adminMainTab, setAdminMainTab] = useState("settings");
@@ -2508,14 +2507,6 @@ export default function App() {
     rows.sort((a, b) => b.thisMonth - a.thisMonth);
     return rows;
   }, [data, config]);
-
-  const alertList = useMemo(() => {
-    const l = [];
-    data.installmentPlans.forEach(p => { const un = (p.schedules || p.logs || []).filter(x => x.status === "미납"); if (un.length > 0) l.push({ type: "installment", msg: `${p.debtorName} 분할상환 미납 ${un.length}회`, p: "high", debtorId: p.debtorId }); });
-    data.rehabilitations.forEach(r => { if (r.overdueStatus === "미납") l.push({ type: "rehab", msg: `${r.debtorName} 회생 변제금 미납`, p: "high", debtorId: r.debtorId }); });
-    data.debtors.filter(d => d.collectionStatus === "추심진행" && d.finalBalanceLegal > 10000000).forEach(d => { l.push({ type: "highvalue", msg: `${d.name}(${d.brandName}) 잔액 ${fmt(d.finalBalanceLegal)}`, p: "med", debtorId: d.id }); });
-    return l.sort((a, b) => (a.p === "high" ? 0 : 1) - (b.p === "high" ? 0 : 1)).slice(0, 30);
-  }, [data]);
 
   // ─── Filtered Debtors ───────────────────────────────────
   const filtered = useMemo(() => {
@@ -9023,7 +9014,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button onClick={() => loadData()} disabled={isRefreshing} title="데이터 새로고침" style={{ width: 36, height: 36, borderRadius: 8, background: isRefreshing ? "var(--acc)" : "var(--card)", color: isRefreshing ? "#fff" : "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: isRefreshing ? "default" : "pointer" }}>
               <span className={isRefreshing ? "spinning" : ""}><I name="refresh" size={16} /></span>
             </button>
-            <button onClick={() => setAlerts(!alerts)} style={{ position: "relative", width: 36, height: 36, borderRadius: 8, background: "var(--card)", color: "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)" }}><I name="bell" size={16} />{alertList.filter(a => a.p === "high").length > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: 9, background: "var(--err)", color: "#fff", fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>{alertList.filter(a => a.p === "high").length}</span>}</button>
           </div>
         </div>
         <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
@@ -9059,8 +9049,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {modal?.type === "addLegal"        && <LegalAddModal />}
       {modal?.type === "addMinsa"        && <MinsaAddModal />}
       {modal?.type === "addComplaint"    && <ComplaintAddModal />}
-      {/* Alerts */}
-      {alerts && <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 360, background: "var(--card)", borderLeft: "1px solid var(--brd)", zIndex: 999, display: "flex", flexDirection: "column" }}><div style={{ padding: "16px 20px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 15, fontWeight: 700 }}>알림</span><button onClick={() => setAlerts(false)} style={{ background: "none", color: "var(--tm)" }}><I name="close" size={18} /></button></div><div style={{ flex: 1, overflow: "auto", padding: 12 }}>{alertList.map((a, i) => (<div key={i} onClick={() => { const d = data.debtors.find(x => x.id === a.debtorId); if (d) { navigateToDebtor(d); setAlerts(false); } }} style={{ padding: 12, marginBottom: 8, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}><div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: a.p === "high" ? "#ef4444" : "#f59e0b", animation: a.p === "high" ? "pulse 2s infinite" : "none" }} /><span style={{ fontSize: 10, fontWeight: 600, color: a.p === "high" ? "#ef4444" : "#f59e0b" }}>{a.p === "high" ? "긴급" : "주의"}</span></div><div style={{ fontSize: 12, lineHeight: 1.5 }}>{a.msg}</div></div>))}</div></div>}
       {/* 중복 입금 확인 모달 */}
       {dupConfirm && (
         <div onClick={() => setDupConfirm(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 3000, display: "flex", alignItems: "center", justifyContent: "center" }}>
