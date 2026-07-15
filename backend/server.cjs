@@ -279,6 +279,21 @@ db.exec(`
     console.log(`[stats_kv_bytes_fix_v1] 부풀려진 kv 입력량 기록 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_kv_bytes_fix_v1', '1')").run();
   }
+  // v3 이후에도 두 종류의 통계 노이즈가 남아있었다:
+  // 1) "알수없음" 원인을 조사하며 /api/kv/__diag_test_key 로 직접 보낸 디버깅용 테스트 요청이
+  //    "진단테스트"라는 가짜 사용자로 실제 통계에 찍혀버렸다.
+  // 2) 그 조사 과정에서 실제 채무자 수정 1건이 사용자 식별 실패로 "알수없음"에 잡혔다.
+  // 실제 직원이 아니거나 귀속이 깨진 기록이라 성과 통계에서 신뢰할 수 없으므로 정리한다.
+  const cleanupDoneV4 = db.prepare("SELECT value FROM kv_store WHERE key='stats_unknown_cleanup_v4'").get();
+  if (!cleanupDoneV4) {
+    const removedUnknown = db.prepare("DELETE FROM user_activity_log WHERE user_name = '알수없음'").run();
+    const removedDiag = db.prepare("DELETE FROM user_activity_log WHERE user_name = '진단테스트'").run();
+    const testKeys = db.prepare("SELECT key FROM kv_store WHERE key LIKE '@_@_%' ESCAPE '@'").all().map(r => r.key);
+    const delKv = db.prepare("DELETE FROM kv_store WHERE key = ?");
+    for (const k of testKeys) delKv.run(k);
+    console.log(`[stats_unknown_cleanup_v4] "알수없음" ${removedUnknown.changes}건, "진단테스트" ${removedDiag.changes}건, 테스트용 kv 키 ${testKeys.length}개 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v4', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
@@ -476,9 +491,15 @@ function extractUserName(req) {
 // 훨씬 크게 잡힌다 — 아래 kv 핸들러에서 실제 변경분만 따로 정확히 계산해서 기록하므로
 // 여기서는 중복 집계하지 않도록 제외한다.
 const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat"];
+// PATCH /api/debtors/:id는 debtor_edit_log에 필드별 실제 변경분을 이미 정확히 기록하므로,
+// 여기서 요청 본문 전체 크기까지 또 세면 같은 저장 1번이 두 번 잡혀 입력량/수정 건수가 부풀려진다.
+const isDebtorPatch = (req) => req.method === "PATCH" && /^\/api\/debtors\/[^/]+$/.test(req.path);
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path)) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req)) {
     const userName = extractUserName(req);
+    // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다 —
+    // 누구의 성과에도 귀속시킬 수 없는 기록이라 어차피 평가에 쓸 수 없고, 화면에 노이즈만 남긴다.
+    if (userName === "알수없음") return next();
     let bytes = 0;
     try { bytes = JSON.stringify(req.body || {}).length; } catch {}
     res.on("finish", () => {
@@ -2220,13 +2241,16 @@ function diffByteEstimate(oldVal, newVal) {
 app.put("/api/kv/:key", (req, res) => {
   const key = req.params.key;
   if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
-  // 시스템 설정성 키(app_users)는 통계 집계 대상이 아니므로 diff 계산 없이 바로 저장
-  if (key !== "app_users") {
+  // 시스템 설정성 키(app_users)와 "__"로 시작하는 테스트/진단용 키는 통계 집계 대상이 아니므로
+  // diff 계산 없이 바로 저장
+  if (key !== "app_users" && !key.startsWith("__")) {
     try {
       const oldRow = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
       const oldVal = oldRow ? JSON.parse(oldRow.value) : null;
       const bytes = diffByteEstimate(oldVal, req.body);
-      if (bytes > 0) insertActivityLog.run("data_input", extractUserName(req), bytes, req.path);
+      const userName = extractUserName(req);
+      // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다.
+      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path);
     } catch {}
   }
   db.prepare(`
@@ -2340,7 +2364,8 @@ app.post("/api/admin/reindex", (req, res) => {
 app.post("/api/admin/heartbeat", (req, res) => {
   try {
     const userName = (req.body && req.body.userName) ? String(req.body.userName).trim() : "";
-    insertActivityLog.run("heartbeat", userName || "알수없음", 0, "/api/admin/heartbeat");
+    // 사용자를 식별할 수 없는 하트비트는 "알수없음"으로 남기지 않고 그냥 무시한다.
+    if (userName) insertActivityLog.run("heartbeat", userName, 0, "/api/admin/heartbeat");
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -2354,9 +2379,11 @@ app.get("/api/admin/stats", (req, res) => {
   try {
     const BUCKET_LEN = { daily: 10, monthly: 7, yearly: 4 };
 
+    // 사용자를 식별 못한 요청은 애초에 기록 시점에 걸러내지만, 혹시 남는 게 있어도
+    // 성과 통계 화면에는 절대 노출되지 않도록 조회 시점에도 한 번 더 막는다.
     const accessBuckets = (len) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) * 60 AS seconds
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ?
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음'
       GROUP BY period, user
       ORDER BY period DESC
     `).all(STATS_START_DATE);
@@ -2364,12 +2391,12 @@ app.get("/api/admin/stats", (req, res) => {
     const volumeBuckets = (len) => {
       const fromActivity = db.prepare(`
         SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-        FROM user_activity_log WHERE type='data_input' AND ts >= ?
+        FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
         GROUP BY period, user
       `).all(STATS_START_DATE);
       const fromEditLog = db.prepare(`
         SELECT substr(changed_at,1,${len}) AS period, changed_by AS user, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
-        FROM debtor_edit_log WHERE changed_at >= ?
+        FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음'
         GROUP BY period, user
       `).all(STATS_START_DATE);
       const merged = new Map();
@@ -2390,15 +2417,15 @@ app.get("/api/admin/stats", (req, res) => {
     // debtor_edit_log만 세면 kvPut으로 저장되는 대부분의 작업이 0건으로 보이게 된다.
     const editSummary = db.prepare(`
       SELECT changed_by AS user, COUNT(*) AS cnt, MAX(changed_at) AS lastAt
-      FROM debtor_edit_log WHERE changed_at >= ? GROUP BY changed_by
+      FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음' GROUP BY changed_by
     `).all(STATS_START_DATE);
     const dataInputSummary = db.prepare(`
       SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='data_input' AND ts >= ? GROUP BY user_name
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
     `).all(STATS_START_DATE);
     const heartbeatSummary = db.prepare(`
       SELECT user_name AS user, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? GROUP BY user_name
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
     `).all(STATS_START_DATE);
     const summaryMap = new Map();
     const touch = (user, addCnt, lastAt) => {
