@@ -4046,15 +4046,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {/* 왼쪽: 기본 정보 */}
           <div style={{ background: "var(--card)", borderRadius: 10, padding: 16, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>기본 정보</div>
-            {/* 허브지점명 */}
+            {/* 코드번호/허브지점명 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>허브/지점명</span>
-              <span style={{ fontSize: 12, fontWeight: 500, textAlign: "right" }}>{d.hubName || "-"}</span>
-            </div>
-            {/* 코드번호 */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>코드번호</span>
-              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{d.hubCode || "-"}</span>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>코드번호, 허브/지점명</span>
+              <span className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{(d.hubCode || "-")}/{(d.hubName || "-")}</span>
             </div>
             {/* 연대보증인 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
