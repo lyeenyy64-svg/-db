@@ -4182,7 +4182,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
             {/* 초본상 최신 주소 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본상 최신 주소</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--tm)" }}>초본상 최신 주소</span>
+                {canEdit && <button
+                  onClick={async () => {
+                    setAutoResidentDetails(prev => ({ ...prev, [d.id]: null }));
+                    try {
+                      const res = await fetch(`/api/debtor/${d.id}/resident-number/refresh`, { method: "POST" });
+                      const data = await res.json();
+                      setAutoResidentDetails(prev => ({ ...prev, [d.id]: data.ok ? { address: data.address, registeredDate: data.registeredDate, note: data.note, issuedDate: data.issuedDate } : false }));
+                      showToast(data.ok ? "초본에서 다시 추출했습니다" : "재추출 실패 — 초본 보기로 직접 확인해주세요");
+                    } catch { setAutoResidentDetails(prev => ({ ...prev, [d.id]: false })); showToast("재추출 실패"); }
+                  }}
+                  title="예전에 잘못 저장된 값을 지우고 초본에서 다시 추출합니다"
+                  style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}
+                >재조회</button>}
+              </div>
               {(() => {
                 const details = autoResidentDetails[d.id];
                 const address = d.residentAddress || (details && details.address) || null;
@@ -5842,7 +5857,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const color = config.brands.find(b => b.code === d.brand)?.color || "#64748b";
         const el = document.createElement("div");
         el.style.cssText = `padding:3px 8px;border-radius:6px;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;`;
-        el.textContent = `${d.brand} ${d.name}`;
+        el.textContent = `${d.brand} ${d.name} (${d.addressSource === "resident" ? "초" : "신"})`;
         el.addEventListener("click", () => {
           const debtor = data.debtors.find(x => x.id === d.id);
           if (debtor) navigateToDebtor(debtor);

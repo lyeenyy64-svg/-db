@@ -2664,6 +2664,50 @@ function korName3(name) {
   return kor.length >= 2 ? kor.slice(0, 3) : null;
 }
 
+// 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
+// (예전 로직이 잘못 저장해둔 값은 덮어쓰지 않으므로, 그걸 고치려면 먼저 컬럼을 비워야 한다 — /resident-number/refresh 참고)
+async function lookupResidentDetails(debtorId, debtor) {
+  const kor = korName3(debtor.name);
+  if (!kor) return { ok: false, error: "이름 인식 불가" };
+
+  const rows = db.prepare(
+    `SELECT file_path, filename FROM file_index
+     WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+     AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
+     AND ext = 'pdf'
+     ORDER BY parsed_date DESC LIMIT 5`
+  ).all(`%${kor}%`, `%${kor}%`);
+
+  for (const c of rows) {
+    const r = await ocrPdfForResident(c.file_path);
+    if (!r.address && !r.registeredDate) continue;
+
+    const updates = [], vals = [];
+    if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+    if (!debtor.resident_address && r.address) {
+      updates.push("resident_address = ?", "resident_address_lat = NULL", "resident_address_lng = NULL");
+      vals.push(r.address);
+    }
+    if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
+    if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
+    if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
+    if (updates.length) {
+      db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtorId);
+    }
+
+    return {
+      ok: true,
+      address: debtor.resident_address || r.address || null,
+      registeredDate: debtor.resident_registered_date || r.registeredDate || null,
+      note: debtor.resident_note || r.note || null,
+      issuedDate: debtor.resident_issued_date || r.issuedDate || null,
+      filename: c.filename,
+    };
+  }
+
+  return { ok: false, address: debtor.resident_address || null, error: "초본 인식 실패" };
+}
+
 app.get("/api/debtor/:id/resident-number", async (req, res) => {
   try {
     const debtor = db.prepare(
@@ -2754,6 +2798,27 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
 
     res.json({ ok: true, entries, residentDetails });
   } catch (e) { res.status(500).json({ ok: false, entries: [], residentDetails: null, error: e.message }); }
+});
+
+// 예전 OCR 로직으로 잘못 저장된 초본상 최근주소/등록일/비고/발급일을 지우고 최신 스크립트로 다시 추출한다.
+// (주민등록번호는 그대로 둔다 — 이 문제와 무관하게 이미 맞는 경우가 대부분이라 건드리지 않음)
+app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
+  try {
+    const existing = db.prepare("SELECT id, name, resident_number FROM debtors WHERE id = ?").get(req.params.id);
+    if (!existing) return res.json({ ok: false, error: "채무자 없음" });
+
+    db.prepare(
+      `UPDATE debtors SET resident_address = NULL, resident_address_lat = NULL, resident_address_lng = NULL,
+              resident_registered_date = NULL, resident_note = NULL, resident_issued_date = NULL WHERE id = ?`
+    ).run(existing.id);
+
+    const debtor = {
+      name: existing.name, resident_number: existing.resident_number,
+      resident_address: null, resident_registered_date: null, resident_note: null, resident_issued_date: null,
+    };
+    const result = await lookupResidentDetails(existing.id, debtor);
+    res.json(result);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ─── 신용점수 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
