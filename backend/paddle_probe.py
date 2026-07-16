@@ -5,6 +5,13 @@ PaddleOCR 실제 설치 버전에서 인식 결과가 어떤 구조로 나오는
 
 사용법: python paddle_probe.py <pdf_path>
 """
+import os
+# 문서방향분류 등을 꺼도 "(Unimplemented) ConvertPirAttribute2RuntimeAttribute" 에러가
+# det/rec 모델 자체에서도 나는 것으로 확인됨 — paddle 3.x의 새 IR(PIR)이 oneDNN에서
+# 이 연산을 아직 지원하지 않는 게 원인으로 보임. import paddle 되기 전에 PIR을 꺼서
+# 예전 실행 경로를 쓰게 한다.
+os.environ.setdefault("FLAGS_enable_pir_api", "0")
+
 import sys
 import json
 import fitz  # PyMuPDF
@@ -33,12 +40,18 @@ def main():
     # textline_orientation)는 paddleocr 3.x 기본 파이프라인에 새로 추가된 전처리 단계인데,
     # 이 서버 환경(oneDNN)에서 "ConvertPirAttribute2RuntimeAttribute" 에러를 내는 것으로
     # 확인됨 — 우리 문서는 스캔 방향이 항상 바르므로 꺼도 무방하다.
-    ocr = PaddleOCR(
+    common_kwargs = dict(
         lang="korean",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
     )
+    try:
+        ocr = PaddleOCR(enable_mkldnn=False, **common_kwargs)
+        print("enable_mkldnn=False 지원됨", file=sys.stderr)
+    except TypeError as e:
+        print("enable_mkldnn 파라미터 없음:", e, file=sys.stderr)
+        ocr = PaddleOCR(**common_kwargs)
 
     result = None
     used_method = None
