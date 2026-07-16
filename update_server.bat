@@ -10,7 +10,7 @@ call npm install
 
 echo.
 echo [DEBTFLOW] 서버 재시작 중...
-pm2 restart debtflow-backend debtflow-frontend
+pm2 restart debtflow-backend debtflow-frontend --update-env
 
 echo.
 echo [DEBTFLOW] DB 자동 백업 예약(매일 새벽 3시) 등록/갱신 중...
