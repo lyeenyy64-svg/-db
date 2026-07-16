@@ -86,31 +86,37 @@ def _looks_like_address(s):
     return False
 
 
+def _median(nums):
+    if not nums:
+        return None
+    s = sorted(nums)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 == 1 else (s[mid - 1] + s[mid]) / 2
+
+
 def parse_history_table(pages_words):
     """
     pages_words: [[(word_text, left_x, top_y), ...], ...] 페이지 순서, 각 페이지는
     단어(word) 단위 OCR 인식 순서(대략 위→아래, 좌→우) 그대로.
 
-    줄(line) 단위가 아니라 단어 단위로 컬럼을 판정한다 — OCR이 한 표 행의 여러 컬럼을
-    하나의 줄로 뭉쳐 인식하는 경우에도, 단어 개별 x좌표로 컬럼을 나누면 안전하다.
+    표 제목("발생일"/"신고일"/"세대주및관계"/"등록상태")은 작은 글자라 OCR이 놓치는
+    경우가 많아서, 제목 글자에 기대지 않고 실제 데이터(날짜 패턴 YYYY-MM-DD, 등록상태
+    키워드)의 x좌표로 컬럼 경계를 추정한다 — 날짜·상태 값은 표에 여러 번 반복 등장해서
+    제목 글자 하나보다 인식 실패 확률이 훨씬 낮다.
     반환: [{address, date, note}, ...] — 표에 나온 순서대로, 마지막 항목이 최신 주소.
     """
-    date_col_x = None
-    note_col_x = None
-    status_col_x = None
-    for words in pages_words:
-        for text, x, y in words:
-            if date_col_x is None and ("발생일" in text or "신고일" in text):
-                date_col_x = x
-            if note_col_x is None and "세대주" in text:
-                note_col_x = x
-            if status_col_x is None and "등록상태" in text:
-                status_col_x = x
-        if date_col_x is not None:
-            break
+    all_words = [w for words in pages_words for w in words]
 
-    if date_col_x is None:
+    date_xs = [x for text, x, y in all_words if DATE_ISO_RE.search(text.strip())]
+    if not date_xs:
         return []
+    date_col_x = _median(date_xs)
+
+    status_xs = [x for text, x, y in all_words
+                 if x > date_col_x + 10 and any(w in text.strip() for w in STATUS_WORDS)]
+    status_col_x = _median(status_xs) if status_xs else (date_col_x + 250)
+    note_col_x = date_col_x + 15
 
     rows = []
     pending = []
@@ -130,18 +136,8 @@ def parse_history_table(pages_words):
                     in_bracket = False
                 continue
 
-            if x < date_col_x - 15:
-                if not _is_noise_word(raw):
-                    pending.append(raw)
-                continue
-
-            if note_col_x is not None and status_col_x is not None and note_col_x - 15 <= x < status_col_x - 10:
-                if rows and raw not in HEADER_LABELS and not any(w in raw for w in STATUS_WORDS):
-                    rows[-1]["note"] = (rows[-1]["note"] + " " + raw).strip() if rows[-1]["note"] else raw
-                continue
-
             m = DATE_ISO_RE.search(raw)
-            if m:
+            if m and (date_col_x - 25) <= x <= (date_col_x + 25):
                 date_val = m.group().replace(".", "-")
                 addr = re.sub(r'\s+', ' ', " ".join(pending)).strip()
                 pending = []
@@ -150,6 +146,18 @@ def parse_history_table(pages_words):
                 elif rows:
                     # 같은 행의 두 번째 날짜(신고일) — 앞서 만든 행의 날짜를 최종값으로 갱신
                     rows[-1]["date"] = date_val
+                continue
+
+            if x < date_col_x - 25:
+                if not _is_noise_word(raw):
+                    pending.append(raw)
+                continue
+
+            if note_col_x <= x < status_col_x - 10:
+                if rows and raw not in HEADER_LABELS and not any(w in raw for w in STATUS_WORDS):
+                    rows[-1]["note"] = (rows[-1]["note"] + " " + raw).strip() if rows[-1]["note"] else raw
+                continue
+            # x >= status_col_x - 10 → 등록상태 칸으로 판단해 무시
 
     return rows
 

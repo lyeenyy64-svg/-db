@@ -90,30 +90,34 @@ def _looks_like_address(s):
     return False
 
 
+def _median(nums):
+    if not nums:
+        return None
+    s = sorted(nums)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 == 1 else (s[mid - 1] + s[mid]) / 2
+
+
 def parse_home_history_table(pages_words):
     """
     pages_words: [[(word_text, left_x, top_y), ...], ...] (단어 단위, 인식 순서 그대로)
     "자택정보이력정보" 표: 정보갱신일 | 주소 | 휴대폰번호 3컬럼.
+
+    표 제목("정보갱신일"/"주소"/"휴대폰번호")은 OCR이 놓치기 쉬운 작은 글자라, 제목
+    글자 대신 실제 데이터(날짜 패턴, 휴대폰번호 패턴)의 x좌표로 컬럼 경계를 추정한다.
     반환: [{date, address, phone}, ...] — 마지막 항목이 최신.
     """
-    date_col_x = None
-    addr_col_x = None
-    phone_col_x = None
-    for words in pages_words:
-        for text, x, y in words:
-            if date_col_x is None and "정보갱신일" in text:
-                date_col_x = x
-            if addr_col_x is None and text.strip() == "주소":
-                addr_col_x = x
-            if phone_col_x is None and "휴대폰" in text:
-                phone_col_x = x
-        if date_col_x is not None and phone_col_x is not None:
-            break
+    all_words = [w for words in pages_words for w in words]
 
-    if date_col_x is None or phone_col_x is None:
+    date_xs = [x for text, x, y in all_words if DATE_ISO_RE.search(text.strip())]
+    phone_xs = [x for text, x, y in all_words if PHONE_RE.search(text.strip())]
+    if not date_xs or not phone_xs:
         return []
-    if addr_col_x is None:
-        addr_col_x = (date_col_x + phone_col_x) / 2
+    date_col_x = _median(date_xs)
+    phone_col_x = _median(phone_xs)
+    if phone_col_x <= date_col_x:
+        return []
 
     rows = []
     pending_addr = []
@@ -123,19 +127,18 @@ def parse_home_history_table(pages_words):
             if not raw or raw in HEADER_LABELS:
                 continue
 
-            if x < addr_col_x - 15:
-                m_date = DATE_ISO_RE.search(raw)
-                if m_date:
-                    addr = re.sub(r'\s+', ' ', " ".join(pending_addr)).strip()
-                    pending_addr = []
-                    rows.append({
-                        "date": m_date.group().replace(".", "-"),
-                        "address": addr[:80] if _looks_like_address(addr) else None,
-                        "phone": None,
-                    })
+            m_date = DATE_ISO_RE.search(raw)
+            if m_date and (date_col_x - 25) <= x <= (date_col_x + 25):
+                addr = re.sub(r'\s+', ' ', " ".join(pending_addr)).strip()
+                pending_addr = []
+                rows.append({
+                    "date": m_date.group().replace(".", "-"),
+                    "address": addr[:80] if _looks_like_address(addr) else None,
+                    "phone": None,
+                })
                 continue
 
-            if addr_col_x - 15 <= x < phone_col_x - 15:
+            if x < phone_col_x - 15:
                 pending_addr.append(raw)
                 continue
 
