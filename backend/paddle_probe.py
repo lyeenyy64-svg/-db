@@ -29,7 +29,16 @@ def main():
     print("paddleocr version:", getattr(paddleocr, "__version__", "unknown"), file=sys.stderr)
 
     from paddleocr import PaddleOCR
-    ocr = PaddleOCR(lang="korean")
+    # 문서방향분류/휘어짐보정/텍스트줄방향분류(doc_orientation_classify, doc_unwarping,
+    # textline_orientation)는 paddleocr 3.x 기본 파이프라인에 새로 추가된 전처리 단계인데,
+    # 이 서버 환경(oneDNN)에서 "ConvertPirAttribute2RuntimeAttribute" 에러를 내는 것으로
+    # 확인됨 — 우리 문서는 스캔 방향이 항상 바르므로 꺼도 무방하다.
+    ocr = PaddleOCR(
+        lang="korean",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
 
     result = None
     used_method = None
