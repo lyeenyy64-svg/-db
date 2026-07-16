@@ -254,14 +254,24 @@ async def ocr_pdf(pdf_path):
         address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
         phone = last_row["phone"] if last_row else None
 
+        # 진단용: 자택정보이력정보 표가 있을 만한 페이지(1~3)의 단어를 좌표와 함께
+        # 그대로 내려준다. 실제 문서로 로컬 테스트를 할 수 없는 환경이라 이 원본
+        # 데이터를 보고 컬럼 판정 로직을 튜닝한다 — 문제 해결 후 제거할 임시 필드.
+        debug_words = []
+        for p_idx in (1, 2, 3):
+            if p_idx < len(all_page_words):
+                for text, x, y in all_page_words[p_idx]:
+                    debug_words.append([p_idx, round(x), round(y), text])
+
         if not address:
-            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
+            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date, "debugWords": debug_words}
 
         return {
             "ok": True,
             "address": address,
             "phone": phone,
             "queriedDate": queried_date,
+            "debugWords": debug_words,
         }
 
     except Exception as e:

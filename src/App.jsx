@@ -4179,11 +4179,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "초본에서 자동 조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
               })()}
-              {(() => {
-                const details2 = autoResidentDetails[d.id];
-                const issuedDate = d.residentIssuedDate || (details2 && details2.issuedDate) || null;
-                return issuedDate ? <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>초본 발급일 {issuedDate} 기준</div> : null;
-              })()}
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
             <div style={{ padding: "7px 0" }}>
