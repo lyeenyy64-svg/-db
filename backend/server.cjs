@@ -117,6 +117,8 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"
     ["resident_issued_date",       "TEXT"],
     ["credit_phone",               "TEXT"],
     ["credit_queried_date",        "TEXT"],
+    ["resident_address_lat",       "REAL"],
+    ["resident_address_lng",       "REAL"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -1872,6 +1874,9 @@ app.patch("/api/debtors/:id", (req, res) => {
       if (changedJsKeys.includes('latestAddress')) {
         fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
       }
+      if (changedJsKeys.includes('residentAddress')) {
+        fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
+      }
       fields.push("updated_at = datetime('now','localtime')");
       vals.push(id);
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
@@ -2855,15 +2860,42 @@ app.get("/api/config/kakao-map", (req, res) => {
   res.json({ appKey: process.env.KAKAO_MAP_APP_KEY || null });
 });
 
+// 신용조회(CB) 주소와 초본 주소 중 채무자 위치 지도에 쓸 "더 최근" 주소를 고른다.
+// 기준일이 둘 다 있으면 더 늦은 날짜 쪽, 하나만 있으면 그쪽, 둘 다 없으면 있는 주소.
+function pickAddressSource(row) {
+  const hasResident = !!(row.resident_address && String(row.resident_address).trim());
+  const hasCredit = !!(row.latest_address && String(row.latest_address).trim());
+  if (!hasResident && !hasCredit) return null;
+  if (hasResident && !hasCredit) return "resident";
+  if (!hasResident && hasCredit) return "credit";
+  if (row.resident_issued_date && (!row.credit_queried_date || row.resident_issued_date > row.credit_queried_date)) {
+    return "resident";
+  }
+  return "credit";
+}
+
 // 위치가 캐시돼 있는(또는 주소만 있고 좌표가 없는) 채무자 목록 — 지도 마커용
 app.get("/api/debtors/locations", (req, res) => {
   try {
     const rows = db.prepare(`
+      WITH addr_pick AS (
+        SELECT *,
+          CASE
+            WHEN resident_address IS NOT NULL AND resident_address != '' AND (
+              latest_address IS NULL OR latest_address = '' OR
+              (resident_issued_date IS NOT NULL AND (credit_queried_date IS NULL OR resident_issued_date > credit_queried_date))
+            ) THEN 'resident' ELSE 'credit'
+          END AS addr_source
+        FROM v_debtors
+      )
       SELECT id, name, brand_code AS brand, brand_name AS brandName, category, assignee,
              collection_status AS collectionStatus,
-             latest_address AS latestAddress, latest_address_lat AS lat, latest_address_lng AS lng
-      FROM v_debtors
-      WHERE latest_address IS NOT NULL AND latest_address != ''
+             addr_source AS addressSource,
+             CASE WHEN addr_source = 'resident' THEN resident_address ELSE latest_address END AS latestAddress,
+             CASE WHEN addr_source = 'resident' THEN resident_address_lat ELSE latest_address_lat END AS lat,
+             CASE WHEN addr_source = 'resident' THEN resident_address_lng ELSE latest_address_lng END AS lng
+      FROM addr_pick
+      WHERE (latest_address IS NOT NULL AND latest_address != '') OR (resident_address IS NOT NULL AND resident_address != '')
     `).all();
     res.json({ ok: true, debtors: rows });
   } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
@@ -2872,16 +2904,29 @@ app.get("/api/debtors/locations", (req, res) => {
 // 주소 → 좌표 지오코딩 (카카오 로컬 API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
 app.post("/api/debtor/:id/geocode", async (req, res) => {
   try {
-    const debtor = db.prepare("SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng FROM debtors WHERE id = ?").get(req.params.id);
+    const debtor = db.prepare(
+      `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
+              resident_address, resident_address_lat AS residentLat, resident_address_lng AS residentLng,
+              resident_issued_date, credit_queried_date
+       FROM debtors WHERE id = ?`
+    ).get(req.params.id);
     if (!debtor) return res.json({ ok: false, error: "채무자 없음" });
-    if (!debtor.latest_address) return res.json({ ok: false, error: "주소 없음" });
-    if (debtor.lat != null && debtor.lng != null) return res.json({ ok: true, lat: debtor.lat, lng: debtor.lng, source: "cache" });
+
+    const source = pickAddressSource(debtor);
+    if (!source) return res.json({ ok: false, error: "주소 없음" });
+
+    const address = source === "resident" ? debtor.resident_address : debtor.latest_address;
+    const cachedLat = source === "resident" ? debtor.residentLat : debtor.lat;
+    const cachedLng = source === "resident" ? debtor.residentLng : debtor.lng;
+    if (cachedLat != null && cachedLng != null) {
+      return res.json({ ok: true, lat: cachedLat, lng: cachedLng, source: "cache", addressSource: source });
+    }
 
     const restKey = process.env.KAKAO_REST_API_KEY;
     if (!restKey) return res.json({ ok: false, error: "카카오맵 API 키가 설정되지 않았습니다 (backend/.env)" });
 
     const headers = { Authorization: `KakaoAK ${restKey}` };
-    const q = encodeURIComponent(debtor.latest_address);
+    const q = encodeURIComponent(address);
 
     // 1차: 지번/도로명 주소 검색 → 실패하면 2차: 키워드(장소) 검색으로 재시도
     let doc = null;
@@ -2897,8 +2942,12 @@ app.post("/api/debtor/:id/geocode", async (req, res) => {
 
     const lat = parseFloat(doc.y);
     const lng = parseFloat(doc.x);
-    db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
-    res.json({ ok: true, lat, lng, source: "geocode" });
+    if (source === "resident") {
+      db.prepare("UPDATE debtors SET resident_address_lat = ?, resident_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+    } else {
+      db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+    }
+    res.json({ ok: true, lat, lng, source: "geocode", addressSource: source });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

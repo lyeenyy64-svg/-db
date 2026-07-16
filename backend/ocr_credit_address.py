@@ -115,12 +115,26 @@ def find_last_home_row(pages_words):
     판정한다. 표 제목("정보갱신일"/"주소"/"휴대폰번호") 글자에는 의존하지 않는다.
     반환: {"address", "date", "phone"} 또는 표를 못 찾으면 None.
     """
-    all_entries = []  # (y, x, text)
+    raw_entries = []  # (y, x, text) — 원래 인식 순서 그대로
     for words in pages_words:
         for text, x, y in words:
             raw = text.strip()
             if raw:
-                all_entries.append((y, x, raw))
+                raw_entries.append((y, x, raw))
+
+    # 여러 단어에 걸친 "[...]" 안내문구는 중간 단어만 보면 걸러낼 수 없어서, 원래
+    # 순서대로 훑어 여는/닫는 괄호 구간 전체를 통째로 제거한다 (ocr_resident.py와 동일).
+    all_entries = []
+    in_bracket = False
+    for e in raw_entries:
+        text = e[2]
+        if not in_bracket and text.startswith("["):
+            in_bracket = True
+        if in_bracket:
+            if "]" in text:
+                in_bracket = False
+            continue
+        all_entries.append(e)
 
     date_matches = [(y, x, DATE_ISO_RE.search(text).group().replace(".", "-"))
                     for y, x, text in all_entries if DATE_ISO_RE.search(text)]

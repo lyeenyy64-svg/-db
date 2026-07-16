@@ -116,12 +116,29 @@ def find_last_history_row(pages_words):
     많아 컬럼 판정에 쓰지 않는다.
     반환: {"address", "date", "note"} 또는 표를 못 찾으면 None.
     """
-    all_entries = []  # (page_idx, y, x, text)
+    raw_entries = []  # (page_idx, y, x, text) — 원래 인식 순서 그대로
     for p_idx, words in enumerate(pages_words):
         for text, x, y in words:
             raw = text.strip()
             if raw:
-                all_entries.append((p_idx, y, x, raw))
+                raw_entries.append((p_idx, y, x, raw))
+
+    # "[법률9774호(...) 도로명주소법, 공법관계의 주소변경]" 같은 안내문구는 여러 단어에
+    # 걸쳐 나오는데, 그중 중간 단어들은 "["로 시작하지도 "]"를 포함하지도 않아 단어
+    # 하나씩만 보고는 걸러낼 수 없다 — 원래 순서대로 훑어서 여는/닫는 괄호 "구간
+    # 전체"를 통째로 제거해야 한다 (마지막 행의 y범위가 이 안내문구와 겹치는 경우
+    # 실제로 주소에 이 문구가 섞여 들어온 적이 있어 반드시 필요한 전처리).
+    all_entries = []
+    in_bracket = False
+    for e in raw_entries:
+        text = e[3]
+        if not in_bracket and text.startswith("["):
+            in_bracket = True
+        if in_bracket:
+            if "]" in text:
+                in_bracket = False
+            continue
+        all_entries.append(e)
 
     date_matches = []  # (page_idx, y, x, date_val)
     for p_idx, y, x, text in all_entries:

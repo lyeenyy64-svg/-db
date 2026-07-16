@@ -2763,11 +2763,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="집행권원 PDF (OneDrive)"><KoreanInput value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
           <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
           <Field label="신용점수"><KoreanInput value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
-          <Field label="최신 주소" span={2}><KoreanInput value={f.latestAddress || ""} onChange={e => set("latestAddress", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력 — 채무자 위치 지도에 사용" /></Field>
+          <Field label="신용조회상 최신 주소" span={2}><KoreanInput value={f.latestAddress || ""} onChange={e => set("latestAddress", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력 — 초본상 주소와 비교해 더 최근 것이 채무자 위치 지도에 쓰입니다" /></Field>
           <Field label="연락처(CB)"><KoreanInput value={f.creditPhone || ""} onChange={e => set("creditPhone", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력" /></Field>
           <Field label="영업담당자"><KoreanInput value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
           <Field label="주민등록번호" span={2}><KoreanInput value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
-          <Field label="최근 주소(초본)" span={2}><KoreanInput value={f.residentAddress || ""} onChange={e => set("residentAddress", e.target.value)} style={inp} placeholder="초본 자동추출 또는 직접 입력" /></Field>
+          <Field label="초본상 최신 주소" span={2}><KoreanInput value={f.residentAddress || ""} onChange={e => set("residentAddress", e.target.value)} style={inp} placeholder="초본 자동추출 또는 직접 입력" /></Field>
           <Field label="등록일(초본)"><KoreanInput value={f.residentRegisteredDate || ""} onChange={e => set("residentRegisteredDate", e.target.value)} style={inp} placeholder="예: 2024-04-03" /></Field>
           <Field label="비고(세대주및관계)" span={3}><KoreanInput value={f.residentNote || ""} onChange={e => set("residentNote", e.target.value)} style={inp} placeholder="초본 자동추출 또는 직접 입력" /></Field>
           <Field label="주요사항" span={3}><KoreanTextarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
@@ -3982,7 +3982,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {/* Header with edit/delete */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-            <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
+            <div style={{ position: "relative", width: 52, height: 52 }}>
+              <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
+              {(() => {
+                const hasResident = !!(d.residentAddress && d.residentAddress.trim());
+                const hasCredit = !!(d.latestAddress && d.latestAddress.trim());
+                if (!hasResident && !hasCredit) return null;
+                let source;
+                if (hasResident && !hasCredit) source = "초";
+                else if (!hasResident && hasCredit) source = "신";
+                else source = (d.residentIssuedDate && (!d.creditQueriedDate || d.residentIssuedDate > d.creditQueriedDate)) ? "초" : "신";
+                return (
+                  <span
+                    title={source === "초" ? "초본상 주소가 더 최근 — 채무자 위치 지도에 사용" : "신용조회상 주소가 더 최근 — 채무자 위치 지도에 사용"}
+                    style={{ position: "absolute", bottom: -4, right: -4, width: 20, height: 20, borderRadius: "50%", background: source === "초" ? "#8b5cf6" : "#3b82f6", color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid var(--card)" }}
+                  >{source}</span>
+                );
+              })()}
+            </div>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 18, fontWeight: 700 }}>{d.name}</span><Badge status={d.category} /><Badge status={d.assignee} /></div>
               {d.execTitle && <div style={{ display: "flex", gap: 14, fontSize: 12, color: "var(--ts)", flexWrap: "wrap" }}>{d.execTitleUrl ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--ok)", fontWeight: 600, textDecoration: "none" }} title={d.execTitleType || "집행권원"}>집행권원 O ↗</a> : <span style={{ color: "var(--ok)", fontWeight: 600 }}>집행권원 O{d.execTitleType ? ` (${d.execTitleType})` : ""}</span>}</div>}
@@ -4129,9 +4146,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>;
               })()}
             </div>
-            {/* 연락처 (신용정보조회) */}
+            {/* 신용조회상 연락처 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>연락처 <span style={{ color: "var(--ts)" }}>(신용정보조회)</span></div>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>신용조회상 연락처</div>
               {(() => {
                 const addrResult = autoAddresses[d.id];
                 const phone = d.creditPhone || (addrResult && addrResult.phone) || null;
@@ -4139,9 +4156,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음"}</span>;
               })()}
             </div>
-            {/* 최신 주소 (채무자 위치 지도용) */}
+            {/* 신용조회상 최신 주소 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>최신 주소 <span style={{ color: "var(--ts)" }}>(채무자 위치 지도)</span></div>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>신용조회상 최신 주소</div>
               {(() => {
                 const addrResult = autoAddresses[d.id];
                 const address = d.latestAddress || (addrResult && addrResult.address) || null;
@@ -4153,14 +4170,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 return queriedDate ? <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>CB 조회일자 {queriedDate} 기준</div> : null;
               })()}
             </div>
-            {/* 최근 주소 (초본) */}
+            {/* 초본상 최신 주소 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>최근 주소 <span style={{ color: "var(--ts)" }}>(초본)</span></div>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본상 최신 주소</div>
               {(() => {
                 const details = autoResidentDetails[d.id];
                 const address = d.residentAddress || (details && details.address) || null;
                 if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "초본에서 자동 조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
+              })()}
+              {(() => {
+                const details2 = autoResidentDetails[d.id];
+                const issuedDate = d.residentIssuedDate || (details2 && details2.issuedDate) || null;
+                return issuedDate ? <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>초본 발급일 {issuedDate} 기준</div> : null;
               })()}
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}
