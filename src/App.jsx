@@ -3841,6 +3841,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [histDeleted,setHistDeleted_]= useState(() => getHistD(d.id));
     const [histForm,   setHistForm]    = useState(null);
     const [analyzing, setAnalyzing] = useState(false);
+    const analyzedIdsRef = useRef(new Set());
+
+    const runAnalysis = async (debtor) => {
+      setAnalyzing(true);
+      try {
+        const res = await fetch(`/api/debtor/${debtor.id}/analysis`, { method: "POST" });
+        const data = await res.json();
+        if (!data.ok) { showToast(data.error ? `종합분석 실패: ${data.error}` : "종합분석 실패"); return; }
+        const marker = "[채무자 및 연대보증인 종합분석]";
+        const cur = debtor.keyNotes || "";
+        const idx = cur.indexOf(marker);
+        const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
+        const block = `${marker}\n${data.text}`;
+        const newNotes = before ? `${before}\n\n${block}` : block;
+        await updateDebtor(debtor.id, { keyNotes: newNotes });
+        addLog("수정", "채권", `${debtor.name} — AI 종합분석 추가`);
+      } catch { showToast("종합분석 실패"); }
+      finally { setAnalyzing(false); }
+    };
+
+    // 채무자 상세를 열었을 때 "AI 종합분석"이 아직 없으면 버튼을 누르지 않아도 자동으로 생성한다.
+    // 이미 있으면(마커 존재) 건드리지 않음 — 매번 새로 생성하면 API 호출이 계속 반복되고
+    // 직접 입력한 기존 메모가 있을 때 불필요하게 다시 쓰게 된다.
+    useEffect(() => {
+      if (!canEdit) return;
+      if ((d.keyNotes || "").includes("[채무자 및 연대보증인 종합분석]")) return;
+      if (analyzedIdsRef.current.has(d.id)) return;
+      analyzedIdsRef.current.add(d.id);
+      runAnalysis(d);
+    }, [d.id]);
 
     const updHistM = (arr) => { saveHistM(d.id, arr); setHistManual_(arr); };
     const updHistE = (obj) => { saveHistE(d.id, obj); setHistEdits_(obj); };
@@ -4266,29 +4296,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <span style={{ fontSize: 12, color: "var(--tm)" }}>기타사항</span>
                 {canEdit && <button
                   disabled={analyzing}
-                  onClick={async () => {
-                    setAnalyzing(true);
-                    try {
-                      const res = await fetch(`/api/debtor/${d.id}/analysis`, { method: "POST" });
-                      const data = await res.json();
-                      if (!data.ok) { showToast(data.error ? `종합분석 실패: ${data.error}` : "종합분석 실패"); return; }
-                      const marker = "[채무자 및 연대보증인 종합분석]";
-                      const cur = d.keyNotes || "";
-                      const idx = cur.indexOf(marker);
-                      const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
-                      const block = `${marker}\n${data.text}`;
-                      const newNotes = before ? `${before}\n\n${block}` : block;
-                      await updateDebtor(d.id, { keyNotes: newNotes });
-                      addLog("수정", "채권", `${d.name} — AI 종합분석 추가`);
-                      showToast("종합분석을 기타사항에 추가했습니다");
-                    } catch { showToast("종합분석 실패"); }
-                    finally { setAnalyzing(false); }
-                  }}
+                  onClick={() => runAnalysis(d)}
                   style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640", cursor: analyzing ? "default" : "pointer", opacity: analyzing ? 0.6 : 1 }}
-                >{analyzing ? "분석 중..." : "AI 종합분석"}</button>}
+                >{analyzing ? "분석 중..." : "AI 종합분석 다시 생성"}</button>}
               </div>
               {d.keyNotes
-                ? <div style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 8px", background: "var(--bg)", borderRadius: 6, whiteSpace: "pre-wrap", maxHeight: 80, overflow: "auto" }}>{d.keyNotes}</div>
+                ? <div style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 8px", background: "var(--bg)", borderRadius: 6, whiteSpace: "pre-wrap" }}>{d.keyNotes}</div>
                 : <span style={{ fontSize: 12, color: "var(--tm)" }}>-</span>}
             </div>
           </div>
