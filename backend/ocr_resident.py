@@ -227,6 +227,15 @@ async def ocr_pdf(pdf_path):
 
         last_row = table[-1] if table else None
 
+        # 진단용: 페이지 0~1의 단어 목록을 좌표와 함께 그대로 내려준다 (실제 문서로
+        # 로컬 테스트를 못 하는 환경이라, 표 인식이 틀렸을 때 이 원본 데이터를 보고
+        # 컬럼 판정 로직을 고친다). 문제 해결 후 제거할 임시 필드.
+        debug_words = []
+        for p_idx in (0, 1):
+            if p_idx < len(all_page_words):
+                for text, x, y in all_page_words[p_idx]:
+                    debug_words.append([p_idx, round(x), round(y), text])
+
         return {
             "ok": bool(number),
             "number": number,
@@ -235,6 +244,7 @@ async def ocr_pdf(pdf_path):
             "note": (last_row["note"] if last_row and last_row["note"] else None),
             "issuedDate": issued_date,
             "debugRows": table,
+            "debugWords": debug_words,
         }
 
     except Exception as e:
