@@ -5953,7 +5953,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const q = searchQ.trim().toLowerCase();
-    const searched = (locations || []).filter(d => !q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q));
+    // 좌표가 정상적으로 확보된(지도에 이미 잘 표시되는) 채무자는 목록에서 빼고, 아직
+    // 손봐야 할(좌표 없는) 채무자만 보여준다 — 검색어가 있으면 검색 결과는 예외로 전체에서 찾는다.
+    const searched = (locations || []).filter(d => (q || d.lat == null) && (!q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q)));
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
