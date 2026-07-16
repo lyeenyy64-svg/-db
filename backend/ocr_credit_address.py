@@ -3,16 +3,16 @@ CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자
 사용법: python ocr_credit_address.py <pdf_path>
 출력: JSON {
   "ok": true, "address": "서울특별시 ...", "phone": "010-0000-0000",
-  "queriedDate": "2026-07-10", "debugRows": [...]
+  "queriedDate": "2026-07-10"
 } 또는 {"ok": false, "error": "..."}
 
 보통 3페이지 근처에 있는 "자택정보이력정보" 표(정보갱신일 | 주소 | 휴대폰번호)에서
 가장 마지막(최신) 행의 주소·휴대폰번호를 채택한다. 이 표를 못 찾으면 기존 방식대로
 "주소" 라벨 뒤 텍스트를 정규식으로 찾는 것으로 폴백한다.
 
-실제 문서로 로컬 테스트를 할 수 없는 환경에서 작성된 1차 버전이라 debugRows에
-파싱된 전체 행을 같이 내려준다 — 값이 이상하면 이걸 같이 확인해서 컬럼 판정
-로직/조회일자 라벨을 튜닝한다.
+주민등록초본(ocr_resident.py)에서 실 서버 테스트로 확인한 것처럼, Windows OCR은
+표를 "세로 컬럼" 단위로 통째로 먼저 읽기 때문에 순서(주소 다음에 날짜)에 의존하지
+않고 좌표(x, y)만으로 같은 행을 판정한다 (find_last_home_row 참고).
 """
 import asyncio
 import sys
@@ -90,63 +90,83 @@ def _looks_like_address(s):
     return False
 
 
-def _median(nums):
-    if not nums:
-        return None
-    s = sorted(nums)
-    n = len(s)
-    mid = n // 2
-    return s[mid] if n % 2 == 1 else (s[mid - 1] + s[mid]) / 2
+def _cluster_x(xs, gap=60):
+    """정렬된 x값들을 gap 이내로 묶어서 [[x, x, ...], ...] 클러스터 목록으로 반환."""
+    if not xs:
+        return []
+    xs = sorted(xs)
+    clusters = [[xs[0]]]
+    for x in xs[1:]:
+        if x - clusters[-1][-1] <= gap:
+            clusters[-1].append(x)
+        else:
+            clusters.append([x])
+    return clusters
 
 
-def parse_home_history_table(pages_words):
+def find_last_home_row(pages_words):
     """
     pages_words: [[(word_text, left_x, top_y), ...], ...] (단어 단위, 인식 순서 그대로)
     "자택정보이력정보" 표: 정보갱신일 | 주소 | 휴대폰번호 3컬럼.
 
-    표 제목("정보갱신일"/"주소"/"휴대폰번호")은 OCR이 놓치기 쉬운 작은 글자라, 제목
-    글자 대신 실제 데이터(날짜 패턴, 휴대폰번호 패턴)의 x좌표로 컬럼 경계를 추정한다.
-    반환: [{date, address, phone}, ...] — 마지막 항목이 최신.
+    주민등록초본 표에서 실 서버 테스트로 확인한 것과 동일한 문제 — Windows OCR이
+    표를 "세로 컬럼" 단위로 통째로 먼저 읽어서 순서(주소 다음에 날짜)에 의존할 수
+    없다 — 이 여기도 똑같이 적용된다고 보고, 순서 대신 좌표(x, y)로만 같은 행을
+    판정한다. 표 제목("정보갱신일"/"주소"/"휴대폰번호") 글자에는 의존하지 않는다.
+    반환: {"address", "date", "phone"} 또는 표를 못 찾으면 None.
     """
-    all_words = [w for words in pages_words for w in words]
-
-    date_xs = [x for text, x, y in all_words if DATE_ISO_RE.search(text.strip())]
-    phone_xs = [x for text, x, y in all_words if PHONE_RE.search(text.strip())]
-    if not date_xs or not phone_xs:
-        return []
-    date_col_x = _median(date_xs)
-    phone_col_x = _median(phone_xs)
-    if phone_col_x <= date_col_x:
-        return []
-
-    rows = []
-    pending_addr = []
+    all_entries = []  # (y, x, text)
     for words in pages_words:
         for text, x, y in words:
             raw = text.strip()
-            if not raw or raw in HEADER_LABELS:
-                continue
+            if raw:
+                all_entries.append((y, x, raw))
 
-            m_date = DATE_ISO_RE.search(raw)
-            if m_date and (date_col_x - 25) <= x <= (date_col_x + 25):
-                addr = re.sub(r'\s+', ' ', " ".join(pending_addr)).strip()
-                pending_addr = []
-                rows.append({
-                    "date": m_date.group().replace(".", "-"),
-                    "address": addr[:80] if _looks_like_address(addr) else None,
-                    "phone": None,
-                })
-                continue
+    date_matches = [(y, x, DATE_ISO_RE.search(text).group().replace(".", "-"))
+                    for y, x, text in all_entries if DATE_ISO_RE.search(text)]
+    if not date_matches:
+        return None
+    date_clusters = _cluster_x([x for _, x, _ in date_matches])
+    date_best = max(date_clusters, key=lambda c: sum(1 for _, x, _ in date_matches if c[0] - 5 <= x <= c[-1] + 5))
+    date_lo, date_hi = date_best[0] - 15, date_best[-1] + 15
 
-            if x < phone_col_x - 15:
-                pending_addr.append(raw)
-                continue
+    date_col = [(y, v) for y, x, v in date_matches if date_lo <= x <= date_hi]
+    if not date_col:
+        return None
+    date_col.sort(key=lambda e: e[0])
+    last_y, last_date = date_col[-1]
 
-            m_phone = PHONE_RE.search(raw)
-            if m_phone and rows:
-                rows[-1]["phone"] = m_phone.group().replace(" ", "")
+    phone_matches = [(y, x, PHONE_RE.search(text).group().replace(" ", ""))
+                     for y, x, text in all_entries if PHONE_RE.search(text) and x > date_hi]
+    phone_lo = None
+    if phone_matches:
+        phone_clusters = _cluster_x([x for _, x, _ in phone_matches])
+        phone_best = max(phone_clusters, key=lambda c: sum(1 for _, x, _ in phone_matches if c[0] - 5 <= x <= c[-1] + 5))
+        phone_lo = phone_best[0] - 15
 
-    return rows
+    TOL = 70
+
+    def _collect(min_x=None, max_x=None):
+        words = [(y, text) for y, x, text in all_entries
+                 if abs(y - last_y) <= TOL
+                 and (min_x is None or x >= min_x) and (max_x is None or x < max_x)
+                 and text not in HEADER_LABELS]
+        words.sort(key=lambda e: e[0])
+        return " ".join(t for _, t in words)
+
+    addr_raw = _collect(min_x=date_hi + 10, max_x=phone_lo)
+    address = re.sub(r'\s+', ' ', addr_raw).strip()
+    if not _looks_like_address(address):
+        address = None
+
+    phone = None
+    if phone_lo is not None:
+        candidates = [(y, v) for y, x, v in phone_matches if abs(y - last_y) <= TOL]
+        if candidates:
+            candidates.sort(key=lambda e: abs(e[0] - last_y))
+            phone = candidates[0][1]
+
+    return {"address": address[:80] if address else None, "date": last_date, "phone": phone}
 
 
 async def ocr_pdf(pdf_path):
@@ -204,23 +224,21 @@ async def ocr_pdf(pdf_path):
         queried_date = find_queried_date(first_page_text)
 
         try:
-            table = parse_home_history_table(all_page_words)
+            last_row = find_last_home_row(all_page_words)
         except Exception:
-            table = []
+            last_row = None
 
-        last_row = table[-1] if table else None
         address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
         phone = last_row["phone"] if last_row else None
 
         if not address:
-            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date, "debugRows": table}
+            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
 
         return {
             "ok": True,
             "address": address,
             "phone": phone,
             "queriedDate": queried_date,
-            "debugRows": table,
         }
 
     except Exception as e:

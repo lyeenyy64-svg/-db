@@ -4,14 +4,13 @@
 출력: JSON {
   "ok": true, "number": "930624-1241111",
   "address": "...", "registeredDate": "2024-04-03", "note": "박서훈의 배우자",
-  "issuedDate": "2025-01-03", "debugRows": [...]
+  "issuedDate": "2025-01-03"
 } 또는 {"ok": false, "error": "..."}
 
-주소이력표(주소/발생일·신고일/세대주및관계·등록상태)는 여러 줄이 쌓이는 구조라,
-OCR 결과의 단어(word) 단위 좌표(bounding_rect)를 이용해 컬럼을 나누고, 표의
-가장 마지막 행을 "최근 주소"로 채택한다. 실제 문서로 로컬 테스트를 할 수 없는
-환경에서 작성된 1차 버전이라 debugRows에 파싱된 전체 행을 같이 내려준다 —
-값이 이상하면 이걸 같이 확인해서 컬럼 판정 로직을 튜닝한다.
+주소이력표는 여러 줄이 쌓이는 구조인데, 실 서버 테스트로 확인한 바에 따르면
+Windows OCR이 표를 "세로 컬럼" 단위로 통째로 먼저 읽는다 (주소 컬럼 전체를
+위→아래로 다 읽은 뒤에야 날짜 컬럼을 읽는 식) — 그래서 순서가 아니라 각 단어의
+x/y 좌표(bounding_rect)만으로 같은 행을 판정한다 (find_last_history_row 참고).
 """
 import asyncio
 import sys
@@ -86,80 +85,84 @@ def _looks_like_address(s):
     return False
 
 
-def _median(nums):
-    if not nums:
-        return None
-    s = sorted(nums)
-    n = len(s)
-    mid = n // 2
-    return s[mid] if n % 2 == 1 else (s[mid - 1] + s[mid]) / 2
-
-
-def parse_history_table(pages_words):
-    """
-    pages_words: [[(word_text, left_x, top_y), ...], ...] 페이지 순서, 각 페이지는
-    단어(word) 단위 OCR 인식 순서(대략 위→아래, 좌→우) 그대로.
-
-    표 제목("발생일"/"신고일"/"세대주및관계"/"등록상태")은 작은 글자라 OCR이 놓치는
-    경우가 많아서, 제목 글자에 기대지 않고 실제 데이터(날짜 패턴 YYYY-MM-DD, 등록상태
-    키워드)의 x좌표로 컬럼 경계를 추정한다 — 날짜·상태 값은 표에 여러 번 반복 등장해서
-    제목 글자 하나보다 인식 실패 확률이 훨씬 낮다.
-    반환: [{address, date, note}, ...] — 표에 나온 순서대로, 마지막 항목이 최신 주소.
-    """
-    all_words = [w for words in pages_words for w in words]
-
-    date_xs = [x for text, x, y in all_words if DATE_ISO_RE.search(text.strip())]
-    if not date_xs:
+def _cluster_x(xs, gap=60):
+    """정렬된 x값들을 gap 이내로 묶어서 [[x, x, ...], ...] 클러스터 목록으로 반환."""
+    if not xs:
         return []
-    date_col_x = _median(date_xs)
+    xs = sorted(xs)
+    clusters = [[xs[0]]]
+    for x in xs[1:]:
+        if x - clusters[-1][-1] <= gap:
+            clusters[-1].append(x)
+        else:
+            clusters.append([x])
+    return clusters
 
-    status_xs = [x for text, x, y in all_words
-                 if x > date_col_x + 10 and any(w in text.strip() for w in STATUS_WORDS)]
-    status_col_x = _median(status_xs) if status_xs else (date_col_x + 250)
-    note_col_x = date_col_x + 15
 
-    rows = []
-    pending = []
-    in_bracket = False
-    for words in pages_words:
+def find_last_history_row(pages_words):
+    """
+    pages_words: [[(word_text, left_x, top_y), ...], ...] 페이지 순서.
+
+    실제 서버 테스트로 확인한 사실: Windows OCR은 표를 "줄" 단위가 아니라
+    "세로 컬럼" 단위로 통째로 먼저 읽는다 (주소 컬럼 전체를 위→아래로 다 읽은 뒤에야
+    날짜 컬럼을 읽는 식) — 그래서 "주소 다음에 날짜가 나온다"는 순서 가정은 성립하지
+    않는다. 대신 좌표(x, y)만으로 같은 행을 판정한다:
+      1) YYYY-MM-DD 패턴이 있는 단어들의 x좌표 중, 가장 많이 반복되는 x구간을
+         "신고일" 컬럼으로 채택한다 (발생일 컬럼은 빈 칸(-----)이 많아 매칭 수가 적다).
+      2) 그 컬럼에서 페이지·y좌표 기준으로 가장 마지막(아래쪽) 날짜를 "최근 등록일"로 삼는다.
+      3) 그 날짜와 같은 y 근처(위쪽 주소 컬럼)의 텍스트를 모아 주소로, 오른쪽(비고 컬럼)
+         텍스트를 모아 비고로 삼는다.
+    표 제목("발생일"/"신고일"/"세대주및관계") 글자 자체는 작아서 OCR이 놓치는 경우가
+    많아 컬럼 판정에 쓰지 않는다.
+    반환: {"address", "date", "note"} 또는 표를 못 찾으면 None.
+    """
+    all_entries = []  # (page_idx, y, x, text)
+    for p_idx, words in enumerate(pages_words):
         for text, x, y in words:
             raw = text.strip()
-            if not raw:
-                continue
+            if raw:
+                all_entries.append((p_idx, y, x, raw))
 
-            # "[법률9774호(...) 도로명주소법, 공법관계의 주소변경]" 같은 안내문구는
-            # 여러 단어에 걸쳐 나오므로, 여는/닫는 괄호 사이 전체를 건너뛴다.
-            if not in_bracket and raw.startswith("["):
-                in_bracket = True
-            if in_bracket:
-                if "]" in raw:
-                    in_bracket = False
-                continue
+    date_matches = []  # (page_idx, y, x, date_val)
+    for p_idx, y, x, text in all_entries:
+        m = DATE_ISO_RE.search(text)
+        if m:
+            date_matches.append((p_idx, y, x, m.group().replace(".", "-")))
+    if not date_matches:
+        return None
 
-            m = DATE_ISO_RE.search(raw)
-            if m and (date_col_x - 25) <= x <= (date_col_x + 25):
-                date_val = m.group().replace(".", "-")
-                addr = re.sub(r'\s+', ' ', " ".join(pending)).strip()
-                pending = []
-                if addr and _looks_like_address(addr):
-                    rows.append({"address": addr[:80], "date": date_val, "note": ""})
-                elif rows:
-                    # 같은 행의 두 번째 날짜(신고일) — 앞서 만든 행의 날짜를 최종값으로 갱신
-                    rows[-1]["date"] = date_val
-                continue
+    clusters = _cluster_x([x for _, _, x, _ in date_matches])
+    best = max(clusters, key=lambda c: sum(1 for _, _, x, _ in date_matches if c[0] - 5 <= x <= c[-1] + 5))
+    date_lo, date_hi = best[0] - 15, best[-1] + 15
 
-            if x < date_col_x - 25:
-                if not _is_noise_word(raw):
-                    pending.append(raw)
-                continue
+    date_col = [(p, y, v) for p, y, x, v in date_matches if date_lo <= x <= date_hi]
+    if not date_col:
+        return None
+    date_col.sort(key=lambda e: (e[0], e[1]))
+    last_page, last_y, last_date = date_col[-1]
 
-            if note_col_x <= x < status_col_x - 10:
-                if rows and raw not in HEADER_LABELS and not any(w in raw for w in STATUS_WORDS):
-                    rows[-1]["note"] = (rows[-1]["note"] + " " + raw).strip() if rows[-1]["note"] else raw
-                continue
-            # x >= status_col_x - 10 → 등록상태 칸으로 판단해 무시
+    TOL = 70
 
-    return rows
+    def _collect(min_x=None, max_x=None):
+        words = [(y, text) for p, y, x, text in all_entries
+                 if p == last_page and abs(y - last_y) <= TOL
+                 and (min_x is None or x >= min_x) and (max_x is None or x < max_x)
+                 and not text.startswith("[") and "]" not in text]
+        words.sort(key=lambda e: e[0])
+        return " ".join(t for _, t in words)
+
+    addr_raw = _collect(max_x=date_lo - 10)
+    addr_words = [w for w in addr_raw.split() if not _is_noise_word(w)]
+    address = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
+    if not _looks_like_address(address):
+        address = None
+
+    note_raw = _collect(min_x=date_hi + 10)
+    note_words = [w for w in note_raw.split()
+                  if w not in HEADER_LABELS and not any(s in w for s in STATUS_WORDS)]
+    note = re.sub(r'\s+', ' ', " ".join(note_words)).strip() or None
+
+    return {"address": address[:80] if address else None, "date": last_date, "note": note}
 
 
 async def ocr_pdf(pdf_path):
@@ -221,20 +224,9 @@ async def ocr_pdf(pdf_path):
             issued_date = f"{y}-{int(mo):02d}-{int(d):02d}"
 
         try:
-            table = parse_history_table(all_page_words)
+            last_row = find_last_history_row(all_page_words)
         except Exception:
-            table = []
-
-        last_row = table[-1] if table else None
-
-        # 진단용: 페이지 0~1의 단어 목록을 좌표와 함께 그대로 내려준다 (실제 문서로
-        # 로컬 테스트를 못 하는 환경이라, 표 인식이 틀렸을 때 이 원본 데이터를 보고
-        # 컬럼 판정 로직을 고친다). 문제 해결 후 제거할 임시 필드.
-        debug_words = []
-        for p_idx in (0, 1):
-            if p_idx < len(all_page_words):
-                for text, x, y in all_page_words[p_idx]:
-                    debug_words.append([p_idx, round(x), round(y), text])
+            last_row = None
 
         return {
             "ok": bool(number),
@@ -243,8 +235,6 @@ async def ocr_pdf(pdf_path):
             "registeredDate": last_row["date"] if last_row else None,
             "note": (last_row["note"] if last_row and last_row["note"] else None),
             "issuedDate": issued_date,
-            "debugRows": table,
-            "debugWords": debug_words,
         }
 
     except Exception as e:
