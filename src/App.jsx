@@ -5851,6 +5851,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [searchQ, setSearchQ] = useState("");
     const [geocoding, setGeocoding] = useState(false);
     const [geocodeProgress, setGeocodeProgress] = useState(null);
+    const [refreshingAddr, setRefreshingAddr] = useState(false);
+    const [refreshAddrProgress, setRefreshAddrProgress] = useState(null);
     const mapElRef = useRef(null);
     const mapObjRef = useRef(null);
     const overlaysRef = useRef([]);
@@ -5925,6 +5927,25 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       loadLocations();
     };
 
+    // 좌표 변환에 계속 실패하는 항목은 대부분 예전(수정 전) OCR 로직이 잘못 저장해둔
+    // 주소 캐시가 원인이다 — 하나씩 상세화면에서 "재조회" 누르는 대신 여기서 한 번에 처리한다.
+    const runBulkAddressRefresh = async () => {
+      if (refreshingAddr || noCoords.length === 0) return;
+      setRefreshingAddr(true);
+      setRefreshAddrProgress({ done: 0, total: noCoords.length });
+      for (let i = 0; i < noCoords.length; i++) {
+        const item = noCoords[i];
+        const endpoint = item.addressSource === "resident"
+          ? `/api/debtor/${item.id}/resident-number/refresh`
+          : `/api/debtor/${item.id}/credit-address/refresh`;
+        try { await fetch(endpoint, { method: "POST" }); } catch {}
+        setRefreshAddrProgress({ done: i + 1, total: noCoords.length });
+      }
+      setRefreshingAddr(false);
+      loadLocations();
+      showToast("주소 재조회 완료 — '주소→좌표 변환'을 다시 눌러주세요");
+    };
+
     const panTo = (d) => {
       if (!mapObjRef.current || d.lat == null) return;
       mapObjRef.current.setCenter(new window.kakao.maps.LatLng(d.lat, d.lng));
@@ -5944,6 +5965,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button onClick={runBulkGeocode} disabled={geocoding}
               style={{ padding: "8px 14px", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)", color: geocoding ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: geocoding ? "default" : "pointer" }}>
               {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
+            </button>
+          )}
+          {canEdit && noCoords.length > 0 && (
+            <button onClick={runBulkAddressRefresh} disabled={refreshingAddr}
+              title="좌표 변환에 계속 실패하는 항목은 예전에 잘못 저장된 주소 캐시가 원인인 경우가 많습니다 — 눌러서 다시 추출합니다"
+              style={{ padding: "8px 14px", borderRadius: 8, background: refreshingAddr ? "var(--bg2)" : "#8b5cf618", color: refreshingAddr ? "var(--tm)" : "#6d28d9", fontSize: 12, fontWeight: 600, border: refreshingAddr ? "none" : "1px solid #8b5cf640", cursor: refreshingAddr ? "default" : "pointer" }}>
+              {refreshingAddr ? `주소 재조회 중... (${refreshAddrProgress?.done || 0}/${refreshAddrProgress?.total || 0})` : `주소 재조회 (${noCoords.length}건)`}
             </button>
           )}
           <span style={{ flex: 1 }} />
