@@ -119,6 +119,8 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"
     ["credit_queried_date",        "TEXT"],
     ["resident_address_lat",       "REAL"],
     ["resident_address_lng",       "REAL"],
+    ["resident_source_date",       "TEXT"],
+    ["credit_source_date",         "TEXT"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -2361,11 +2363,12 @@ app.get("/api/admin/index-status", (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 파일 인덱스 재구성 (워커 스레드에서 실행 — 이벤트 루프 비차단)
-app.post("/api/admin/reindex", (req, res) => {
-  try {
+// 파일 인덱스 재구성 (워커 스레드에서 실행 — 이벤트 루프 비차단). 어드민 버튼과
+// 주기적 자동 재인덱싱(서버 기동 부분 참고)이 이 함수를 공유해서 쓴다.
+function runReindex() {
+  return new Promise((resolve, reject) => {
     const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
-    if (!rootRow || !rootRow.value) return res.status(400).json({ ok: false, error: "스캔 폴더 경로가 설정되지 않았습니다" });
+    if (!rootRow || !rootRow.value) return reject(new Error("스캔 폴더 경로가 설정되지 않았습니다"));
 
     const { Worker } = require("worker_threads");
     const scannerPath = require.resolve("./fileScanner.cjs");
@@ -2377,11 +2380,11 @@ app.post("/api/admin/reindex", (req, res) => {
       parentPort.postMessage(indexAllFiles(workerData.rootPath));
     `;
     const worker = new Worker(workerCode, { eval: true, workerData: { scannerPath, rootPath } });
-    const timer  = setTimeout(() => { worker.terminate(); res.status(408).json({ ok: false, error: "인덱싱 시간 초과 (3분)" }); }, 180000);
+    const timer  = setTimeout(() => { worker.terminate(); reject(new Error("인덱싱 시간 초과 (3분)")); }, 180000);
 
     worker.on("message", result => {
       clearTimeout(timer);
-      if (!result.ok) return res.status(500).json(result);
+      if (!result.ok) return reject(new Error(result.error || "인덱싱 실패"));
       const ins = db.prepare(`INSERT OR REPLACE INTO file_index
         (file_path,filename,folder_name,rel_path,parsed_date,parsed_direction,parsed_person_name,doc_type,ext)
         VALUES (?,?,?,?,?,?,?,?,?)`);
@@ -2389,10 +2392,20 @@ app.post("/api/admin/reindex", (req, res) => {
         db.prepare("DELETE FROM file_index").run();
         for (const f of result.files) ins.run(f.filePath,f.filename,f.folderName,f.relPath,f.parsedDate,f.parsedDirection,f.parsedPersonName,f.docType,f.ext);
       })();
-      res.json({ ok: true, indexed: result.files.length });
+      resolve({ indexed: result.files.length });
     });
-    worker.on("error", err => { clearTimeout(timer); res.status(500).json({ ok: false, error: err.message }); });
-  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+    worker.on("error", err => { clearTimeout(timer); reject(err); });
+  });
+}
+
+app.post("/api/admin/reindex", async (req, res) => {
+  try {
+    const result = await runReindex();
+    res.json({ ok: true, indexed: result.indexed });
+  } catch (e) {
+    const status = /경로가 설정/.test(e.message) ? 400 : /시간 초과/.test(e.message) ? 408 : 500;
+    res.status(status).json({ ok: false, error: e.message });
+  }
 });
 
 // 어드민 통계: 접속 하트비트 수신
@@ -2671,7 +2684,7 @@ async function lookupResidentDetails(debtorId, debtor) {
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
   const rows = db.prepare(
-    `SELECT file_path, filename FROM file_index
+    `SELECT file_path, filename, parsed_date FROM file_index
      WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
      AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
      AND ext = 'pdf'
@@ -2685,8 +2698,8 @@ async function lookupResidentDetails(debtorId, debtor) {
     const updates = [], vals = [];
     if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
     if (!debtor.resident_address && r.address) {
-      updates.push("resident_address = ?", "resident_address_lat = NULL", "resident_address_lng = NULL");
-      vals.push(r.address);
+      updates.push("resident_address = ?", "resident_address_lat = NULL", "resident_address_lng = NULL", "resident_source_date = ?");
+      vals.push(r.address, c.parsed_date || null);
     }
     if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
     if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
@@ -2733,7 +2746,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
       const kor = korName3(debtor.name);
       if (kor) {
         const rows = db.prepare(
-          `SELECT file_path, filename FROM file_index
+          `SELECT file_path, filename, parsed_date FROM file_index
            WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
            AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
            AND ext = 'pdf'
@@ -2750,7 +2763,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
           // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다
           const updates = [], vals = [];
           if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
-          if (!debtor.resident_address && r.address) { updates.push("resident_address = ?"); vals.push(r.address); }
+          if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
           if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
           if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
           if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
@@ -2809,7 +2822,8 @@ app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
 
     db.prepare(
       `UPDATE debtors SET resident_address = NULL, resident_address_lat = NULL, resident_address_lng = NULL,
-              resident_registered_date = NULL, resident_note = NULL, resident_issued_date = NULL WHERE id = ?`
+              resident_registered_date = NULL, resident_note = NULL, resident_issued_date = NULL,
+              resident_source_date = NULL WHERE id = ?`
     ).run(existing.id);
 
     const debtor = {
@@ -2876,7 +2890,7 @@ async function lookupCreditAddress(debtor) {
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
   const rows = db.prepare(
-    `SELECT file_path, filename FROM file_index
+    `SELECT file_path, filename, parsed_date FROM file_index
      WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
      AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
      AND ext = 'pdf'
@@ -2889,8 +2903,8 @@ async function lookupCreditAddress(debtor) {
 
     const updates = [], vals = [];
     if (!debtor.latest_address && r.address) {
-      updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
-      vals.push(r.address);
+      updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')", "credit_source_date = ?");
+      vals.push(r.address, c.parsed_date || null);
     }
     if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
     if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
@@ -2933,7 +2947,7 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
 
     db.prepare(
       `UPDATE debtors SET latest_address = NULL, latest_address_lat = NULL, latest_address_lng = NULL,
-              credit_phone = NULL, credit_queried_date = NULL WHERE id = ?`
+              credit_phone = NULL, credit_queried_date = NULL, credit_source_date = NULL WHERE id = ?`
     ).run(existing.id);
 
     const debtor = { id: existing.id, name: existing.name, latest_address: null, credit_phone: null, credit_queried_date: null };
@@ -2941,6 +2955,70 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
     res.json(result);
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
+
+// 원드라이브 폴더에 더 최근 초본/CB보고서가 새로 올라오면, 이미 캐시된 주소를 계속
+// 보여주지 않도록 자동으로 감지해서 캐시를 지운다. 지우기만 하고 그 자리에서 바로
+// OCR을 다시 돌리지는 않는다 — 실제로 그 채무자 화면을 여는 시점에 기존 자동추출
+// useEffect가 알아서 다시 뽑아오므로, 아무도 안 보는 채무자까지 미리 OCR을 돌려서
+// 서버 부담을 늘릴 필요가 없다. resident_source_date/credit_source_date가 아직
+// 없는(이 기능 배포 전에 캐시된) 값도 "오래된 것"으로 간주해 한 번은 다시 뽑는다 —
+// 예전 버그로 잘못 저장된 값들을 사람이 일일이 "재조회"하지 않아도 자연스럽게 정리된다.
+async function runAutoAddressRefreshCheck() {
+  try {
+    const residentTargets = db.prepare(
+      `SELECT id, name, resident_source_date FROM debtors WHERE resident_address IS NOT NULL AND resident_address != ''`
+    ).all();
+    let residentInvalidated = 0;
+    for (const deb of residentTargets) {
+      const kor = korName3(deb.name);
+      if (!kor) continue;
+      const newest = db.prepare(
+        `SELECT parsed_date FROM file_index
+         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+         AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
+         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 1`
+      ).get(`%${kor}%`, `%${kor}%`);
+      if (!newest || !newest.parsed_date) continue;
+      if (!deb.resident_source_date || newest.parsed_date > deb.resident_source_date) {
+        db.prepare(
+          `UPDATE debtors SET resident_address = NULL, resident_address_lat = NULL, resident_address_lng = NULL,
+                  resident_registered_date = NULL, resident_note = NULL, resident_issued_date = NULL,
+                  resident_source_date = NULL WHERE id = ?`
+        ).run(deb.id);
+        residentInvalidated++;
+      }
+    }
+
+    const creditTargets = db.prepare(
+      `SELECT id, name, credit_source_date FROM debtors WHERE latest_address IS NOT NULL AND latest_address != ''`
+    ).all();
+    let creditInvalidated = 0;
+    for (const deb of creditTargets) {
+      const kor = korName3(deb.name);
+      if (!kor) continue;
+      const newest = db.prepare(
+        `SELECT parsed_date FROM file_index
+         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
+         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 1`
+      ).get(`%${kor}%`, `%${kor}%`);
+      if (!newest || !newest.parsed_date) continue;
+      if (!deb.credit_source_date || newest.parsed_date > deb.credit_source_date) {
+        db.prepare(
+          `UPDATE debtors SET latest_address = NULL, latest_address_lat = NULL, latest_address_lng = NULL,
+                  credit_phone = NULL, credit_queried_date = NULL, credit_source_date = NULL WHERE id = ?`
+        ).run(deb.id);
+        creditInvalidated++;
+      }
+    }
+
+    if (residentInvalidated || creditInvalidated) {
+      console.log(`[문서 자동동기화] 새 문서 감지 — 초본 캐시 ${residentInvalidated}건, CB 캐시 ${creditInvalidated}건 초기화 (다음에 해당 채무자 화면을 열면 자동으로 다시 추출됩니다)`);
+    }
+  } catch (e) {
+    console.error("[문서 자동동기화] 캐시 최신성 점검 오류:", e.message);
+  }
+}
 
 // ─── 채무자 위치 지도 (카카오맵) ──────────────────────
 // JavaScript 키는 비밀값이 아니라(도메인 제한으로 보호되고 JS SDK에 그대로 노출됨) 프론트에
@@ -3305,4 +3383,20 @@ app.listen(PORT, () => {
   // 알림 규칙 엔진: 서버 시작 20초 후 1회 + 이후 30분마다 평가
   setTimeout(() => { runAlertRules().catch(e => console.error("[알림규칙] 오류:", e.message)); }, 20000);
   setInterval(() => { runAlertRules().catch(e => console.error("[알림규칙] 오류:", e.message)); }, 30 * 60 * 1000);
+
+  // 문서 자동 동기화: 원드라이브 폴더를 주기적으로 재인덱싱하고, 이미 캐시된
+  // 초본/CB 주소보다 더 최근 문서가 새로 들어와 있으면 캐시를 지운다(실제 재추출은
+  // 담당자가 그 채무자 화면을 여는 순간 기존 자동추출 로직이 처리). 서버 시작
+  // 30초 후 1회 + 이후 30분마다. "서류 폴더 경로 설정"이 안 되어 있으면 조용히 스킵.
+  const runAutoDocSync = async () => {
+    try {
+      const result = await runReindex();
+      console.log(`[문서 자동동기화] 재인덱싱 완료 (${result.indexed}건)`);
+      await runAutoAddressRefreshCheck();
+    } catch (e) {
+      if (!/경로가 설정/.test(e.message)) console.error("[문서 자동동기화] 오류:", e.message);
+    }
+  };
+  setTimeout(runAutoDocSync, 30000);
+  setInterval(runAutoDocSync, 30 * 60 * 1000);
 });
