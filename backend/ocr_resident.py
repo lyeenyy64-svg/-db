@@ -141,15 +141,27 @@ def find_last_history_row(pages_words):
     date_col.sort(key=lambda e: (e[0], e[1]))
     last_page, last_y, last_date = date_col[-1]
 
+    # 위쪽 경계: 바로 이전 행의 날짜 y와 이번 행의 날짜 y 중간점까지만 — 이렇게 해야
+    # 행 간격(보통 100px 이상)보다 넓은 고정폭을 쓰다가 이전 행 주소가 섞여 들어오는
+    # 문제를 막을 수 있다. 이전 행이 없으면(첫 행) 고정폭 70px을 그대로 쓴다.
     TOL = 70
+    prev_same_page = [(p, y) for p, y, v in date_col[:-1] if p == last_page]
+    if prev_same_page:
+        prev_y = prev_same_page[-1][1]
+        y_min = prev_y + (last_y - prev_y) / 2
+    else:
+        y_min = last_y - TOL
+    y_max = last_y + TOL
 
     def _collect(min_x=None, max_x=None):
-        words = [(y, text) for p, y, x, text in all_entries
-                 if p == last_page and abs(y - last_y) <= TOL
+        # 같은 시각적 줄(±20px 이내)끼리 묶은 뒤, 그 안에서는 x(좌→우) 순서로 정렬
+        # — 순수 y정렬만 쓰면 거의 같은 높이인 단어들의 좌우 순서가 뒤섞일 수 있다.
+        words = [(round(y / 20) * 20, x, text) for p, y, x, text in all_entries
+                 if p == last_page and y_min <= y <= y_max
                  and (min_x is None or x >= min_x) and (max_x is None or x < max_x)
                  and not text.startswith("[") and "]" not in text]
-        words.sort(key=lambda e: e[0])
-        return " ".join(t for _, t in words)
+        words.sort(key=lambda e: (e[0], e[1]))
+        return " ".join(t for _, _, t in words)
 
     addr_raw = _collect(max_x=date_lo - 10)
     addr_words = [w for w in addr_raw.split() if not _is_noise_word(w)]

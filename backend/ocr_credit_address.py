@@ -136,6 +136,16 @@ def find_last_home_row(pages_words):
     date_col.sort(key=lambda e: e[0])
     last_y, last_date = date_col[-1]
 
+    # 위쪽 경계: 바로 이전 행의 날짜 y와 이번 행의 날짜 y 중간점까지만 — 고정폭을 쓰면
+    # 행 간격보다 넓어서 이전 행 주소가 섞여 들어올 수 있다.
+    TOL = 70
+    if len(date_col) >= 2:
+        prev_y = date_col[-2][0]
+        y_min = prev_y + (last_y - prev_y) / 2
+    else:
+        y_min = last_y - TOL
+    y_max = last_y + TOL
+
     phone_matches = [(y, x, PHONE_RE.search(text).group().replace(" ", ""))
                      for y, x, text in all_entries if PHONE_RE.search(text) and x > date_hi]
     phone_lo = None
@@ -144,15 +154,14 @@ def find_last_home_row(pages_words):
         phone_best = max(phone_clusters, key=lambda c: sum(1 for _, x, _ in phone_matches if c[0] - 5 <= x <= c[-1] + 5))
         phone_lo = phone_best[0] - 15
 
-    TOL = 70
-
     def _collect(min_x=None, max_x=None):
-        words = [(y, text) for y, x, text in all_entries
-                 if abs(y - last_y) <= TOL
+        # 같은 시각적 줄(±20px 이내)끼리 묶은 뒤, 그 안에서는 x(좌→우) 순서로 정렬
+        words = [(round(y / 20) * 20, x, text) for y, x, text in all_entries
+                 if y_min <= y <= y_max
                  and (min_x is None or x >= min_x) and (max_x is None or x < max_x)
                  and text not in HEADER_LABELS]
-        words.sort(key=lambda e: e[0])
-        return " ".join(t for _, t in words)
+        words.sort(key=lambda e: (e[0], e[1]))
+        return " ".join(t for _, _, t in words)
 
     addr_raw = _collect(min_x=date_hi + 10, max_x=phone_lo)
     address = re.sub(r'\s+', ' ', addr_raw).strip()
@@ -161,7 +170,7 @@ def find_last_home_row(pages_words):
 
     phone = None
     if phone_lo is not None:
-        candidates = [(y, v) for y, x, v in phone_matches if abs(y - last_y) <= TOL]
+        candidates = [(y, v) for y, x, v in phone_matches if y_min <= y <= y_max]
         if candidates:
             candidates.sort(key=lambda e: abs(e[0] - last_y))
             phone = candidates[0][1]
