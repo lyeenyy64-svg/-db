@@ -3187,6 +3187,93 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
   }
 });
 
+// 채무자+연대보증인 종합분석 — 신용점수/법적절차내역/히스토리를 근거로 향후 채권회수를
+// 위해 체크할 부분에 대한 실무 의견을 생성한다. (채무자 상세 "기타사항"에 추가하는 용도)
+app.post("/api/debtor/:id/analysis", async (req, res) => {
+  const openaiClient = getOpenAIClient();
+  if (!openaiClient) return res.status(503).json({ ok: false, error: "OPENAI_API_KEY 미설정" });
+  try {
+    const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(req.params.id);
+    if (!d) return res.json({ ok: false, error: "채무자 없음" });
+
+    const guarantorNames = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(d.id).map(r => r.name);
+    const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(d.id);
+    const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(d.id);
+    const rehabs = db.prepare("SELECT * FROM rehabilitations WHERE debtor_id=? ORDER BY id DESC LIMIT 3").all(d.id);
+    const complaints = db.prepare("SELECT * FROM complaints WHERE debtor_id=? ORDER BY complaint_date DESC LIMIT 3").all(d.id);
+    const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 10").all(d.id);
+    const installs = db.prepare("SELECT * FROM installment_plans WHERE debtor_id=? ORDER BY id DESC LIMIT 1").all(d.id);
+
+    const fmt = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
+    const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
+
+    // 연대보증인 신용점수 — CB보고서에서 라이브 OCR (best-effort, 못 찾아도 무시)
+    const guarantorScores = [];
+    for (const gName of guarantorNames) {
+      const kor = korName3(gName);
+      if (!kor) continue;
+      const rows = db.prepare(
+        `SELECT file_path FROM file_index
+         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
+         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 3`
+      ).all(`%${kor}%`, `%${kor}%`);
+      for (const r of rows) {
+        const result = await ocrPdfForCreditScore(r.file_path);
+        if (result.ok && result.score) { guarantorScores.push(`${gName}: ${result.score}점`); break; }
+      }
+    }
+
+    const contextText = `
+[채무자 기본정보]
+이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 담당자: ${d.assignee || "-"} | 수금상태: ${d.collection_status || "-"}
+원금: ${fmt(d.principal_balance)}원 | 회수액: ${fmt(d.collected_amount)}원 | 법무기준잔액: ${fmt(d.final_balance_legal)}원
+채무발생원인: ${d.debt_cause || "-"} | 대여일자: ${d.loan_date || "-"}
+채무자 신용점수: ${d.credit_grade || "확인 안됨"}
+연대보증인: ${guarantorNames.length ? guarantorNames.join(", ") : "없음"}
+연대보증인 신용점수: ${guarantorScores.length ? guarantorScores.join(" / ") : "확인 안됨"}
+
+[입금 현황]
+총 입금액: ${fmt(totalPaid)}원 (${pays.length}건)
+${pays.length > 0 ? pays.slice(0, 5).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원`).join("\n") : "  입금 내역 없음"}
+
+[분납약정]
+${installs.length === 0 ? "없음" : installs.map(i => `월 ${fmt(i.monthly_amount)}원 | 상태: ${i.status}`).join("\n")}
+
+[법적절차내역]
+압류: ${seizures.length === 0 ? "없음" : seizures.map(s => `법원 ${s.court || "-"} 사건번호 ${s.case_number || "-"} 상태 ${s.status || "-"}`).join(" / ")}
+회생파산: ${rehabs.length === 0 ? "없음" : rehabs.map(r => `${r.type || "-"} 사건번호 ${r.case_number || "-"} 법원 ${r.court || "-"}`).join(" / ")}
+형사고소: ${complaints.length === 0 ? "없음" : complaints.map(c => `${c.complaint_date} ${c.police_station || "-"} ${c.status_note || "-"}`).join(" / ")}
+
+[히스토리 (최근 20건)]
+${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity_type || "-"}] ${a.content || ""}`).join("\n")}
+`.trim();
+
+    const systemPrompt = `당신은 NPL 채권관리 전문가입니다. 아래 채무자/연대보증인 데이터를 종합적으로 검토하고,
+향후 채권 회수를 위해 담당자가 어떤 부분을 체크하거나 조치해야 할지 실무적인 의견을 작성하세요.
+- 신용점수, 법적절차내역, 히스토리(추심 활동 기록)를 근거로 판단하세요.
+- 채무자와 연대보증인 각각에 대해 필요하면 구분해서 언급하세요.
+- 불필요한 인사말/서론 없이 바로 핵심 의견부터 작성하세요. 마크다운 기호(#, *, - 등)는 쓰지 마세요.
+- 3~6문장 정도로 간결하게 작성하세요.
+- 한국어로 작성하세요.`;
+
+    const completion = await openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: contextText },
+      ],
+      max_tokens: 700,
+      temperature: 0.3,
+    });
+
+    res.json({ ok: true, text: completion.choices[0].message.content.trim() });
+  } catch (err) {
+    console.error("종합분석 오류:", err.message);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ─── 서버 기동 ──────────────────────────────────
 const PORT = 3010;
 app.listen(PORT, () => {
