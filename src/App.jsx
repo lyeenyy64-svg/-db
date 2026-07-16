@@ -4366,8 +4366,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div style={{ fontSize: 11, color: "var(--tp)", marginTop: 2 }}>{h.createdBy || ""}</div>
                       </td>
                       <td style={{ padding: "8px 16px", fontSize: 12, lineHeight: 1.6, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
-                      <td style={{ width: 44, padding: "8px 10px", verticalAlign: "top" }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      <td style={{ width: 60, padding: "8px 10px", verticalAlign: "top" }}>
+                        <div style={{ display: "flex", flexDirection: "row", gap: 4 }}>
                           {(canEditRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
                           {(canDeleteRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
                         </div>
