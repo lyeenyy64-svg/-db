@@ -135,7 +135,12 @@ def _find_pattern_span(items, pattern, max_words=6):
         buf = ""
         for j in range(i, min(i + max_words, n)):
             buf += items[j][1]
-            m = pattern.search(buf)
+            # search()가 아니라 match()를 쓴다 — search는 buf 어디든 패턴이 있으면
+            # 성공으로 치기 때문에, 예를 들어 주소 단어에서 시작해도 계속 이어붙이다
+            # 보면 결국 뒤쪽의 진짜 전화번호까지 buf에 포함되어 "그 주소 단어 위치에서
+            # 전화번호를 찾았다"는 잘못된 결과가 나온다(실 서버 테스트에서 확인).
+            # match()는 buf의 맨 앞부터 정확히 일치해야 하므로 이 오탐을 막는다.
+            m = pattern.match(buf)
             if m:
                 return (m.group(), i, j)
     return None
