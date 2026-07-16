@@ -16,6 +16,16 @@ const daysUntil = (d) => (d ? Math.ceil((new Date(d) - new Date()) / 864e5) : In
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const uid = (prefix) => `${prefix}${Date.now()}${rand(100, 999)}`;
+// "**중요**" 처럼 **로 감싼 부분만 붉은 글씨로 강조해서 렌더링 (AI 종합분석이 중요 항목을
+// 이 문법으로 표시해서 만든 기능 — 일반 텍스트에도 그대로 적용돼도 무해함)
+const RichNoteText = ({ text }) => {
+  const parts = String(text || "").split(/\*\*(.+?)\*\*/g);
+  return parts.map((part, i) =>
+    i % 2 === 1
+      ? <span key={i} style={{ color: "#dc2626", fontWeight: 700 }}>{part}</span>
+      : <span key={i}>{part}</span>
+  );
+};
 
 // ─── Default Config (editable via admin) ──────────────────
 const DEFAULT_CONFIG = {
@@ -4301,7 +4311,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 >{analyzing ? "분석 중..." : "AI 종합분석 다시 생성"}</button>}
               </div>
               {d.keyNotes
-                ? <div style={{ fontSize: 11, lineHeight: 1.6, padding: "6px 8px", background: "var(--bg)", borderRadius: 6, whiteSpace: "pre-wrap" }}>{d.keyNotes}</div>
+                ? <div style={{ fontSize: 13, lineHeight: 1.7, padding: "6px 8px", background: "var(--bg)", borderRadius: 6, whiteSpace: "pre-wrap" }}><RichNoteText text={d.keyNotes} /></div>
                 : <span style={{ fontSize: 12, color: "var(--tm)" }}>-</span>}
             </div>
           </div>
