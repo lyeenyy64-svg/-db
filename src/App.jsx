@@ -4289,16 +4289,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <tbody>
                   {allHistory.map((h, i) => (
                     <tr key={h.key} style={{ borderBottom: i < allHistory.length - 1 ? "1px solid var(--brd)" : "none" }}>
-                      <td style={{ width: 90, padding: "12px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
+                      <td style={{ width: 90, padding: "8px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
                         <div className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, lineHeight: 1.4 }}>{h.date}</div>
-                        <div style={{ fontSize: 11, color: h.type ? "var(--tp)" : "var(--tm)", marginTop: 4 }}>{h.type || "-"}</div>
+                        <div style={{ fontSize: 11, color: h.type ? "var(--tp)" : "var(--tm)", marginTop: 2 }}>{h.type || "-"}</div>
                       </td>
-                      <td style={{ width: 70, padding: "12px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
+                      <td style={{ width: 70, padding: "8px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
                         <div style={{ fontSize: 11, color: h.isManual ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{h.isManual ? "수동" : "-"}</div>
-                        <div style={{ fontSize: 11, color: "var(--tp)", marginTop: 4 }}>{h.createdBy || ""}</div>
+                        <div style={{ fontSize: 11, color: "var(--tp)", marginTop: 2 }}>{h.createdBy || ""}</div>
                       </td>
-                      <td style={{ padding: "12px 16px", fontSize: 12, lineHeight: 1.7, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
-                      <td style={{ width: 44, padding: "8px 10px" }}>
+                      <td style={{ padding: "8px 16px", fontSize: 12, lineHeight: 1.6, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
+                      <td style={{ width: 44, padding: "8px 10px", verticalAlign: "top" }}>
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           {(canEditRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
                           {(canDeleteRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
