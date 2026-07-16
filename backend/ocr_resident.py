@@ -1,5 +1,5 @@
 """
-주민등록초본 PDF에서 주민등록번호·최근 주소·등록일(신고일)·비고(세대주및관계)·발급일 추출 (Windows OCR)
+주민등록초본 PDF에서 주민등록번호·최근 주소·등록일(신고일)·비고(세대주및관계)·발급일 추출 (PaddleOCR)
 사용법: python ocr_resident.py <pdf_path>
 출력: JSON {
   "ok": true, "number": "930624-1241111",
@@ -7,18 +7,18 @@
   "issuedDate": "2025-01-03"
 } 또는 {"ok": false, "error": "..."}
 
-주소이력표는 여러 줄이 쌓이는 구조인데, 실 서버 테스트로 확인한 바에 따르면
-Windows OCR이 표를 "세로 컬럼" 단위로 통째로 먼저 읽는다 (주소 컬럼 전체를
-위→아래로 다 읽은 뒤에야 날짜 컬럼을 읽는 식) — 그래서 순서가 아니라 각 단어의
-x/y 좌표(bounding_rect)만으로 같은 행을 판정한다 (find_last_history_row 참고).
+Windows OCR(winrt) 대신 PaddleOCR을 쓴다 — 실 서버 비교 테스트에서 한글 인식 정확도가
+눈에 띄게 높았다(문장이 토막나지 않고 온전하게 인식됨). PaddleOCR은 텍스트를 줄/구 단위
+박스로 인식해서(자세한 설명은 paddle_ocr_engine.py 참고) Windows OCR처럼 값이 여러
+단어로 쪼개지는 경우가 windows OCR 대비 훨씬 적지만, 표 안에서 "주소 다음에 날짜가
+나온다"는 순서 가정은 여전히 성립하지 않을 수 있어(칸 단위로 인식되므로) 아래
+find_last_history_row는 기존과 동일하게 각 텍스트 박스의 x/y 좌표만으로 같은 행을 판정한다.
 """
-import asyncio
 import sys
 import os
 import re
 import json
-import fitz  # PyMuPDF
-import tempfile
+from paddle_ocr_engine import ocr_pdf_pages
 
 MAX_PAGES = 6
 ADDR_HINT = r'(?:특별시|광역시|자치시|자치도|[가-힣]{1,2}도)'
@@ -54,16 +54,6 @@ def find_resident_number(text):
     if m:
         return f"{m.group(1)}-{m.group(2)}"
     return None
-
-
-def _rect_xy(rect):
-    x = getattr(rect, "x", None)
-    if x is None:
-        x = getattr(rect, "X", 0)
-    y = getattr(rect, "y", None)
-    if y is None:
-        y = getattr(rect, "Y", 0)
-    return x, y
 
 
 def _is_noise_word(t):
@@ -201,87 +191,40 @@ def find_last_history_row(pages_words):
     return {"address": address[:80] if address else None, "date": last_date, "note": note}
 
 
-async def ocr_pdf(pdf_path):
-    import winrt.windows.media.ocr as winrt_ocr
-    import winrt.windows.storage as winrt_storage
-    import winrt.windows.graphics.imaging as winrt_imaging
-    import winrt.windows.globalization as winrt_glob
-
-    lang = winrt_glob.Language("ko-KR")
-    engine = winrt_ocr.OcrEngine.try_create_from_language(lang)
-    if engine is None:
-        return {"ok": False, "error": "한국어 OCR 엔진 없음"}
-
-    doc = fitz.open(pdf_path)
-    tmp_files = []
-    number = None
-    all_page_words = []
-    first_page_text = ""
-
+def ocr_pdf(pdf_path):
     try:
-        n_pages = min(MAX_PAGES, doc.page_count)
-        for page_num in range(n_pages):
-            page = doc[page_num]
-            mat = fitz.Matrix(3, 3)  # 3x 해상도
-            pix = page.get_pixmap(matrix=mat)
-
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                tmp_path = f.name
-            tmp_files.append(tmp_path)
-            pix.save(tmp_path)
-
-            abs_path = os.path.abspath(tmp_path)
-            file = await winrt_storage.StorageFile.get_file_from_path_async(abs_path)
-            stream = await file.open_async(winrt_storage.FileAccessMode.READ)
-            decoder = await winrt_imaging.BitmapDecoder.create_async(stream)
-            bitmap = await decoder.get_software_bitmap_async()
-            result = await engine.recognize_async(bitmap)
-            text = result.text
-
-            if page_num == 0:
-                first_page_text = text
-            if number is None:
-                number = find_resident_number(text)
-
-            page_words = []
-            try:
-                for line in result.lines:
-                    for w in line.words:
-                        wx, wy = _rect_xy(w.bounding_rect)
-                        page_words.append((w.text, wx, wy))
-            except Exception:
-                page_words = []
-            all_page_words.append(page_words)
-
-        issued_date = None
-        kor_dates = DATE_KOR_RE.findall(first_page_text)
-        if len(kor_dates) == 1:
-            y, mo, d = kor_dates[0]
-            issued_date = f"{y}-{int(mo):02d}-{int(d):02d}"
-
-        try:
-            last_row = find_last_history_row(all_page_words)
-        except Exception:
-            last_row = None
-
-        return {
-            "ok": bool(number),
-            "number": number,
-            "address": last_row["address"] if last_row else None,
-            "registeredDate": last_row["date"] if last_row else None,
-            "note": (last_row["note"] if last_row and last_row["note"] else None),
-            "issuedDate": issued_date,
-        }
-
+        all_page_words, first_page_text = ocr_pdf_pages(pdf_path, MAX_PAGES)
     except Exception as e:
         return {"ok": False, "error": str(e)}
-    finally:
-        doc.close()
-        for f in tmp_files:
-            try:
-                os.unlink(f)
-            except Exception:
-                pass
+
+    # 페이지 전체 텍스트를 이어붙여서 찾는다 — 주민등록번호가 1페이지가 아니라
+    # 다른 페이지에 있는 문서도 있을 수 있어 모든 페이지를 훑는다.
+    number = None
+    for page_words in all_page_words:
+        flat = " ".join(t for t, _, _ in page_words)
+        number = find_resident_number(flat)
+        if number:
+            break
+
+    issued_date = None
+    kor_dates = DATE_KOR_RE.findall(first_page_text)
+    if len(kor_dates) == 1:
+        y, mo, d = kor_dates[0]
+        issued_date = f"{y}-{int(mo):02d}-{int(d):02d}"
+
+    try:
+        last_row = find_last_history_row(all_page_words)
+    except Exception:
+        last_row = None
+
+    return {
+        "ok": bool(number),
+        "number": number,
+        "address": last_row["address"] if last_row else None,
+        "registeredDate": last_row["date"] if last_row else None,
+        "note": (last_row["note"] if last_row and last_row["note"] else None),
+        "issuedDate": issued_date,
+    }
 
 
 def main():
@@ -294,7 +237,7 @@ def main():
         print(json.dumps({"ok": False, "error": "파일 없음"}))
         sys.exit(1)
 
-    result = asyncio.run(ocr_pdf(pdf_path))
+    result = ocr_pdf(pdf_path)
     sys.stdout.buffer.write(json.dumps(result, ensure_ascii=True).encode("ascii"))
     sys.stdout.buffer.write(b"\n")
 

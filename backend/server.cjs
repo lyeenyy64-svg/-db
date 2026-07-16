@@ -2624,8 +2624,9 @@ const PYTHON_BIN = process.env.PYTHON_BIN || "pythonw.exe";
 
 function ocrPdfForResident(pdfPath) {
   return new Promise((resolve) => {
-    // 주소이력표 파싱 때문에 최대 6페이지까지 OCR — 기존 90초보다 여유를 둔다
-    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
+    // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
+    // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
+    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 240000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2661,8 +2662,8 @@ function ocrPdfForCreditScore(pdfPath) {
 
 function ocrPdfForCreditAddress(pdfPath) {
   return new Promise((resolve) => {
-    // 자택정보이력표(보통 3페이지)까지 스캔하므로 기존 90초보다 여유를 둔다
-    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
+    // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
+    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 240000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {

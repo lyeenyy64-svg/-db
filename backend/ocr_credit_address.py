@@ -1,5 +1,5 @@
 """
-CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자 추출 (Windows OCR)
+CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자 추출 (PaddleOCR)
 사용법: python ocr_credit_address.py <pdf_path>
 출력: JSON {
   "ok": true, "address": "서울특별시 ...", "phone": "010-0000-0000",
@@ -11,21 +11,18 @@ CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자
 채택한다. 이 표를 못 찾으면 기존 방식대로 "주소" 라벨 뒤 텍스트를 정규식으로
 찾는 것으로 폴백한다.
 
-실 서버 원본 데이터로 확인한 두 가지 특징 때문에 단순 정규식 매칭이 아니라
-행(y)·페이지 단위로 묶은 뒤 여러 단어를 이어붙여 패턴을 찾는 방식을 쓴다
-(find_last_home_row 참고):
-1) Windows OCR이 "2023. 11. 16"이나 "010-7455-9195" 같은 값을 여러 단어로
-   쪼개서 인식하는 경우가 있어, 인접 단어를 이어붙여야 날짜/전화번호 패턴이 보인다.
-2) 서로 다른 페이지의 내용이 우연히 비슷한 y좌표를 가지면 안 되므로, 행은
-   반드시 같은 페이지 안에서만 묶는다.
+Windows OCR(winrt) 대신 PaddleOCR을 쓴다(자세한 설명은 paddle_ocr_engine.py 참고) —
+실 서버 비교 테스트에서 한글 인식 정확도가 훨씬 높았다. PaddleOCR은 값이 여러 박스로
+쪼개지는 경우가 Windows OCR보다 훨씬 적지만, 완전히 없어졌다고 보장할 수는 없어서
+아래 로직(행/페이지 단위로 묶은 뒤 여러 박스를 이어붙여 패턴을 찾는 방식,
+find_last_home_row 참고)은 그대로 유지한다. 한 박스에 값이 통째로 들어있어도
+_find_pattern_span이 첫 박스에서 바로 매칭되므로 동작에는 차이가 없다.
 """
-import asyncio
 import sys
 import os
 import re
 import json
-import fitz  # PyMuPDF
-import tempfile
+from paddle_ocr_engine import ocr_pdf_pages
 
 
 MAX_PAGES = 5
@@ -77,16 +74,6 @@ def find_queried_date(text):
         y, mo, d = m.groups()
         return f"{y}-{int(mo):02d}-{int(d):02d}"
     return None
-
-
-def _rect_xy(rect):
-    x = getattr(rect, "x", None)
-    if x is None:
-        x = getattr(rect, "X", 0)
-    y = getattr(rect, "y", None)
-    if y is None:
-        y = getattr(rect, "Y", 0)
-    return x, y
 
 
 def _looks_like_address(s):
@@ -250,87 +237,32 @@ def find_last_home_row(pages_words):
     return {"address": best["address"], "date": best["date"], "phone": best["phone"]}
 
 
-async def ocr_pdf(pdf_path):
-    import winrt.windows.media.ocr as winrt_ocr
-    import winrt.windows.storage as winrt_storage
-    import winrt.windows.graphics.imaging as winrt_imaging
-    import winrt.windows.globalization as winrt_glob
-
-    lang = winrt_glob.Language("ko-KR")
-    engine = winrt_ocr.OcrEngine.try_create_from_language(lang)
-    if engine is None:
-        return {"ok": False, "error": "한국어 OCR 엔진 없음"}
-
-    doc = fitz.open(pdf_path)
-    tmp_files = []
-    all_page_words = []
-    first_page_text = ""
-    fallback_address = None
-
+def ocr_pdf(pdf_path):
     try:
-        n_pages = min(MAX_PAGES, doc.page_count)
-        for page_num in range(n_pages):
-            page = doc[page_num]
-            mat = fitz.Matrix(3, 3)
-            pix = page.get_pixmap(matrix=mat)
-
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
-                tmp_path = f.name
-            tmp_files.append(tmp_path)
-            pix.save(tmp_path)
-
-            abs_path = os.path.abspath(tmp_path)
-            file = await winrt_storage.StorageFile.get_file_from_path_async(abs_path)
-            stream = await file.open_async(winrt_storage.FileAccessMode.READ)
-            decoder = await winrt_imaging.BitmapDecoder.create_async(stream)
-            bitmap = await decoder.get_software_bitmap_async()
-            result = await engine.recognize_async(bitmap)
-            text = result.text
-
-            if page_num == 0:
-                first_page_text = text
-            if fallback_address is None:
-                fallback_address = find_address(text)
-
-            page_words = []
-            try:
-                for line in result.lines:
-                    for w in line.words:
-                        wx, wy = _rect_xy(w.bounding_rect)
-                        page_words.append((w.text, wx, wy))
-            except Exception:
-                page_words = []
-            all_page_words.append(page_words)
-
-        queried_date = find_queried_date(first_page_text)
-
-        try:
-            last_row = find_last_home_row(all_page_words)
-        except Exception:
-            last_row = None
-
-        address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
-        phone = last_row["phone"] if last_row else None
-
-        if not address:
-            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
-
-        return {
-            "ok": True,
-            "address": address,
-            "phone": phone,
-            "queriedDate": queried_date,
-        }
-
+        all_page_words, first_page_text = ocr_pdf_pages(pdf_path, MAX_PAGES)
     except Exception as e:
         return {"ok": False, "error": str(e)}
-    finally:
-        doc.close()
-        for f in tmp_files:
-            try:
-                os.unlink(f)
-            except Exception:
-                pass
+
+    fallback_address = find_address(first_page_text)
+    queried_date = find_queried_date(first_page_text)
+
+    try:
+        last_row = find_last_home_row(all_page_words)
+    except Exception:
+        last_row = None
+
+    address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
+    phone = last_row["phone"] if last_row else None
+
+    if not address:
+        return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
+
+    return {
+        "ok": True,
+        "address": address,
+        "phone": phone,
+        "queriedDate": queried_date,
+    }
 
 
 def main():
@@ -343,7 +275,7 @@ def main():
         sys.stdout.buffer.write(json.dumps({"ok": False, "error": "파일 없음"}, ensure_ascii=True).encode("ascii"))
         sys.exit(1)
 
-    result = asyncio.run(ocr_pdf(pdf_path))
+    result = ocr_pdf(pdf_path)
     sys.stdout.buffer.write(json.dumps(result, ensure_ascii=True).encode("ascii"))
     sys.stdout.buffer.write(b"\n")
 
