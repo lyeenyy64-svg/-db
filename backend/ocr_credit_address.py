@@ -6,13 +6,18 @@ CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자
   "queriedDate": "2026-07-10"
 } 또는 {"ok": false, "error": "..."}
 
-보통 3페이지 근처에 있는 "자택정보이력정보" 표(정보갱신일 | 주소 | 휴대폰번호)에서
-가장 마지막(최신) 행의 주소·휴대폰번호를 채택한다. 이 표를 못 찾으면 기존 방식대로
-"주소" 라벨 뒤 텍스트를 정규식으로 찾는 것으로 폴백한다.
+보통 3페이지 근처에 있는 "자택정보이력정보" 표(정보갱신일 | 우편번호 | 자택주소 |
+자택전화번호 | 휴대폰번호 5컬럼)에서 가장 마지막(최신) 행의 주소·휴대폰번호를
+채택한다. 이 표를 못 찾으면 기존 방식대로 "주소" 라벨 뒤 텍스트를 정규식으로
+찾는 것으로 폴백한다.
 
-주민등록초본(ocr_resident.py)에서 실 서버 테스트로 확인한 것처럼, Windows OCR은
-표를 "세로 컬럼" 단위로 통째로 먼저 읽기 때문에 순서(주소 다음에 날짜)에 의존하지
-않고 좌표(x, y)만으로 같은 행을 판정한다 (find_last_home_row 참고).
+실 서버 원본 데이터로 확인한 두 가지 특징 때문에 단순 정규식 매칭이 아니라
+행(y)·페이지 단위로 묶은 뒤 여러 단어를 이어붙여 패턴을 찾는 방식을 쓴다
+(find_last_home_row 참고):
+1) Windows OCR이 "2023. 11. 16"이나 "010-7455-9195" 같은 값을 여러 단어로
+   쪼개서 인식하는 경우가 있어, 인접 단어를 이어붙여야 날짜/전화번호 패턴이 보인다.
+2) 서로 다른 페이지의 내용이 우연히 비슷한 y좌표를 가지면 안 되므로, 행은
+   반드시 같은 페이지 안에서만 묶는다.
 """
 import asyncio
 import sys
@@ -277,24 +282,14 @@ async def ocr_pdf(pdf_path):
         address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
         phone = last_row["phone"] if last_row else None
 
-        # 진단용: 자택정보이력정보 표가 있을 만한 페이지(1~3)의 단어를 좌표와 함께
-        # 그대로 내려준다. 실제 문서로 로컬 테스트를 할 수 없는 환경이라 이 원본
-        # 데이터를 보고 컬럼 판정 로직을 튜닝한다 — 문제 해결 후 제거할 임시 필드.
-        debug_words = []
-        for p_idx in (1, 2, 3):
-            if p_idx < len(all_page_words):
-                for text, x, y in all_page_words[p_idx]:
-                    debug_words.append([p_idx, round(x), round(y), text])
-
         if not address:
-            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date, "debugWords": debug_words}
+            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
 
         return {
             "ok": True,
             "address": address,
             "phone": phone,
             "queriedDate": queried_date,
-            "debugWords": debug_words,
         }
 
     except Exception as e:
