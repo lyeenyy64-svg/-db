@@ -90,29 +90,57 @@ def _looks_like_address(s):
     return False
 
 
-def _cluster_x(xs, gap=60):
-    """정렬된 x값들을 gap 이내로 묶어서 [[x, x, ...], ...] 클러스터 목록으로 반환."""
-    if not xs:
+POSTAL_RE = re.compile(r'^\d{5}$')
+
+
+def _y_bands(entries, tol=20):
+    """entries: [(y, x, text), ...] (순서 무관). y값 기준 tol 이내로 묶어서
+    [(band_y, [(x, text), ...]), ...] — 각 band 내부는 x 오름차순으로 반환."""
+    if not entries:
         return []
-    xs = sorted(xs)
-    clusters = [[xs[0]]]
-    for x in xs[1:]:
-        if x - clusters[-1][-1] <= gap:
-            clusters[-1].append(x)
+    s = sorted(entries, key=lambda e: e[0])
+    bands = [[s[0]]]
+    for e in s[1:]:
+        if e[0] - bands[-1][-1][0] <= tol:
+            bands[-1].append(e)
         else:
-            clusters.append([x])
-    return clusters
+            bands.append([e])
+    out = []
+    for b in bands:
+        avg_y = sum(e[0] for e in b) / len(b)
+        items = sorted([(e[1], e[2]) for e in b], key=lambda t: t[0])
+        out.append((avg_y, items))
+    return out
+
+
+def _find_pattern_span(items, pattern, max_words=6):
+    """
+    items: [(x, text), ...] (x 오름차순). 실 서버 테스트로 확인한 바, Windows OCR이
+    "2023. 11. 16"이나 "010-7455-9195" 같은 값을 "2023." "11." "16" / "01"
+    "0-7455-91" "95"처럼 여러 단어로 쪼개서 인식하는 경우가 있어, 단어 하나만 보고는
+    정규식이 못 잡는다 — 그래서 연속된 단어를 공백 없이 이어붙여가며(최대 max_words개)
+    패턴이 매칭되는 가장 앞쪽/가장 짧은 구간을 찾는다.
+    반환: (matched_text, start_idx, end_idx) 또는 None.
+    """
+    n = len(items)
+    for i in range(n):
+        buf = ""
+        for j in range(i, min(i + max_words, n)):
+            buf += items[j][1]
+            m = pattern.search(buf)
+            if m:
+                return (m.group(), i, j)
+    return None
 
 
 def find_last_home_row(pages_words):
     """
     pages_words: [[(word_text, left_x, top_y), ...], ...] (단어 단위, 인식 순서 그대로)
-    "자택정보이력정보" 표: 정보갱신일 | 주소 | 휴대폰번호 3컬럼.
+    "자택정보이력정보" 표: 정보갱신일 | 우편번호 | 자택주소 | 자택전화번호 | 휴대폰번호.
 
-    주민등록초본 표에서 실 서버 테스트로 확인한 것과 동일한 문제 — Windows OCR이
-    표를 "세로 컬럼" 단위로 통째로 먼저 읽어서 순서(주소 다음에 날짜)에 의존할 수
-    없다 — 이 여기도 똑같이 적용된다고 보고, 순서 대신 좌표(x, y)로만 같은 행을
-    판정한다. 표 제목("정보갱신일"/"주소"/"휴대폰번호") 글자에는 의존하지 않는다.
+    행(y)별로 묶은 뒤, 그 행 안에서 날짜·전화번호 패턴을 찾아 그 단어들을 빼고
+    남은 것(우편번호·표 제목 제외)을 주소로 채택한다. 날짜가 있는 행 중 가장
+    아래(y가 가장 큰) 행을 "최근" 행으로 삼는다.
     반환: {"address", "date", "phone"} 또는 표를 못 찾으면 None.
     """
     raw_entries = []  # (y, x, text) — 원래 인식 순서 그대로
@@ -136,60 +164,41 @@ def find_last_home_row(pages_words):
             continue
         all_entries.append(e)
 
-    date_matches = [(y, x, DATE_ISO_RE.search(text).group().replace(".", "-"))
-                    for y, x, text in all_entries if DATE_ISO_RE.search(text)]
-    if not date_matches:
+    bands = _y_bands(all_entries)
+
+    best = None  # {"y", "date", "address", "phone"}
+    for avg_y, items in bands:
+        date_span = _find_pattern_span(items, DATE_ISO_RE)
+        if not date_span:
+            continue
+        date_str, d_i, d_j = date_span
+
+        phone_span = _find_pattern_span(items, PHONE_RE)
+        used = set(range(d_i, d_j + 1))
+        phone_val = None
+        if phone_span:
+            phone_str, p_i, p_j = phone_span
+            phone_val = phone_str.replace(" ", "")
+            used |= set(range(p_i, p_j + 1))
+
+        addr_words = [
+            text for idx, (x, text) in enumerate(items)
+            if idx not in used and text not in HEADER_LABELS and not POSTAL_RE.fullmatch(text)
+        ]
+        address_text = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
+
+        row = {
+            "y": avg_y,
+            "date": date_str.replace(".", "-"),
+            "address": address_text[:80] if _looks_like_address(address_text) else None,
+            "phone": phone_val,
+        }
+        if best is None or avg_y > best["y"]:
+            best = row
+
+    if best is None:
         return None
-    date_clusters = _cluster_x([x for _, x, _ in date_matches])
-    date_best = max(date_clusters, key=lambda c: sum(1 for _, x, _ in date_matches if c[0] - 5 <= x <= c[-1] + 5))
-    date_lo, date_hi = date_best[0] - 15, date_best[-1] + 15
-
-    date_col = [(y, v) for y, x, v in date_matches if date_lo <= x <= date_hi]
-    if not date_col:
-        return None
-    date_col.sort(key=lambda e: e[0])
-    last_y, last_date = date_col[-1]
-
-    # 위쪽 경계: 바로 이전 행의 날짜 y와 이번 행의 날짜 y 중간점까지만 — 고정폭을 쓰면
-    # 행 간격보다 넓어서 이전 행 주소가 섞여 들어올 수 있다.
-    TOL = 70
-    if len(date_col) >= 2:
-        prev_y = date_col[-2][0]
-        y_min = prev_y + (last_y - prev_y) / 2
-    else:
-        y_min = last_y - TOL
-    y_max = last_y + TOL
-
-    phone_matches = [(y, x, PHONE_RE.search(text).group().replace(" ", ""))
-                     for y, x, text in all_entries if PHONE_RE.search(text) and x > date_hi]
-    phone_lo = None
-    if phone_matches:
-        phone_clusters = _cluster_x([x for _, x, _ in phone_matches])
-        phone_best = max(phone_clusters, key=lambda c: sum(1 for _, x, _ in phone_matches if c[0] - 5 <= x <= c[-1] + 5))
-        phone_lo = phone_best[0] - 15
-
-    def _collect(min_x=None, max_x=None):
-        # 같은 시각적 줄(±20px 이내)끼리 묶은 뒤, 그 안에서는 x(좌→우) 순서로 정렬
-        words = [(round(y / 20) * 20, x, text) for y, x, text in all_entries
-                 if y_min <= y <= y_max
-                 and (min_x is None or x >= min_x) and (max_x is None or x < max_x)
-                 and text not in HEADER_LABELS]
-        words.sort(key=lambda e: (e[0], e[1]))
-        return " ".join(t for _, _, t in words)
-
-    addr_raw = _collect(min_x=date_hi + 10, max_x=phone_lo)
-    address = re.sub(r'\s+', ' ', addr_raw).strip()
-    if not _looks_like_address(address):
-        address = None
-
-    phone = None
-    if phone_lo is not None:
-        candidates = [(y, v) for y, x, v in phone_matches if y_min <= y <= y_max]
-        if candidates:
-            candidates.sort(key=lambda e: abs(e[0] - last_y))
-            phone = candidates[0][1]
-
-    return {"address": address[:80] if address else None, "date": last_date, "phone": phone}
+    return {"address": best["address"], "date": best["date"], "phone": best["phone"]}
 
 
 async def ocr_pdf(pdf_path):
