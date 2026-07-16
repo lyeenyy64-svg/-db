@@ -4091,23 +4091,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const issuedDate = d.residentIssuedDate || (details && details.issuedDate) || null;
                 if (!registeredDate && !note && !issuedDate) {
                   return <>
-                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본 발급일 / 초본상 등록일 / 비고</div>
+                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본 발급일 / 초본 등록일 / 비고</div>
                     <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>
                   </>;
                 }
-                const row = (label, value) => (
-                  <div style={{ marginBottom: 6 }}>
-                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>{label}</div>
-                    <div style={{ fontSize: 12, fontWeight: 500 }}>{value || "-"}</div>
-                  </div>
-                );
                 return <div>
-                  {row("초본 발급일", issuedDate)}
-                  {row("초본상 등록일", registeredDate)}
-                  <div>
-                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>비고</div>
-                    <div style={{ fontSize: 12, fontWeight: 500 }}>{note || "-"}</div>
-                  </div>
+                  <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>초본 발급일 / 초본 등록일 / 비고</div>
+                  <div style={{ fontSize: 12, fontWeight: 500 }}>{[issuedDate || "-", registeredDate || "-", note || "-"].join(" / ")}</div>
                 </div>;
               })()}
             </div>
