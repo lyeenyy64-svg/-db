@@ -28,6 +28,11 @@ DATE_KOR_RE = re.compile(r'(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일')
 NOISE_KEYWORDS = ("이전내용", "생략", "위 용지는", "이 용지는")
 HEADER_LABELS = {"번호", "주소", "성명", "생년월일", "발생일", "신고일", "세대주및관계", "등록상태", "세대주및 관계"}
 STATUS_WORDS = ("거주자", "전입", "말소", "세대주변경", "행정구역변경", "도로명주소", "재등록", "직권")
+# 주소이력 표의 마지막 행이 페이지 하단과 가까우면, 그 아래 "발급 신청 정보"
+# 영역(담당자/신청인/용도 및 목적 등)까지 y범위에 걸려서 주소·비고에 그대로
+# 섞여 들어오는 경우가 실 서버 데이터에서 확인됨 — 이 라벨이 섞여 있으면
+# 표 데이터가 아니라 신청 정보이므로 통째로 버린다.
+FOOTER_NOISE_RE = re.compile(r'담당자|신청인|용도\s*및\s*목적|접수자|발급자')
 
 
 def find_resident_number(text):
@@ -183,13 +188,15 @@ def find_last_history_row(pages_words):
     addr_raw = _collect(max_x=date_lo - 10)
     addr_words = [w for w in addr_raw.split() if not _is_noise_word(w)]
     address = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
-    if not _looks_like_address(address):
+    if not _looks_like_address(address) or FOOTER_NOISE_RE.search(address):
         address = None
 
     note_raw = _collect(min_x=date_hi + 10)
     note_words = [w for w in note_raw.split()
                   if w not in HEADER_LABELS and not any(s in w for s in STATUS_WORDS)]
     note = re.sub(r'\s+', ' ', " ".join(note_words)).strip() or None
+    if note and FOOTER_NOISE_RE.search(note):
+        note = None
 
     return {"address": address[:80] if address else None, "date": last_date, "note": note}
 

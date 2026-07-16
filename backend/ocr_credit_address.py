@@ -32,6 +32,11 @@ MAX_PAGES = 5
 ADDR_HINT = r'(?:특별시|광역시|자치시|자치도|[가-힣]{1,2}도)'
 DATE_ISO_RE = re.compile(r'\d{4}[.\-]\d{1,2}[.\-]\d{1,2}')
 PHONE_RE = re.compile(r'01[016789][-\s]?\d{3,4}[-\s]?\d{4}')
+# 자택전화번호(지역번호 유선전화, 예: 02-2685-8025)까지 포함하는 넓은 전화번호 패턴.
+# 우리가 CB에서 원하는 "연락처"는 휴대폰번호(PHONE_RE)뿐이지만, 유선전화도 주소
+# 텍스트에서는 반드시 제외해야 한다 — 실 서버 데이터에서 유선전화가 PHONE_RE에는
+# 안 걸려서 주소 뒤에 그대로 남아붙는 문제가 확인됨.
+GENERAL_PHONE_RE = re.compile(r'0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}')
 QUERY_LABELS = ("조회일자", "조회일", "발급일자", "발급일", "출력일자", "출력일")
 
 HEADER_LABELS = {"정보갱신일", "주소", "휴대폰번호", "휴대폰"}
@@ -151,6 +156,28 @@ def _find_pattern_span(items, pattern, max_words=6):
     return None
 
 
+def _find_all_pattern_spans(items, pattern, skip=frozenset(), max_words=6):
+    """_find_pattern_span과 같은 방식으로, 겹치지 않는 매칭을 모두 찾아 리스트로 반환한다.
+    (한 행에 자택전화번호·휴대폰번호처럼 같은 패턴류가 두 개 이상 나올 수 있어서 필요)"""
+    spans = []
+    used = set(skip)
+    n = len(items)
+    for i in range(n):
+        if i in used:
+            continue
+        buf = ""
+        for j in range(i, min(i + max_words, n)):
+            if j in used:
+                break
+            buf += items[j][1]
+            m = pattern.match(buf)
+            if m:
+                spans.append((m.group(), i, j))
+                used.update(range(i, j + 1))
+                break
+    return spans
+
+
 def find_last_home_row(pages_words):
     """
     pages_words: [[(word_text, left_x, top_y), ...], ...] (단어 단위, 인식 순서 그대로)
@@ -191,13 +218,16 @@ def find_last_home_row(pages_words):
             continue
         date_str, d_i, d_j = date_span
 
-        phone_span = _find_pattern_span(items, PHONE_RE)
         used = set(range(d_i, d_j + 1))
+        # 휴대폰번호(PHONE_RE)뿐 아니라 자택전화번호 같은 유선전화도 GENERAL_PHONE_RE로
+        # 전부 찾아서 주소 후보에서 제외한다. 그중 휴대폰번호 형식과 일치하는 것만
+        # "연락처"로 채택한다 — 유선전화가 주소 뒤에 그대로 남아붙는 문제 방지.
         phone_val = None
-        if phone_span:
-            phone_str, p_i, p_j = phone_span
-            phone_val = phone_str.replace(" ", "")
+        for phone_str, p_i, p_j in _find_all_pattern_spans(items, GENERAL_PHONE_RE, skip=used):
             used |= set(range(p_i, p_j + 1))
+            cleaned = phone_str.replace(" ", "")
+            if phone_val is None and PHONE_RE.match(cleaned):
+                phone_val = cleaned
 
         addr_words = [
             text for idx, (x, text) in enumerate(items)
