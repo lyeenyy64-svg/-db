@@ -94,22 +94,30 @@ POSTAL_RE = re.compile(r'^\d{5}$')
 
 
 def _y_bands(entries, tol=20):
-    """entries: [(y, x, text), ...] (순서 무관). y값 기준 tol 이내로 묶어서
-    [(band_y, [(x, text), ...]), ...] — 각 band 내부는 x 오름차순으로 반환."""
+    """entries: [(page_idx, y, x, text), ...] (순서 무관). **같은 페이지 안에서만**
+    y값 기준 tol 이내로 묶어서 [(page_idx, band_y, [(x, text), ...]), ...] 반환
+    (각 band 내부는 x 오름차순). 페이지를 넘어 묶으면(예: 1페이지 하단 글자와
+    3페이지 표 제목 글자가 우연히 비슷한 높이라 하나로 묶이는 경우) 전혀 관련
+    없는 글자가 표 데이터에 섞여 들어가는 문제가 실 서버 테스트에서 확인됨 —
+    반드시 페이지별로 나눠서 묶어야 한다."""
     if not entries:
         return []
-    s = sorted(entries, key=lambda e: e[0])
-    bands = [[s[0]]]
-    for e in s[1:]:
-        if e[0] - bands[-1][-1][0] <= tol:
-            bands[-1].append(e)
-        else:
-            bands.append([e])
     out = []
-    for b in bands:
-        avg_y = sum(e[0] for e in b) / len(b)
-        items = sorted([(e[1], e[2]) for e in b], key=lambda t: t[0])
-        out.append((avg_y, items))
+    by_page = {}
+    for p, y, x, text in entries:
+        by_page.setdefault(p, []).append((y, x, text))
+    for p, page_entries in by_page.items():
+        s = sorted(page_entries, key=lambda e: e[0])
+        bands = [[s[0]]]
+        for e in s[1:]:
+            if e[0] - bands[-1][-1][0] <= tol:
+                bands[-1].append(e)
+            else:
+                bands.append([e])
+        for b in bands:
+            avg_y = sum(e[0] for e in b) / len(b)
+            items = sorted([(e[1], e[2]) for e in b], key=lambda t: t[0])
+            out.append((p, avg_y, items))
     return out
 
 
@@ -143,19 +151,19 @@ def find_last_home_row(pages_words):
     아래(y가 가장 큰) 행을 "최근" 행으로 삼는다.
     반환: {"address", "date", "phone"} 또는 표를 못 찾으면 None.
     """
-    raw_entries = []  # (y, x, text) — 원래 인식 순서 그대로
-    for words in pages_words:
+    raw_entries = []  # (page_idx, y, x, text) — 원래 인식 순서 그대로
+    for p_idx, words in enumerate(pages_words):
         for text, x, y in words:
             raw = text.strip()
             if raw:
-                raw_entries.append((y, x, raw))
+                raw_entries.append((p_idx, y, x, raw))
 
     # 여러 단어에 걸친 "[...]" 안내문구는 중간 단어만 보면 걸러낼 수 없어서, 원래
     # 순서대로 훑어 여는/닫는 괄호 구간 전체를 통째로 제거한다 (ocr_resident.py와 동일).
     all_entries = []
     in_bracket = False
     for e in raw_entries:
-        text = e[2]
+        text = e[3]
         if not in_bracket and text.startswith("["):
             in_bracket = True
         if in_bracket:
@@ -166,8 +174,8 @@ def find_last_home_row(pages_words):
 
     bands = _y_bands(all_entries)
 
-    best = None  # {"y", "date", "address", "phone"}
-    for avg_y, items in bands:
+    best = None  # {"page", "y", "date", "address", "phone"}
+    for page_idx, avg_y, items in bands:
         date_span = _find_pattern_span(items, DATE_ISO_RE)
         if not date_span:
             continue
@@ -188,12 +196,13 @@ def find_last_home_row(pages_words):
         address_text = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
 
         row = {
+            "page": page_idx,
             "y": avg_y,
             "date": date_str.replace(".", "-"),
             "address": address_text[:80] if _looks_like_address(address_text) else None,
             "phone": phone_val,
         }
-        if best is None or avg_y > best["y"]:
+        if best is None or (row["page"], row["y"]) > (best["page"], best["y"]):
             best = row
 
     if best is None:
