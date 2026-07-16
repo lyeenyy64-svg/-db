@@ -2803,6 +2803,49 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 // ─── 최신 주소지 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
 // 채무자 위치 지도에 쓸 주소라서 연대보증인은 대상에서 제외하고 주채무자만 추출한다.
 // 추출에 성공하면 DB에 저장해서(latest_address) 다음부터는 OCR을 다시 돌리지 않고 캐시를 쓴다.
+// debtor 행에 이미 값이 있는 컬럼은 절대 덮어쓰지 않고, 비어있는 컬럼만 골라서 채운다 —
+// 그래서 예전(수정 전) OCR 로직이 잘못 저장해둔 값은 이 함수만으로는 고쳐지지 않는다.
+// 잘못된 캐시를 다시 뽑으려면 먼저 해당 컬럼을 비워야 하고, 그건 /credit-address/refresh가 한다.
+async function lookupCreditAddress(debtor) {
+  const kor = korName3(debtor.name);
+  if (!kor) return { ok: false, error: "이름 인식 불가" };
+
+  const rows = db.prepare(
+    `SELECT file_path, filename FROM file_index
+     WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+     AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
+     AND ext = 'pdf'
+     ORDER BY parsed_date DESC LIMIT 5`
+  ).all(`%${kor}%`, `%${kor}%`);
+
+  for (const c of rows) {
+    const r = await ocrPdfForCreditAddress(c.file_path);
+    if (!r.address && !r.phone) continue;
+
+    const updates = [], vals = [];
+    if (!debtor.latest_address && r.address) {
+      updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
+      vals.push(r.address);
+    }
+    if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
+    if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
+    if (updates.length) {
+      db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtor.id);
+    }
+
+    return {
+      ok: true,
+      address: debtor.latest_address || r.address || null,
+      phone: debtor.credit_phone || r.phone || null,
+      queriedDate: debtor.credit_queried_date || r.queriedDate || null,
+      source: "ocr",
+      filename: c.filename,
+    };
+  }
+
+  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" };
+}
+
 app.get("/api/debtor/:id/credit-address", async (req, res) => {
   try {
     const debtor = db.prepare("SELECT id, name, latest_address, credit_phone, credit_queried_date FROM debtors WHERE id = ?").get(req.params.id);
@@ -2812,44 +2855,25 @@ app.get("/api/debtor/:id/credit-address", async (req, res) => {
       return res.json({ ok: true, address: debtor.latest_address, phone: debtor.credit_phone, queriedDate: debtor.credit_queried_date, source: "cache" });
     }
 
-    const kor = korName3(debtor.name);
-    if (!kor) return res.json({ ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "이름 인식 불가" });
+    const result = await lookupCreditAddress(debtor);
+    res.json(result);
+  } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
+});
 
-    const rows = db.prepare(
-      `SELECT file_path, filename FROM file_index
-       WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-       AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-       AND ext = 'pdf'
-       ORDER BY parsed_date DESC LIMIT 5`
-    ).all(`%${kor}%`, `%${kor}%`);
+// 예전 OCR 로직으로 잘못 저장된 최신주소/연락처/조회일자를 지우고 최신 스크립트로 다시 추출한다.
+app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
+  try {
+    const existing = db.prepare("SELECT id, name FROM debtors WHERE id = ?").get(req.params.id);
+    if (!existing) return res.json({ ok: false, address: null, error: "채무자 없음" });
 
-    for (const c of rows) {
-      const r = await ocrPdfForCreditAddress(c.file_path);
-      if (!r.address && !r.phone) continue;
+    db.prepare(
+      `UPDATE debtors SET latest_address = NULL, latest_address_lat = NULL, latest_address_lng = NULL,
+              credit_phone = NULL, credit_queried_date = NULL WHERE id = ?`
+    ).run(existing.id);
 
-      // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다
-      const updates = [], vals = [];
-      if (!debtor.latest_address && r.address) {
-        updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
-        vals.push(r.address);
-      }
-      if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
-      if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
-      if (updates.length) {
-        db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtor.id);
-      }
-
-      return res.json({
-        ok: true,
-        address: debtor.latest_address || r.address || null,
-        phone: debtor.credit_phone || r.phone || null,
-        queriedDate: debtor.credit_queried_date || r.queriedDate || null,
-        source: "ocr",
-        filename: c.filename,
-      });
-    }
-
-    res.json({ ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" });
+    const debtor = { id: existing.id, name: existing.name, latest_address: null, credit_phone: null, credit_queried_date: null };
+    const result = await lookupCreditAddress(debtor);
+    res.json(result);
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
 

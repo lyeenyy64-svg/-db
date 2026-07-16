@@ -4153,7 +4153,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
             {/* 신용조회상 최신 주소 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>신용조회상 최신 주소</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--tm)" }}>신용조회상 최신 주소</span>
+                {canEdit && <button
+                  onClick={async () => {
+                    setAutoAddresses(prev => ({ ...prev, [d.id]: null }));
+                    try {
+                      const res = await fetch(`/api/debtor/${d.id}/credit-address/refresh`, { method: "POST" });
+                      const data = await res.json();
+                      setAutoAddresses(prev => ({ ...prev, [d.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
+                      showToast(data.ok ? "CB보고서에서 다시 추출했습니다" : "재추출 실패 — CB 보기로 직접 확인해주세요");
+                    } catch { setAutoAddresses(prev => ({ ...prev, [d.id]: false })); showToast("재추출 실패"); }
+                  }}
+                  title="예전에 잘못 저장된 값을 지우고 CB보고서에서 다시 추출합니다"
+                  style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}
+                >재조회</button>}
+              </div>
               {(() => {
                 const addrResult = autoAddresses[d.id];
                 const address = d.latestAddress || (addrResult && addrResult.address) || null;
