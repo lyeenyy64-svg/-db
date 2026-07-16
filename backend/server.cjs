@@ -2598,8 +2598,11 @@ const OCR_CREDIT_SCRIPT = path.join(__dirname, "ocr_credit_score.py");
 const OCR_SUBROGATION_SCRIPT = path.join(__dirname, "ocr_subrogation_date.py");
 const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
 
-// pythonw.exe = GUI subsystem, never opens a console window
-const PYTHON_BIN = "C:\\Users\\hjbae\\AppData\\Local\\Python\\pythoncore-3.14-64\\pythonw.exe";
+// pythonw.exe = GUI subsystem, never opens a console window.
+// 절대경로로 고정하지 않고 PATH에서 찾는다 — 서버 PC의 사용자 계정/파이썬 설치 위치가
+// 바뀌어도(예: hjbae → buser) 코드 수정 없이 동작하도록. PATH에 없으면 PYTHON_BIN
+// 환경변수(backend/.env)로 절대경로를 지정할 수 있다.
+const PYTHON_BIN = process.env.PYTHON_BIN || "pythonw.exe";
 
 function ocrPdfForResident(pdfPath) {
   return new Promise((resolve) => {
