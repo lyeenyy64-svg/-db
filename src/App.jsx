@@ -4082,19 +4082,32 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>;
               })()}
             </div>
-            {/* 등록일 / 비고 (초본) */}
+            {/* 초본 발급일 / 초본상 등록일 / 비고 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>등록일 / 비고 <span style={{ color: "var(--ts)" }}>(초본)</span></div>
               {(() => {
                 const details = autoResidentDetails[d.id];
                 const registeredDate = d.residentRegisteredDate || (details && details.registeredDate) || null;
                 const note = d.residentNote || (details && details.note) || null;
                 const issuedDate = d.residentIssuedDate || (details && details.issuedDate) || null;
-                if (!registeredDate && !note) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
+                if (!registeredDate && !note && !issuedDate) {
+                  return <>
+                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본 발급일 / 초본상 등록일 / 비고</div>
+                    <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>
+                  </>;
+                }
+                const row = (label, value) => (
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>{value || "-"}</div>
+                  </div>
+                );
                 return <div>
-                  <span style={{ fontSize: 12, fontWeight: 500 }}>{registeredDate || "-"}</span>
-                  {note && <span style={{ fontSize: 11, color: "var(--ts)", marginLeft: 8 }}>{note}</span>}
-                  {issuedDate && <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>초본 발급일 {issuedDate} 기준</div>}
+                  {row("초본 발급일", issuedDate)}
+                  {row("초본상 등록일", registeredDate)}
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>비고</div>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>{note || "-"}</div>
+                  </div>
                 </div>;
               })()}
             </div>
