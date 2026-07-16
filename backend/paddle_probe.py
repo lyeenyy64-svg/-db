@@ -78,27 +78,21 @@ def main():
 
     print("USED_METHOD:", used_method, file=sys.stderr)
 
-    out = {"ok": True, "used_method": used_method, "type": str(type(result))}
-    try:
-        out["len"] = len(result)
-    except Exception:
-        pass
+    first = result[0]
+    texts = list(first["rec_texts"])
+    scores = [round(float(s), 3) for s in first["rec_scores"]]
+    boxes = [[int(v) for v in box] for box in first["rec_boxes"]]
 
-    try:
-        first = result[0]
-        out["first_type"] = str(type(first))
-        try:
-            out["first_keys"] = list(first.keys())
-        except Exception:
-            pass
-        try:
-            out["first_repr"] = repr(first)[:4000]
-        except Exception as e:
-            out["first_repr_error"] = str(e)
-    except Exception as e:
-        out["first_error"] = str(e)
+    out = {
+        "ok": True,
+        "count": len(texts),
+        "items": [
+            {"text": t, "score": s, "box": b}
+            for t, s, b in zip(texts, scores, boxes)
+        ],
+    }
 
-    print(json.dumps(out, ensure_ascii=False, default=str)[:8000])
+    print(json.dumps(out, ensure_ascii=False, default=str))
 
 
 if __name__ == "__main__":
