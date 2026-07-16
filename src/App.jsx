@@ -1754,9 +1754,10 @@ export default function App() {
   const [expandedNav, setExpandedNav] = useState(() => new Set());
   const [autoResidentNums, setAutoResidentNums] = useState({});
   const [residentRevealed, setResidentRevealed] = useState(() => new Set());
+  const [autoResidentDetails, setAutoResidentDetails] = useState({}); // {address, registeredDate, note, issuedDate} — 초본
   const [autoCreditScores, setAutoCreditScores] = useState({});
   const [autoSubrogationDates, setAutoSubrogationDates] = useState({});
-  const [autoAddresses, setAutoAddresses] = useState({});
+  const [autoAddresses, setAutoAddresses] = useState({}); // {address, phone, queriedDate, filename} — CB보고서
   const [prevTab, setPrevTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
@@ -1880,7 +1881,8 @@ export default function App() {
   // 초기 로드
   useEffect(() => { loadData(); }, [loadData]);
 
-  // 채무자 선택 시 초본 PDF에서 주민등록번호 자동 추출 (entries: [{name, number}])
+  // 채무자 선택 시 초본 PDF에서 주민등록번호 + 최근주소/등록일/비고/발급일 자동 추출
+  // (entries: [{name, number}], residentDetails: {address, registeredDate, note, issuedDate})
   useEffect(() => {
     if (!sel || autoResidentNums[sel.id] !== undefined) return;
     setAutoResidentNums(prev => ({ ...prev, [sel.id]: null }));
@@ -1888,8 +1890,12 @@ export default function App() {
       .then(r => r.json())
       .then(data => {
         setAutoResidentNums(prev => ({ ...prev, [sel.id]: (data.ok && data.entries?.length) ? data.entries : [] }));
+        setAutoResidentDetails(prev => ({ ...prev, [sel.id]: data.residentDetails || false }));
       })
-      .catch(() => { setAutoResidentNums(prev => ({ ...prev, [sel.id]: [] })); });
+      .catch(() => {
+        setAutoResidentNums(prev => ({ ...prev, [sel.id]: [] }));
+        setAutoResidentDetails(prev => ({ ...prev, [sel.id]: false }));
+      });
   }, [sel?.id]);
 
   // 채무자 선택 시 CB종합보고서에서 신용점수 자동 추출
@@ -1916,15 +1922,18 @@ export default function App() {
       .catch(() => { setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: false })); });
   }, [sel?.id]);
 
-  // 채무자 선택 시 CB종합보고서에서 최신 주소지 자동 추출 (채무자 위치 지도용) — DB에 이미 있으면 재조회 안 함
+  // 채무자 선택 시 CB종합보고서에서 최신 주소지 + 연락처 + 조회일자 자동 추출 (채무자 위치 지도용) — DB에 이미 있으면 재조회 안 함
   useEffect(() => {
     if (!sel || autoAddresses[sel.id] !== undefined) return;
-    if (sel.latestAddress) { setAutoAddresses(prev => ({ ...prev, [sel.id]: { address: sel.latestAddress, filename: null } })); return; }
+    if (sel.latestAddress && sel.creditPhone) {
+      setAutoAddresses(prev => ({ ...prev, [sel.id]: { address: sel.latestAddress, phone: sel.creditPhone, queriedDate: sel.creditQueriedDate, filename: null } }));
+      return;
+    }
     setAutoAddresses(prev => ({ ...prev, [sel.id]: null }));
     fetch(`/api/debtor/${sel.id}/credit-address`)
       .then(r => r.json())
       .then(data => {
-        setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, filename: data.filename } : false }));
+        setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
       })
       .catch(() => { setAutoAddresses(prev => ({ ...prev, [sel.id]: false })); });
   }, [sel?.id]);
@@ -2039,7 +2048,7 @@ export default function App() {
     }
     return changes;
   };
-  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항" };
+  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
 
   // ─── Excel Download ─────────────────────────────────────
   const downloadCSV = (filename, headers, rows) => {
@@ -2755,8 +2764,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
           <Field label="신용점수"><KoreanInput value={f.creditGrade || ""} onChange={e => set("creditGrade", e.target.value)} style={inp} placeholder="예: 850" /></Field>
           <Field label="최신 주소" span={2}><KoreanInput value={f.latestAddress || ""} onChange={e => set("latestAddress", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력 — 채무자 위치 지도에 사용" /></Field>
+          <Field label="연락처(CB)"><KoreanInput value={f.creditPhone || ""} onChange={e => set("creditPhone", e.target.value)} style={inp} placeholder="CB보고서 자동추출 또는 직접 입력" /></Field>
           <Field label="영업담당자"><KoreanInput value={f.salesRep || ""} onChange={e => set("salesRep", e.target.value)} style={inp} placeholder="예: 2팀 김상원 010-..." /></Field>
           <Field label="주민등록번호" span={2}><KoreanInput value={f.residentNumber || ""} onChange={e => set("residentNumber", e.target.value)} onBlur={e => { const v = e.target.value.trim(); if (v && !/^\d{6}-\d{7}$/.test(v)) showToast("주민등록번호 형식이 올바르지 않습니다 (000000-0000000)"); }} style={inp} placeholder="000000-0000000" maxLength={14} /></Field>
+          <Field label="최근 주소(초본)" span={2}><KoreanInput value={f.residentAddress || ""} onChange={e => set("residentAddress", e.target.value)} style={inp} placeholder="초본 자동추출 또는 직접 입력" /></Field>
+          <Field label="등록일(초본)"><KoreanInput value={f.residentRegisteredDate || ""} onChange={e => set("residentRegisteredDate", e.target.value)} style={inp} placeholder="예: 2024-04-03" /></Field>
+          <Field label="비고(세대주및관계)" span={3}><KoreanInput value={f.residentNote || ""} onChange={e => set("residentNote", e.target.value)} style={inp} placeholder="초본 자동추출 또는 직접 입력" /></Field>
           <Field label="주요사항" span={3}><KoreanTextarea value={f.keyNotes || ""} onChange={e => set("keyNotes", e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="법적 조치, 소송 이력 등" /></Field>
         </div>
         <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel={isEdit ? "수정" : "등록"} />
@@ -3994,7 +4007,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const autoSubDate = (subResult && subResult.date) ? subResult.date : d.subrogationMonth || "";
               const addrResult = autoAddresses[d.id];
               const autoAddress = d.latestAddress || (addrResult && addrResult.address) || "";
-              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress } });
+              const autoCreditPhone = d.creditPhone || (addrResult && addrResult.phone) || "";
+              const residentDetails = autoResidentDetails[d.id];
+              const autoResidentAddress = d.residentAddress || (residentDetails && residentDetails.address) || "";
+              const autoResidentRegisteredDate = d.residentRegisteredDate || (residentDetails && residentDetails.registeredDate) || "";
+              const autoResidentNote = d.residentNote || (residentDetails && residentDetails.note) || "";
+              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress, creditPhone: autoCreditPhone, residentAddress: autoResidentAddress, residentRegisteredDate: autoResidentRegisteredDate, residentNote: autoResidentNote } });
             }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
             <button onClick={goBack} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
@@ -4064,6 +4082,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>;
               })()}
             </div>
+            {/* 등록일 / 비고 (초본) */}
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>등록일 / 비고 <span style={{ color: "var(--ts)" }}>(초본)</span></div>
+              {(() => {
+                const details = autoResidentDetails[d.id];
+                const registeredDate = d.residentRegisteredDate || (details && details.registeredDate) || null;
+                const note = d.residentNote || (details && details.note) || null;
+                const issuedDate = d.residentIssuedDate || (details && details.issuedDate) || null;
+                if (!registeredDate && !note) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
+                return <div>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>{registeredDate || "-"}</span>
+                  {note && <span style={{ fontSize: 11, color: "var(--ts)", marginLeft: 8 }}>{note}</span>}
+                  {issuedDate && <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>초본 발급일 {issuedDate} 기준</div>}
+                </div>;
+              })()}
+            </div>
             {/* 신용조회 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -4092,6 +4126,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>;
               })()}
             </div>
+            {/* 연락처 (신용정보조회) */}
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>연락처 <span style={{ color: "var(--ts)" }}>(신용정보조회)</span></div>
+              {(() => {
+                const addrResult = autoAddresses[d.id];
+                const phone = d.creditPhone || (addrResult && addrResult.phone) || null;
+                if (phone) return <span style={{ fontSize: 12, fontWeight: 500 }}>{phone}</span>;
+                return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음"}</span>;
+              })()}
+            </div>
             {/* 최신 주소 (채무자 위치 지도용) */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>최신 주소 <span style={{ color: "var(--ts)" }}>(채무자 위치 지도)</span></div>
@@ -4100,6 +4144,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const address = d.latestAddress || (addrResult && addrResult.address) || null;
                 if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음 — CB 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
+              })()}
+              {(() => {
+                const queriedDate = d.creditQueriedDate || (autoAddresses[d.id] && autoAddresses[d.id].queriedDate) || null;
+                return queriedDate ? <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>CB 조회일자 {queriedDate} 기준</div> : null;
+              })()}
+            </div>
+            {/* 최근 주소 (초본) */}
+            <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>최근 주소 <span style={{ color: "var(--ts)" }}>(초본)</span></div>
+              {(() => {
+                const details = autoResidentDetails[d.id];
+                const address = d.residentAddress || (details && details.address) || null;
+                if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
+                return <span style={{ fontSize: 12, color: "var(--tm)" }}>{details === null ? "초본에서 자동 조회 중..." : "없음 — 초본 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
               })()}
             </div>
             {/* 전화번호 — 맨 아래, 내용 무한 확장 */}

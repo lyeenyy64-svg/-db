@@ -111,6 +111,12 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"
     ["latest_address_lat",  "REAL"],
     ["latest_address_lng",  "REAL"],
     ["latest_address_updated_at", "TEXT"],
+    ["resident_address",           "TEXT"],
+    ["resident_registered_date",   "TEXT"],
+    ["resident_note",              "TEXT"],
+    ["resident_issued_date",       "TEXT"],
+    ["credit_phone",               "TEXT"],
+    ["credit_queried_date",        "TEXT"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -606,6 +612,12 @@ app.get("/api/debtors", (req, res) => {
            latest_address AS latestAddress,
            latest_address_lat AS latestAddressLat,
            latest_address_lng AS latestAddressLng,
+           resident_address AS residentAddress,
+           resident_registered_date AS residentRegisteredDate,
+           resident_note AS residentNote,
+           resident_issued_date AS residentIssuedDate,
+           credit_phone AS creditPhone,
+           credit_queried_date AS creditQueriedDate,
            sales_rep AS salesRep,
            key_notes AS keyNotes,
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
@@ -1809,6 +1821,8 @@ app.patch("/api/debtors/:id", (req, res) => {
       salesRep:"sales_rep",keyNotes:"key_notes",
       principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
       latestAddress:"latest_address",
+      residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
+      residentNote:"resident_note",creditPhone:"credit_phone",
     };
     const fieldLabels = {
       category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
@@ -1821,6 +1835,8 @@ app.patch("/api/debtors/:id", (req, res) => {
       salesRep:"영업담당자",keyNotes:"주요사항",
       principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
       latestAddress:"최신 주소",
+      residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
+      residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
     };
 
     const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
@@ -2587,7 +2603,8 @@ const PYTHON_BIN = "C:\\Users\\hjbae\\AppData\\Local\\Python\\pythoncore-3.14-64
 
 function ocrPdfForResident(pdfPath) {
   return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    // 주소이력표 파싱 때문에 최대 6페이지까지 OCR — 기존 90초보다 여유를 둔다
+    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2623,7 +2640,8 @@ function ocrPdfForCreditScore(pdfPath) {
 
 function ocrPdfForCreditAddress(pdfPath) {
   return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
+    // 자택정보이력표(보통 3페이지)까지 스캔하므로 기존 90초보다 여유를 둔다
+    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2642,16 +2660,23 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
   try {
     const debtor = db.prepare(
       `SELECT d.name, d.resident_number,
+              d.resident_address, d.resident_registered_date, d.resident_note, d.resident_issued_date,
               (SELECT GROUP_CONCAT(g.name, ',') FROM debtor_guarantors g WHERE g.debtor_id = d.id) AS guarantors_str
        FROM debtors d WHERE d.id = ?`
     ).get(req.params.id);
-    if (!debtor) return res.json({ ok: false, entries: [] });
+    if (!debtor) return res.json({ ok: false, entries: [], residentDetails: null });
 
     const entries = [];
+    let residentDetails = null;
 
-    // 주채무자
-    if (debtor.resident_number) {
+    // 주채무자 — 주민등록번호 + 최근주소/등록일/비고/발급일 (같은 초본 1회 OCR로 함께 추출)
+    const detailsComplete = !!(debtor.resident_address && debtor.resident_registered_date && debtor.resident_issued_date);
+    if (debtor.resident_number && detailsComplete) {
       entries.push({ name: debtor.name, number: debtor.resident_number, source: "db" });
+      residentDetails = {
+        address: debtor.resident_address, registeredDate: debtor.resident_registered_date,
+        note: debtor.resident_note, issuedDate: debtor.resident_issued_date,
+      };
     } else {
       const kor = korName3(debtor.name);
       if (kor) {
@@ -2664,8 +2689,40 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
         ).all(`%${kor}%`, `%${kor}%`);
         for (const c of rows) {
           const r = await ocrPdfForResident(c.file_path);
-          if (r.ok && r.number) { entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename }); break; }
+          const gotNumber = r.ok && r.number;
+          const gotDetails = r.address || r.registeredDate;
+          if (!gotNumber && !gotDetails) continue;
+
+          if (gotNumber) entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename });
+
+          // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다
+          const updates = [], vals = [];
+          if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+          if (!debtor.resident_address && r.address) { updates.push("resident_address = ?"); vals.push(r.address); }
+          if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
+          if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
+          if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
+          if (updates.length) {
+            db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, req.params.id);
+          }
+
+          residentDetails = {
+            address: debtor.resident_address || r.address || null,
+            registeredDate: debtor.resident_registered_date || r.registeredDate || null,
+            note: debtor.resident_note || r.note || null,
+            issuedDate: debtor.resident_issued_date || r.issuedDate || null,
+          };
+          if (gotNumber) break; // 번호까지 찾았으면 더 오래된 파일은 볼 필요 없음
         }
+      }
+      if (!entries.length && debtor.resident_number) {
+        entries.push({ name: debtor.name, number: debtor.resident_number, source: "db" });
+      }
+      if (!residentDetails && detailsComplete) {
+        residentDetails = {
+          address: debtor.resident_address, registeredDate: debtor.resident_registered_date,
+          note: debtor.resident_note, issuedDate: debtor.resident_issued_date,
+        };
       }
     }
 
@@ -2687,8 +2744,8 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
       }
     }
 
-    res.json({ ok: true, entries });
-  } catch (e) { res.status(500).json({ ok: false, entries: [], error: e.message }); }
+    res.json({ ok: true, entries, residentDetails });
+  } catch (e) { res.status(500).json({ ok: false, entries: [], residentDetails: null, error: e.message }); }
 });
 
 // ─── 신용점수 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
@@ -2740,15 +2797,15 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 // 추출에 성공하면 DB에 저장해서(latest_address) 다음부터는 OCR을 다시 돌리지 않고 캐시를 쓴다.
 app.get("/api/debtor/:id/credit-address", async (req, res) => {
   try {
-    const debtor = db.prepare("SELECT id, name, latest_address FROM debtors WHERE id = ?").get(req.params.id);
+    const debtor = db.prepare("SELECT id, name, latest_address, credit_phone, credit_queried_date FROM debtors WHERE id = ?").get(req.params.id);
     if (!debtor) return res.json({ ok: false, address: null });
 
-    if (debtor.latest_address) {
-      return res.json({ ok: true, address: debtor.latest_address, source: "cache" });
+    if (debtor.latest_address && debtor.credit_phone) {
+      return res.json({ ok: true, address: debtor.latest_address, phone: debtor.credit_phone, queriedDate: debtor.credit_queried_date, source: "cache" });
     }
 
     const kor = korName3(debtor.name);
-    if (!kor) return res.json({ ok: false, address: null, error: "이름 인식 불가" });
+    if (!kor) return res.json({ ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "이름 인식 불가" });
 
     const rows = db.prepare(
       `SELECT file_path, filename FROM file_index
@@ -2760,13 +2817,31 @@ app.get("/api/debtor/:id/credit-address", async (req, res) => {
 
     for (const c of rows) {
       const r = await ocrPdfForCreditAddress(c.file_path);
-      if (r.ok && r.address) {
-        db.prepare("UPDATE debtors SET latest_address = ?, latest_address_lat = NULL, latest_address_lng = NULL, latest_address_updated_at = datetime('now','localtime') WHERE id = ?").run(r.address, debtor.id);
-        return res.json({ ok: true, address: r.address, source: "ocr", filename: c.filename });
+      if (!r.address && !r.phone) continue;
+
+      // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다
+      const updates = [], vals = [];
+      if (!debtor.latest_address && r.address) {
+        updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
+        vals.push(r.address);
       }
+      if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
+      if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
+      if (updates.length) {
+        db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtor.id);
+      }
+
+      return res.json({
+        ok: true,
+        address: debtor.latest_address || r.address || null,
+        phone: debtor.credit_phone || r.phone || null,
+        queriedDate: debtor.credit_queried_date || r.queriedDate || null,
+        source: "ocr",
+        filename: c.filename,
+      });
     }
 
-    res.json({ ok: false, address: null, error: "주소 인식 실패" });
+    res.json({ ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" });
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
 
