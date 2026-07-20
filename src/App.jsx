@@ -6100,8 +6100,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [isEditingComplaint, setIsEditingComplaint] = useState(false); // 기본정보/수사정보 수정 모드
     const [cmpHistory,        setCmpHistory]         = useState([]);    // 진행 히스토리
     const [cmpHistForm,       setCmpHistForm]        = useState(null);  // 추가/수정 폼
-    const [statusSort,        setStatusSort]         = useState(null);  // null | "asc" | "desc"
-    const toggleSort = () => setStatusSort(s => s === null ? "asc" : s === "asc" ? "desc" : null);
+    const [sortField, setSortField] = useState(null);  // null | 컬럼 필드명
+    const [sortDir,   setSortDir]   = useState(null);  // null | "asc" | "desc"
+    const toggleColSort = (field) => {
+      if (sortField !== field) { setSortField(field); setSortDir("asc"); }
+      else if (sortDir === "asc") setSortDir("desc");
+      else { setSortField(null); setSortDir(null); }
+    };
 
     const lc  = data.legalCases       || [];
     const ad  = data.assetDisclosures  || [];
@@ -6131,30 +6136,50 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const filteredAD  = applyFilter(ad, "debtorName");
     const filteredCmp = applyFilter(cmp, "debtorName");
 
-    const sortByStatus = (arr, getStatus) => {
-      if (!statusSort) return arr;
-      return [...arr].sort((a, b) => {
-        const sa = getStatus(a) || ""; const sb = getStatus(b) || "";
-        return statusSort === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
-      });
-    };
-    const sortedPO  = sortByStatus(filteredPO,  c => c.progressStatus || "");
-    const sortedSz  = sortByStatus(filteredSz,  c => c.progressStatus || "");
-    const sortedAD  = sortByStatus(filteredAD,  c => c.status || "진행");
-    const sortedCmp = sortByStatus(filteredCmp, c => c.status || "준비중");
+    // 연동 채무자 찾기
+    const getDebtor = (id) => data.debtors.find(d => d.id === id);
 
     // 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 함께 검색·조회할 수 있도록 통합
     // (유형 드롭다운이 "전체"가 아니면 해당 유형만 남긴다)
     const KIND_COLOR = { "지급명령": "#3b82f6", "압류": "#8b5cf6", "재산명시·재산조회": "#f59e0b", "형사고소": "#ef4444" };
-    const allItems = [
-      ...sortedPO.map(c => ({ c, kind: "지급명령" })),
-      ...sortedSz.map(c => ({ c, kind: "압류" })),
-      ...sortedAD.map(c => ({ c, kind: "재산명시·재산조회" })),
-      ...sortedCmp.map(c => ({ c, kind: "형사고소" })),
+    const kindItems = [
+      ...filteredPO.map(c => ({ c, kind: "지급명령" })),
+      ...filteredSz.map(c => ({ c, kind: "압류" })),
+      ...filteredAD.map(c => ({ c, kind: "재산명시·재산조회" })),
+      ...filteredCmp.map(c => ({ c, kind: "형사고소" })),
     ].filter(({ kind }) => legalTypeFilter === "전체" || legalTypeFilter === kind);
 
-    // 연동 채무자 찾기
-    const getDebtor = (id) => data.debtors.find(d => d.id === id);
+    // 헤더 클릭 정렬용 컬럼별 값 추출기 (4개 유형의 필드명이 서로 달라 kind별로 분기)
+    const LEGAL_SORT_GETTERS = {
+      brand:   ({ c }) => c.brand || "",
+      kind:    ({ kind }) => kind,
+      target:  ({ c, kind }) => (kind === "지급명령" || kind === "압류") ? c.defendant : c.debtorName,
+      org:     ({ c, kind }) => kind === "형사고소" ? c.policeStation : c.court,
+      caseNo:  ({ c, kind }) => kind === "형사고소" ? c.charge : c.caseNumber,
+      date:    ({ c, kind }) => kind === "형사고소" ? c.complaintDate : (kind === "재산명시·재산조회" ? c.applicationDate : c.filingDate),
+      status:  ({ c, kind }) => kind === "형사고소" ? (c.status || "준비중") : (kind === "재산명시·재산조회" ? (c.status || "진행") : c.progressStatus),
+      role:    ({ c, kind }) => kind === "형사고소" ? "" : (kind === "재산명시·재산조회" ? (c.hasInquiryOrder ? "O" : "X") : (c.caseStatus || "")),
+      balance: ({ c }) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched: ({ c }) => getDebtor(c.debtorId) ? 1 : 0,
+    };
+    const allItems = (() => {
+      if (!sortField || !sortDir) return kindItems;
+      const get = LEGAL_SORT_GETTERS[sortField];
+      return [...kindItems].sort((a, b) => {
+        const va = get(a), vb = get(b);
+        if (typeof va === "number" || typeof vb === "number") {
+          return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        const sa = String(va || ""), sb = String(vb || "");
+        return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
+      });
+    })();
+
+    const SortTh = ({ field, label }) => (
+      <span style={{ cursor: "pointer", userSelect: "none" }} onClick={() => toggleColSort(field)}>
+        {label}{sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+      </span>
+    );
 
     // 수동 매칭 후보 목록
     const matchCandidates = useMemo(() => {
@@ -6825,10 +6850,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 리스트 헤더 */}
         <div style={{ display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-          <span>브랜드</span><span>구분</span><span>대상자</span><span>법원/기관</span><span>사건번호/죄명</span>
-          <span>접수일</span>
-          <span style={{ cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
-          <span>원/피고</span><span>잔액</span><span>매칭</span>
+          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" /><SortTh field="target" label="대상자" /><SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
+          <SortTh field="date" label="접수일" />
+          <SortTh field="status" label="상태" />
+          <SortTh field="role" label="원/피고" /><SortTh field="balance" label="잔액" /><SortTh field="matched" label="매칭" />
         </div>
 
         {/* 지급명령/압류/재산명시·재산조회/형사고소 통합 리스트 */}
@@ -8392,6 +8417,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [brandF,       setBrandF]       = useState("전체");
     const [typeF,        setTypeF]        = useState("전체");
     const [searchQ,      setSearchQ]      = useState("");
+    const [sortField,    setSortField]    = useState(null);  // null | 컬럼 필드명
+    const [sortDir,       setSortDir]      = useState(null);  // null | "asc" | "desc"
+    const toggleColSort = (field) => {
+      if (sortField !== field) { setSortField(field); setSortDir("asc"); }
+      else if (sortDir === "asc") setSortDir("desc");
+      else { setSortField(null); setSortDir(null); }
+    };
     useEffect(() => { if (minsaSearchInit) { setSearchQ(minsaSearchInit); setMinsaSearchInit(null); } }, [minsaSearchInit]);
     const [selCase,      setSelCase]      = useState(null);
     const [matchingCase, setMatchingCase] = useState(null);
@@ -8447,6 +8479,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, [mc, brandF, typeF, searchQ]);
 
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
+
+    // 헤더 클릭 정렬용 컬럼별 값 추출기
+    const MINSA_SORT_GETTERS = {
+      brand:  (c) => c.brand || "",
+      target: (c) => c.defendant || "",
+      court:  (c) => c.court || "",
+      caseNo: (c) => c.caseNumber || "",
+      date:   (c) => c.filingDate || "",
+      status: (c) => c.progressStatus || "",
+      role:   (c) => c.caseStatus || "",
+      amount: (c) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched:(c) => getDebtor(c.debtorId) ? 1 : 0,
+    };
+    const sorted = useMemo(() => {
+      if (!sortField || !sortDir) return filtered;
+      const get = MINSA_SORT_GETTERS[sortField];
+      return [...filtered].sort((a, b) => {
+        const va = get(a), vb = get(b);
+        if (typeof va === "number" || typeof vb === "number") {
+          return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        const sa = String(va || ""), sb = String(vb || "");
+        return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
+      });
+    }, [filtered, sortField, sortDir]);
+    const SortTh = ({ field, label }) => (
+      <span style={{ cursor: "pointer", userSelect: "none" }} onClick={() => toggleColSort(field)}>
+        {label}{sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+      </span>
+    );
 
     const matchCandidates = useMemo(() => {
       if (!matchingCase) return [];
@@ -8648,16 +8710,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           return (
             <>
               <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-                <span>브랜드</span><span>대상자</span><span>법원</span><span>사건번호</span>
-                <span>접수일</span><span>상태</span><span>원/피고</span>
-                <span>금액</span><span>매칭</span>
+                <SortTh field="brand" label="브랜드" /><SortTh field="target" label="대상자" /><SortTh field="court" label="법원" /><SortTh field="caseNo" label="사건번호" />
+                <SortTh field="date" label="접수일" /><SortTh field="status" label="상태" /><SortTh field="role" label="원/피고" />
+                <SortTh field="amount" label="금액" /><SortTh field="matched" label="매칭" />
               </div>
 
               {/* 리스트 */}
-              {filtered.length === 0
+              {sorted.length === 0
                 ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>민사소송 사건이 없습니다.</div>
                 : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {filtered.map(c => {
+                    {sorted.map(c => {
                       const debtor     = getDebtor(c.debtorId);
                       const isMatching = matchingCase?.id === c.id;
                       return (
