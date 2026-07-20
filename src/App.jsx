@@ -1781,6 +1781,7 @@ export default function App() {
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
+  const [legalOpenCaseId, setLegalOpenCaseId] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
   const [aiMessages, setAiMessages] = useState([
     { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
@@ -6042,7 +6043,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [selCase,           setSelCase]            = useState(null);
     const [caseNotes,         setCaseNotes]          = useState([]);   // 진행상황 메모
     const [noteDraft,         setNoteDraft]          = useState("");
-    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); }, [selCase?.id]);
+    const [eventDateDraft,    setEventDateDraft]     = useState("");
+    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); setEventDateDraft(selCase ? (getCaseEventDate(selCase.id) || "") : ""); }, [selCase?.id]);
+    const handleEventDateChange = (val) => {
+      if (!selCase) return;
+      setEventDateDraft(val);
+      saveCaseEventDate(selCase.id, val || null);
+    };
+    useEffect(() => {
+      if (!legalOpenCaseId) return;
+      const legalMatch = (data.legalCases || []).find(c => c.id === legalOpenCaseId);
+      if (legalMatch) { setSelCase({ ...legalMatch, _kind: "legal" }); setLegalOpenCaseId(null); return; }
+      const adMatch = (data.assetDisclosures || []).find(c => c.id === legalOpenCaseId);
+      if (adMatch) setSelCase({ ...adMatch, _kind: "ad" });
+      setLegalOpenCaseId(null);
+    }, [legalOpenCaseId, data.legalCases, data.assetDisclosures]);
     const [matchingCase,      setMatchingCase]       = useState(null);
     const [matchQ,            setMatchQ]             = useState("");
     const [selComplaint,      setSelComplaint]       = useState(null);  // 형사고소 팝업
@@ -6601,6 +6616,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {isAD  && <DL label="감치결정"      val={selCase.detentionDecision} />}
                 {isAD  && <DL label="재산목록 제출"  val={selCase.propertyList && `${selCase.propertyList}${selCase.propertyListDesc ? ` (${selCase.propertyListDesc})` : ""}`} />}
                 {isAD  && <DL label="집행장 만료/취하" val={selCase.executionExpiration} />}
+                {debtor && <DL label="담당자"    val={debtor.assignee} />}
+                {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
               </>
             )}
           </div>
@@ -6634,6 +6651,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }}
               />
               <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: "var(--tm)" }}>이벤트 날짜</span>
+                <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
+                  style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+              </div>
             </div>
             {caseNotes.length === 0
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
@@ -6664,22 +6686,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 : <span style={{ padding: "7px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", fontSize: 12, border: "1px solid var(--brd)", whiteSpace: "nowrap" }}>미연동</span>}
               <button onClick={saveDocUrl} style={{ padding: "7px 12px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
             </div>
-          </div>
-
-          {/* 연동 채무자 */}
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
-            {debtor ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <DL label="분류"     val={debtor.category} />
-                <DL label="담당자"   val={debtor.assignee} />
-                <DL label="연락처"   val={debtor.phone} />
-                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
-                <DL label="잔액(재무)" val={fmt(debtor.finalBalanceFinance)} />
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
-            )}
           </div>
 
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -9334,12 +9340,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
               return diffDays >= 0 && diffDays <= 7;
             });
+            const legalEventCases = [...(data.legalCases || []), ...(data.assetDisclosures || [])].filter(c => {
+              const ev = getCaseEventDate(c.id);
+              if (!ev) return false;
+              const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
+              return diffDays >= 0 && diffDays <= 7;
+            });
             const items = [
               { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
               { l: "민사소송 이벤트", v: `${minsaEventCases.length}건`, onClick: () => { setTab("minsa"); if (minsaEventCases[0]) setMinsaOpenCaseId(minsaEventCases[0].id); } },
+              { l: "법적절차 이벤트", v: `${legalEventCases.length}건`, onClick: () => { setTab("legal"); if (legalEventCases[0]) setLegalOpenCaseId(legalEventCases[0].id); } },
             ];
             return items.map((x, i) => (
               <div key={i} onClick={x.onClick}
