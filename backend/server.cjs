@@ -2962,6 +2962,45 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
 
+// 채무자 한 명에 대해 비어있는 주소 컬럼(초본/CB)만 골라 OCR 추출을 시도한다.
+// lookupResidentDetails/lookupCreditAddress 둘 다 이미 값이 있는 컬럼은 덮어쓰지 않으므로
+// 안전하게 둘 다 호출할 수 있다 — "전체 채무자 주소 추출" 배치와 수동 추출 버튼이 공유해서 쓴다.
+async function extractAddressForDebtor(debtor) {
+  const result = { residentOk: false, creditOk: false };
+  if (!debtor.resident_address) {
+    try { const r = await lookupResidentDetails(debtor.id, debtor); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${debtor.name} 초본 오류:`, e.message); }
+  }
+  if (!debtor.latest_address) {
+    try { const r = await lookupCreditAddress(debtor); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${debtor.name} CB 오류:`, e.message); }
+  }
+  return result;
+}
+
+// 초본 또는 CB보고서 주소가 하나라도 비어있는 채무자를 수동/배치 추출 대상으로 조회
+app.get("/api/debtors/missing-address", (req, res) => {
+  try {
+    const rows = db.prepare(
+      `SELECT id, name FROM debtors
+       WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
+    ).all();
+    res.json({ ok: true, debtors: rows });
+  } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
+});
+
+// 채무자 한 명의 비어있는 주소를 즉시 추출 (프론트 "전체 채무자 주소 추출" 버튼이 순회 호출)
+app.post("/api/debtor/:id/extract-address", async (req, res) => {
+  try {
+    const debtor = db.prepare(
+      `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
+              latest_address, credit_phone, credit_queried_date
+       FROM debtors WHERE id = ?`
+    ).get(req.params.id);
+    if (!debtor) return res.json({ ok: false, error: "채무자 없음" });
+    const result = await extractAddressForDebtor(debtor);
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // 원드라이브 폴더에 더 최근 초본/CB보고서가 새로 올라오면, 이미 캐시된 주소를 계속
 // 보여주지 않도록 자동으로 감지해서 캐시를 지운다. 지우기만 하고 그 자리에서 바로
 // OCR을 다시 돌리지는 않는다 — 실제로 그 채무자 화면을 여는 시점에 기존 자동추출
@@ -3075,53 +3114,104 @@ app.get("/api/debtors/locations", (req, res) => {
 });
 
 // 주소 → 좌표 지오코딩 (카카오 로컬 API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
+// 라우트와 매월 자동 배치(runMonthlyAddressBatch)가 함께 쓰도록 함수로 분리했다.
+async function geocodeDebtorById(debtorId) {
+  const debtor = db.prepare(
+    `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
+            resident_address, resident_address_lat AS residentLat, resident_address_lng AS residentLng,
+            resident_issued_date, credit_queried_date
+     FROM debtors WHERE id = ?`
+  ).get(debtorId);
+  if (!debtor) return { ok: false, error: "채무자 없음" };
+
+  const source = pickAddressSource(debtor);
+  if (!source) return { ok: false, error: "주소 없음" };
+
+  const address = source === "resident" ? debtor.resident_address : debtor.latest_address;
+  const cachedLat = source === "resident" ? debtor.residentLat : debtor.lat;
+  const cachedLng = source === "resident" ? debtor.residentLng : debtor.lng;
+  if (cachedLat != null && cachedLng != null) {
+    return { ok: true, lat: cachedLat, lng: cachedLng, source: "cache", addressSource: source };
+  }
+
+  const restKey = process.env.KAKAO_REST_API_KEY;
+  if (!restKey) return { ok: false, error: "카카오맵 API 키가 설정되지 않았습니다 (backend/.env)" };
+
+  const headers = { Authorization: `KakaoAK ${restKey}` };
+  const q = encodeURIComponent(address);
+
+  // 1차: 지번/도로명 주소 검색 → 실패하면 2차: 키워드(장소) 검색으로 재시도
+  let doc = null;
+  let r = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${q}`, { headers });
+  let data = await r.json();
+  if (r.ok && data.documents?.length) doc = data.documents[0];
+  if (!doc) {
+    r = await fetch(`https://dapi.kakao.com/v2/local/search/keyword.json?query=${q}`, { headers });
+    data = await r.json();
+    if (r.ok && data.documents?.length) doc = data.documents[0];
+  }
+  if (!doc) return { ok: false, error: "주소를 좌표로 변환할 수 없습니다" };
+
+  const lat = parseFloat(doc.y);
+  const lng = parseFloat(doc.x);
+  if (source === "resident") {
+    db.prepare("UPDATE debtors SET resident_address_lat = ?, resident_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+  } else {
+    db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+  }
+  return { ok: true, lat, lng, source: "geocode", addressSource: source };
+}
+
 app.post("/api/debtor/:id/geocode", async (req, res) => {
   try {
-    const debtor = db.prepare(
-      `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
-              resident_address, resident_address_lat AS residentLat, resident_address_lng AS residentLng,
-              resident_issued_date, credit_queried_date
-       FROM debtors WHERE id = ?`
-    ).get(req.params.id);
-    if (!debtor) return res.json({ ok: false, error: "채무자 없음" });
-
-    const source = pickAddressSource(debtor);
-    if (!source) return res.json({ ok: false, error: "주소 없음" });
-
-    const address = source === "resident" ? debtor.resident_address : debtor.latest_address;
-    const cachedLat = source === "resident" ? debtor.residentLat : debtor.lat;
-    const cachedLng = source === "resident" ? debtor.residentLng : debtor.lng;
-    if (cachedLat != null && cachedLng != null) {
-      return res.json({ ok: true, lat: cachedLat, lng: cachedLng, source: "cache", addressSource: source });
-    }
-
-    const restKey = process.env.KAKAO_REST_API_KEY;
-    if (!restKey) return res.json({ ok: false, error: "카카오맵 API 키가 설정되지 않았습니다 (backend/.env)" });
-
-    const headers = { Authorization: `KakaoAK ${restKey}` };
-    const q = encodeURIComponent(address);
-
-    // 1차: 지번/도로명 주소 검색 → 실패하면 2차: 키워드(장소) 검색으로 재시도
-    let doc = null;
-    let r = await fetch(`https://dapi.kakao.com/v2/local/search/address.json?query=${q}`, { headers });
-    let data = await r.json();
-    if (r.ok && data.documents?.length) doc = data.documents[0];
-    if (!doc) {
-      r = await fetch(`https://dapi.kakao.com/v2/local/search/keyword.json?query=${q}`, { headers });
-      data = await r.json();
-      if (r.ok && data.documents?.length) doc = data.documents[0];
-    }
-    if (!doc) return res.json({ ok: false, error: "주소를 좌표로 변환할 수 없습니다" });
-
-    const lat = parseFloat(doc.y);
-    const lng = parseFloat(doc.x);
-    if (source === "resident") {
-      db.prepare("UPDATE debtors SET resident_address_lat = ?, resident_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
-    } else {
-      db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
-    }
-    res.json({ ok: true, lat, lng, source: "geocode", addressSource: source });
+    const result = await geocodeDebtorById(req.params.id);
+    res.json(result);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// 채무자 위치 지도를 전체 채무자 기준으로 채워두기 위한 배치 — 평소엔 그 채무자 화면을
+// 열 때만 지연 추출하지만(서버 부담 방지), 이 배치는 초본/CB 주소가 하나라도 비어있는
+// 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 채무자 수만큼 OCR을 도는
+// 무거운 작업이라 수동 트리거(/api/debtors/batch-extract-addresses)와 매월 1일 새벽
+// 자동 실행(kv_store로 이번달 중복 실행 방지)에서만 호출한다.
+async function runMonthlyAddressBatch() {
+  const targets = db.prepare(
+    `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
+            latest_address, credit_phone, credit_queried_date
+     FROM debtors
+     WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
+  ).all();
+  let extracted = 0;
+  for (const debtor of targets) {
+    const r = await extractAddressForDebtor(debtor);
+    if (r.residentOk || r.creditOk) extracted++;
+  }
+
+  const geoTargets = db.prepare(
+    `SELECT id FROM debtors
+     WHERE (latest_address IS NOT NULL AND latest_address != '' AND latest_address_lat IS NULL)
+        OR (resident_address IS NOT NULL AND resident_address != '' AND resident_address_lat IS NULL)`
+  ).all();
+  let geocoded = 0;
+  for (const row of geoTargets) {
+    try {
+      const r = await geocodeDebtorById(row.id);
+      if (r.ok) geocoded++;
+    } catch (e) { console.error(`[주소배치] ${row.id} 좌표변환 오류:`, e.message); }
+  }
+  return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded };
+}
+
+// 수동 트리거 — "채무자 위치" 화면의 "전체 채무자 주소 추출" 버튼이 호출.
+// OCR을 다수 순회하는 무거운 작업이라 응답은 즉시 반환하고 백그라운드에서 계속 진행한다.
+app.post("/api/debtors/batch-extract-addresses", (req, res) => {
+  res.json({ ok: true, started: true });
+  runMonthlyAddressBatch()
+    .then(result => {
+      console.log(`[주소배치] 수동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
+      broadcast("data-changed", { method: "BATCH", path: "/api/debtors/batch-extract-addresses", at: Date.now() });
+    })
+    .catch(e => console.error("[주소배치] 수동 실행 오류:", e.message));
 });
 
 // ─── 대위변제일 자동 추출 (대위변제증명서 PDF → Python Windows OCR) ──
@@ -3409,4 +3499,25 @@ app.listen(PORT, () => {
   };
   setTimeout(runAutoDocSync, 30000);
   setInterval(runAutoDocSync, 30 * 60 * 1000);
+
+  // 매월 1일 새벽 3시: 채무자 위치 지도용 주소 전체 배치 추출 + 좌표변환
+  // 채무자 수만큼 OCR을 도는 무거운 작업이라 사람들이 안 쓰는 새벽 시간에만 자동 실행하고,
+  // kv_store에 이번 달 실행 여부를 기록해 30분마다 재확인해도 같은 달에 중복 실행되지 않는다
+  // (매월 알림 발송과 동일한 안전장치 패턴).
+  const checkMonthlyAddressBatch = () => {
+    const now = new Date();
+    if (now.getDate() !== 1 || now.getHours() !== 3) return;
+    const monthStr = now.toISOString().slice(0, 7);
+    const kvKey = `address_batch_${monthStr}`;
+    if (db.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey)) return;
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: now.toISOString() }));
+    console.log("[주소배치] 매월 자동 실행 시작");
+    runMonthlyAddressBatch()
+      .then(result => {
+        console.log(`[주소배치] 매월 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
+        broadcast("data-changed", { method: "BATCH", path: "monthly-address-batch", at: Date.now() });
+      })
+      .catch(e => console.error("[주소배치] 매월 자동 실행 오류:", e.message));
+  };
+  setInterval(checkMonthlyAddressBatch, 30 * 60 * 1000);
 });
