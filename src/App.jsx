@@ -8530,31 +8530,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {selCase && DetailModal()}
 
-        {/* KPI */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-          <KPI label="민사소송 전체" value={`${mc.length}건`}
-            sub={config.brands.filter(b=>brandCount(b.code)>0).map(b=>`${b.name} ${brandCount(b.code)}`).join(" / ")}
-            color="#10b981" onClick={() => setTypeF("전체")} active={typeF === "전체"} />
-          <KPI label="가합 (합의부)" value={`${typeCount("가합")}건`}
-            sub={`가단 ${typeCount("가단")}건`}
-            color="#8b5cf6" onClick={() => setTypeF("가합")} active={typeF === "가합"} />
-          <KPI label="가소 (소액)" value={`${typeCount("가소")}건`}
-            sub={`소액사건`}
-            color="#f59e0b" onClick={() => setTypeF("가소")} active={typeF === "가소"} />
-        </div>
-
-        {/* 사건번호 유형 탭 */}
-        <div style={{ display: "flex", gap: 4, borderBottom: "2px solid var(--brd)", paddingBottom: 0 }}>
+        {/* 사건번호 유형 박스 */}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 12, padding: "10px 16px" }}>
           {caseTypeTabs.map(t => {
             const count = t.k === "전체" ? mc.length : mc.filter(c => getCaseType(c.caseNumber) === t.k).length;
             const active = typeF === t.k;
             return (
               <button key={t.k} onClick={() => setTypeF(t.k)}
-                style={{ padding: "8px 16px", fontSize: 13, fontWeight: active ? 700 : 500, border: "none", borderBottom: active ? "2px solid var(--acc)" : "2px solid transparent", marginBottom: -2, background: "none", cursor: "pointer", color: active ? "var(--acc)" : "var(--tm)", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
+                style={{ padding: "7px 14px", fontSize: 13, fontWeight: active ? 700 : 500, border: "none", borderRadius: 9, background: active ? "#f59e0b" : "none", cursor: "pointer", color: active ? "#fff" : "var(--tm)", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}
               >
                 {t.label}
-                {t.desc && <span style={{ fontSize: 10, color: active ? "var(--acc)" : "var(--ts)", fontWeight: 400 }}>({t.desc})</span>}
-                <span style={{ fontSize: 11, background: active ? "var(--acc)" : "var(--bg2)", color: active ? "#fff" : "var(--ts)", borderRadius: 10, padding: "1px 7px", fontWeight: 600 }}>{count}</span>
+                {t.desc && <span style={{ fontSize: 10, color: active ? "#fff" : "var(--ts)", fontWeight: 400 }}>({t.desc})</span>}
+                <span style={{ fontSize: active ? 13 : 11, color: active ? "#fff" : "var(--ts)", fontWeight: 700 }}>{count}</span>
               </button>
             );
           })}
