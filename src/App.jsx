@@ -8592,8 +8592,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     {filtered.map(c => {
                       const debtor     = getDebtor(c.debtorId);
                       const isMatching = matchingCase?.id === c.id;
-                      const t          = getCaseType(c.caseNumber);
-                      const tClr       = t==="가합"?"#8b5cf6":t==="가단"?"#3b82f6":t==="가소"?"#f59e0b":"#6b7280";
                       return (
                         <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                           <div
@@ -8605,10 +8603,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
                             <span style={{ fontSize: 14, fontWeight: 600 }}>{c.defendant || "-"}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
-                            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
-                              {t !== "기타" && <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: tClr+"18", color: tClr, border: `1px solid ${tClr}40`, flexShrink: 0 }}>{t}</span>}
-                            </span>
+                            <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.filingDate || "-"}</span>
                             <span>{c.progressStatus ? <Badge status={c.progressStatus} /> : "-"}</span>
                             <span>{c.caseStatus ? <Badge status={c.caseStatus} small /> : "-"}</span>
