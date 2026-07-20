@@ -8569,10 +8569,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const gridCols = "56px minmax(90px,1fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 72px 130px 90px";
           return (
             <>
-              <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700 }}>
+              <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
                 <span>브랜드</span><span>대상자</span><span>법원</span><span>사건번호</span>
                 <span>접수일</span><span>상태</span><span>원/피고</span>
-                <span style={{ textAlign: "right" }}>금액</span><span style={{ textAlign: "center" }}>매칭</span>
+                <span>금액</span><span>매칭</span>
               </div>
 
               {/* 리스트 */}
