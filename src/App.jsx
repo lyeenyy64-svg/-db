@@ -723,21 +723,29 @@ const KoreanInput = ({ value, onChange, ...rest }) => {
     />
   );
 };
-const KoreanTextarea = ({ value, onChange, ...rest }) => {
+// autoResize: true면 내용 길이에 따라 높이를 자동으로 늘리고/줄인다 (수동 resize 핸들과 함께 쓰지 않음)
+const KoreanTextarea = ({ value, onChange, autoResize, ...rest }) => {
   const ref = useRef(null);
   const composing = useRef(false);
+  const fitHeight = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
   useEffect(() => {
     if (ref.current && !composing.current && ref.current.value !== (value ?? ""))
       ref.current.value = value ?? "";
-  }, [value]);
+    if (autoResize) fitHeight();
+  }, [value, autoResize]);
   return (
     <textarea
       ref={ref}
       {...rest}
       defaultValue={value ?? ""}
-      onChange={e => { if (!composing.current && onChange) onChange(e); }}
+      onChange={e => { if (!composing.current && onChange) onChange(e); if (autoResize) fitHeight(); }}
       onCompositionStart={() => { composing.current = true; }}
-      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); }}
+      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); if (autoResize) fitHeight(); }}
     />
   );
 };
@@ -1555,8 +1563,9 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
                   onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })}
                   onBlur={e => syncNoteToHistory(r, r.debtorId, e.target.value)}
                   placeholder="주요 협의 사항"
-                  rows={2}
-                  style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
+                  rows={1}
+                  autoResize
+                  style={{ ...issueInp, textAlign: "left", resize: "none", overflow: "hidden", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
                 />
               </td>
               <td style={{ ...issueTd, width: viewMode === "trash" ? 88 : colWidths[3], textAlign: "center" }}>
