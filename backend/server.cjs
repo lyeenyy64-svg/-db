@@ -1980,7 +1980,8 @@ app.put("/api/collection-channels", (req, res) => {
 app.patch("/api/complaints/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const { status, complaintUrl, investigator, investigatorContact, debtorId, policeStation, charge } = req.body;
+    const { status, complaintUrl, investigator, investigatorContact, debtorId, policeStation, charge,
+            complaintDate, complainant, goodsAmount, loanAmount } = req.body;
     const fields = [];
     const vals   = [];
     if (status              !== undefined) { fields.push("status = ?");                vals.push(status); }
@@ -1990,6 +1991,10 @@ app.patch("/api/complaints/:id", (req, res) => {
     if (debtorId            !== undefined) { fields.push("debtor_id = ?");              vals.push(debtorId); }
     if (policeStation       !== undefined) { fields.push("police_station = ?");         vals.push(policeStation); }
     if (charge              !== undefined) { fields.push("charge = ?");                 vals.push(charge); }
+    if (complaintDate       !== undefined) { fields.push("complaint_date = ?");         vals.push(complaintDate); }
+    if (complainant         !== undefined) { fields.push("complainant = ?");            vals.push(complainant); }
+    if (goodsAmount         !== undefined) { fields.push("goods_amount = ?");           vals.push(goodsAmount); }
+    if (loanAmount          !== undefined) { fields.push("loan_amount = ?");            vals.push(loanAmount); }
     if (fields.length === 0) return res.json({ ok: true });
     vals.push(id);
     db.prepare(`UPDATE complaints SET ${fields.join(", ")} WHERE id = ?`).run(...vals);

@@ -6064,6 +6064,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [cmpMatchQ,         setCmpMatchQ]          = useState("");
     const [cmpMatchMode,      setCmpMatchMode]       = useState(false); // 재매칭 패널 열림
     const [cmpEdit,           setCmpEdit]            = useState({});    // 팝업 편집 중 값
+    const [isEditingComplaint, setIsEditingComplaint] = useState(false); // 기본정보/수사정보 수정 모드
     const [cmpHistory,        setCmpHistory]         = useState([]);    // 진행 히스토리
     const [cmpHistForm,       setCmpHistForm]        = useState(null);  // 추가/수정 폼
     const [statusSort,        setStatusSort]         = useState(null);  // null | "asc" | "desc"
@@ -6144,7 +6145,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const openComplaint = (c) => {
       setSelComplaint(c);
-      setCmpEdit({ status: c.status || "수사중", complaintUrl: c.complaintUrl || "", investigator: c.investigator || "", investigatorContact: c.investigatorContact || "", policeStation: c.policeStation || "", charge: c.charge || "" });
+      setCmpEdit({ status: c.status || "수사중", complaintUrl: c.complaintUrl || "", investigator: c.investigator || "", investigatorContact: c.investigatorContact || "", policeStation: c.policeStation || "", charge: c.charge || "", complaintDate: c.complaintDate || "", complainant: c.complainant || "", goodsAmount: c.goodsAmount || 0, loanAmount: c.loanAmount || 0 });
+      setIsEditingComplaint(false);
       setCmpMatchMode(false); setCmpMatchQ("");
       setCmpHistory([]); setCmpHistForm(null);
       fetch(`/api/complaints/${c.id}/history`).then(r => r.ok ? r.json() : []).then(setCmpHistory).catch(() => {});
@@ -6161,6 +6163,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         updateMR(MK.complaints, selComplaint.id, cmpEdit);
         setData(prev => ({ ...prev, complaints: prev.complaints.map(c => c.id === selComplaint.id ? { ...c, ...cmpEdit } : c) }));
         setSelComplaint(prev => ({ ...prev, ...cmpEdit }));
+        setIsEditingComplaint(false);
         showToast("저장 완료");
       } catch { showToast("저장 실패"); }
     };
@@ -6216,21 +6219,27 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!selComplaint) return null;
       const c = selComplaint;
       const debtor = getDebtor(c.debtorId);
-      const total = (c.loanAmount || 0) + (c.goodsAmount || 0);
+      const liveGoods = isEditingComplaint ? cmpEdit.goodsAmount : c.goodsAmount;
+      const liveLoan  = isEditingComplaint ? cmpEdit.loanAmount  : c.loanAmount;
+      const total = (Number(liveLoan) || 0) + (Number(liveGoods) || 0);
       const statusOptions = ["준비중", "수사중", "기소", "불송치", "취하"];
       const today2 = () => new Date().toISOString().slice(0, 10);
+      const Stat = ({ label, editing }) => (
+        <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>{label}</div>{editing}</div>
+      );
       return (
         <div onClick={() => setSelComplaint(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, width: 580, maxHeight: "90vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}>
             {/* 헤더 */}
             <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10, background: "var(--bg2)", flexShrink: 0 }}>
               <BrandBadge code={c.brand} brands={config.brands} />
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 700 }}>{c.debtorName}</div>
-                <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>고소인: {c.complainant || "-"}</div>
-              </div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{c.debtorName}</div>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
                 <Badge status={c.charge} />
+                {isEditingComplaint
+                  ? <button onClick={saveComplaintEdit} style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                  : <button onClick={() => setIsEditingComplaint(true)} style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+                }
                 <button onClick={() => setSelComplaint(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
               </div>
             </div>
@@ -6238,10 +6247,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
               {/* 기본 정보 */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, background: "var(--bg2)", borderRadius: 10, padding: 14 }}>
-                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>고소일</div><div style={{ fontSize: 12, fontWeight: 500 }}>{fmtDate(c.complaintDate) || "-"}</div></div>
-                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>피해금액</div><div className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(total)}</div></div>
-                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>물품대</div><div className="mono" style={{ fontSize: 12 }}>{fmt(c.goodsAmount || 0)}</div></div>
-                <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>대여금</div><div className="mono" style={{ fontSize: 12 }}>{fmt(c.loanAmount || 0)}</div></div>
+                <Stat label="고소일" editing={isEditingComplaint
+                  ? <input type="date" value={cmpEdit.complaintDate} onChange={e => setCmpEdit(p => ({ ...p, complaintDate: e.target.value }))} style={{ width: "100%", padding: "5px 6px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  : <div style={{ fontSize: 12, fontWeight: 500 }}>{fmtDate(c.complaintDate) || "-"}</div>} />
+                <Stat label="피해금액" editing={<div className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--err)" }}>{fmt(total)}</div>} />
+                <Stat label="물품대" editing={isEditingComplaint
+                  ? <MoneyInput value={cmpEdit.goodsAmount} onChange={v => setCmpEdit(p => ({ ...p, goodsAmount: v }))} style={{ width: "100%", padding: "5px 6px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  : <div className="mono" style={{ fontSize: 12 }}>{fmt(c.goodsAmount || 0)}</div>} />
+                <Stat label="대여금" editing={isEditingComplaint
+                  ? <MoneyInput value={cmpEdit.loanAmount} onChange={v => setCmpEdit(p => ({ ...p, loanAmount: v }))} style={{ width: "100%", padding: "5px 6px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                  : <div className="mono" style={{ fontSize: 12 }}>{fmt(c.loanAmount || 0)}</div>} />
               </div>
 
               {/* 수사 정보 + 상태 */}
@@ -6250,29 +6265,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>경찰서</div>
-                    <KoreanInput value={cmpEdit.policeStation} onChange={e => setCmpEdit(p => ({ ...p, policeStation: e.target.value }))} placeholder="예: 광진경찰서" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    {isEditingComplaint
+                      ? <KoreanInput value={cmpEdit.policeStation} onChange={e => setCmpEdit(p => ({ ...p, policeStation: e.target.value }))} placeholder="예: 광진경찰서" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                      : <div style={{ fontSize: 12 }}>{c.policeStation || "-"}</div>}
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>죄명</div>
-                    <KoreanInput value={cmpEdit.charge} onChange={e => setCmpEdit(p => ({ ...p, charge: e.target.value }))} placeholder="예: 사기, 횡령, 배임 등" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    {isEditingComplaint
+                      ? <KoreanInput value={cmpEdit.charge} onChange={e => setCmpEdit(p => ({ ...p, charge: e.target.value }))} placeholder="예: 사기, 횡령, 배임 등" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                      : <div style={{ fontSize: 12 }}>{c.charge || "-"}</div>}
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>결과/상태</div>
-                    <select value={cmpEdit.status} onChange={e => setCmpEdit(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }}>
-                      {statusOptions.map(s => <option key={s}>{s}</option>)}
-                    </select>
+                    {isEditingComplaint
+                      ? <select value={cmpEdit.status} onChange={e => setCmpEdit(p => ({ ...p, status: e.target.value }))} style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }}>
+                          {statusOptions.map(s => <option key={s}>{s}</option>)}
+                        </select>
+                      : <div style={{ fontSize: 12 }}>{c.status || "준비중"}</div>}
                   </div>
                   <div>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>수사관</div>
-                    <KoreanInput value={cmpEdit.investigator} onChange={e => setCmpEdit(p => ({ ...p, investigator: e.target.value }))} placeholder="수사관 이름" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    {isEditingComplaint
+                      ? <KoreanInput value={cmpEdit.investigator} onChange={e => setCmpEdit(p => ({ ...p, investigator: e.target.value }))} placeholder="수사관 이름" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                      : <div style={{ fontSize: 12 }}>{c.investigator || "-"}</div>}
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 4 }}>연락처</div>
-                    <KoreanInput value={cmpEdit.investigatorContact} onChange={e => setCmpEdit(p => ({ ...p, investigatorContact: e.target.value }))} placeholder="전화번호" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                    {isEditingComplaint
+                      ? <KoreanInput value={cmpEdit.investigatorContact} onChange={e => setCmpEdit(p => ({ ...p, investigatorContact: e.target.value }))} placeholder="전화번호" style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)" }} />
+                      : <div style={{ fontSize: 12 }}>{c.investigatorContact || "-"}</div>}
                   </div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-                  <button onClick={saveComplaintEdit} style={{ padding: "5px 14px", borderRadius: 6, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>저장</button>
                 </div>
               </div>
 
