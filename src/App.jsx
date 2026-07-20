@@ -8575,53 +8575,62 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
 
         {/* 헤더 */}
-        <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
-          <span style={{ width: 22 }} /><span style={{ minWidth: 80 }}>채무자명</span>
-          <span style={{ minWidth: 100 }}>법원</span><span style={{ minWidth: 130 }}>사건번호</span>
-          <span style={{ minWidth: 90 }}>접수일</span><span style={{ minWidth: 60 }}>상태</span>
-          <span style={{ flex: 1 }} /><span>잔액</span>
-        </div>
+        {(() => {
+          const gridCols = "56px minmax(90px,1fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 72px 130px 90px";
+          return (
+            <>
+              <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700 }}>
+                <span>브랜드</span><span>대상자</span><span>법원</span><span>사건번호</span>
+                <span>접수일</span><span>상태</span><span>원/피고</span>
+                <span style={{ textAlign: "right" }}>금액</span><span style={{ textAlign: "center" }}>매칭</span>
+              </div>
 
-        {/* 리스트 */}
-        {filtered.length === 0
-          ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>민사소송 사건이 없습니다.</div>
-          : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {filtered.map(c => {
-                const debtor     = getDebtor(c.debtorId);
-                const isMatching = matchingCase?.id === c.id;
-                return (
-                  <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                    <div
-                      onClick={() => !isMatching && setSelCase(c)}
-                      style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
-                      onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
-                      onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
-                    >
-                      {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
-                      <span style={{ fontWeight: 600, minWidth: 80 }}>{c.defendant || "-"}</span>
-                      <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
-                      <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
-                      {(() => { const t = getCaseType(c.caseNumber); const clr = t==="가합"?"#8b5cf6":t==="가단"?"#3b82f6":t==="가소"?"#f59e0b":"#6b7280"; return t !== "기타" ? <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: clr+"18", color: clr, border: `1px solid ${clr}40` }}>{t}</span> : null; })()}
-                      <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.filingDate || "-"}</span>
-                      {c.progressStatus ? <Badge status={c.progressStatus} /> : null}
-                      {c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
-                      <span style={{ flex: 1 }} />
-                      {debtor
-                        ? <>
-                            <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
-                            <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                              style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
-                          </>
-                        : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                            style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
-                      }
-                    </div>
-                    {isMatching && <ManualMatchPanel caseId={c.id} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+              {/* 리스트 */}
+              {filtered.length === 0
+                ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>민사소송 사건이 없습니다.</div>
+                : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {filtered.map(c => {
+                      const debtor     = getDebtor(c.debtorId);
+                      const isMatching = matchingCase?.id === c.id;
+                      const t          = getCaseType(c.caseNumber);
+                      const tClr       = t==="가합"?"#8b5cf6":t==="가단"?"#3b82f6":t==="가소"?"#f59e0b":"#6b7280";
+                      return (
+                        <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                          <div
+                            onClick={() => !isMatching && setSelCase(c)}
+                            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "13px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10 }}
+                            onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
+                            onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
+                          >
+                            <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
+                            <span style={{ fontSize: 14, fontWeight: 600 }}>{c.defendant || "-"}</span>
+                            <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
+                              {t !== "기타" && <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 8, background: tClr+"18", color: tClr, border: `1px solid ${tClr}40`, flexShrink: 0 }}>{t}</span>}
+                            </span>
+                            <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.filingDate || "-"}</span>
+                            <span>{c.progressStatus ? <Badge status={c.progressStatus} /> : "-"}</span>
+                            <span>{c.caseStatus ? <Badge status={c.caseStatus} small /> : "-"}</span>
+                            <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600, textAlign: "right" }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
+                            <span style={{ textAlign: "center" }}>
+                              {debtor
+                                ? <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                                    style={{ fontSize: 11, padding: "3px 9px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                                : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                                    style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
+                              }
+                            </span>
+                          </div>
+                          {isMatching && <ManualMatchPanel caseId={c.id} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-        }
+              }
+            </>
+          );
+        })()}
       </div>
     );
   });
