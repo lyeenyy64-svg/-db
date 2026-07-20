@@ -8531,21 +8531,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {selCase && DetailModal()}
 
         {/* KPI */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
           <KPI label="민사소송 전체" value={`${mc.length}건`}
             sub={config.brands.filter(b=>brandCount(b.code)>0).map(b=>`${b.name} ${brandCount(b.code)}`).join(" / ")}
-            color="#10b981" />
+            color="#10b981" onClick={() => setTypeF("전체")} active={typeF === "전체"} />
           <KPI label="가합 (합의부)" value={`${typeCount("가합")}건`}
             sub={`가단 ${typeCount("가단")}건`}
-            color="#8b5cf6" />
+            color="#8b5cf6" onClick={() => setTypeF("가합")} active={typeF === "가합"} />
           <KPI label="가소 (소액)" value={`${typeCount("가소")}건`}
             sub={`소액사건`}
-            color="#f59e0b" />
-          {config.brands.slice(0,1).map(b => (
-            <KPI key={b.code} label={b.name} value={`${brandCount(b.code)}건`}
-              sub={config.brands.slice(1).filter(b2=>brandCount(b2.code)>0).map(b2=>`${b2.name} ${brandCount(b2.code)}`).join(" / ")}
-              color={b.color} />
-          ))}
+            color="#f59e0b" onClick={() => setTypeF("가소")} active={typeF === "가소"} />
         </div>
 
         {/* 사건번호 유형 탭 */}
