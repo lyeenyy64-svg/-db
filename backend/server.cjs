@@ -627,8 +627,8 @@ app.get("/api/debtors", (req, res) => {
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
            final_balance_finance AS finalBalanceFinance,
            final_balance_legal AS finalBalanceLegal,
-           (SELECT GROUP_CONCAT(name, ',') FROM debtor_guarantors WHERE debtor_id = id) AS guarantors_str
-    FROM v_debtors
+           (SELECT GROUP_CONCAT(name, ',') FROM debtor_guarantors WHERE debtor_id = vd.id) AS guarantors_str
+    FROM v_debtors vd
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY final_balance_legal DESC
   `;
