@@ -6414,9 +6414,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     // 단일 사건 행 (지급명령/압류)
     // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
+    // 컬럼: 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
+    const legalGridCols = "56px 90px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
     const CaseRow = useStableComponent(({ c, kind }) => {
       const kindBadge = (
-        <span style={{ minWidth: 88, textAlign: "center", flexShrink: 0, fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30` }}>{kind}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30` }}>{kind}</span>
       );
 
       if (kind === "형사고소") {
@@ -6424,21 +6426,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         return (
           <div
             onClick={() => openComplaint(c)}
-            style={{ background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", cursor: "pointer", transition: "background 0.1s" }}
+            style={{ background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", cursor: "pointer", transition: "background 0.1s", padding: "13px 16px", display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, textAlign: "center" }}
             onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
             onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", flexWrap: "wrap" }}>
-              {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
-              {kindBadge}
-              <span style={{ fontWeight: 600, minWidth: 80 }}>{c.debtorName || "-"}</span>
-              <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.policeStation || "-"}</span>
-              <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.charge || "-"}</span>
-              <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{c.complaintDate || "-"}</span>
-              <Badge status={c.status || "준비중"} small />
-              <span style={{ flex: 1 }} />
-              {debtor && <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>}
-            </div>
+            <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
+            <span>{kindBadge}</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{c.debtorName || "-"}</span>
+            <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.policeStation || "-"}</span>
+            <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.charge || "-"}</span>
+            <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.complaintDate || "-"}</span>
+            <span><Badge status={c.status || "준비중"} small /></span>
+            <span>-</span>
+            <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
+            <span>-</span>
           </div>
         );
       }
@@ -6460,30 +6461,28 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           <div
             onClick={() => !isMatching && setSelCase({ ...c, _kind: isAD ? "ad" : "legal" })}
-            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "11px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "13px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, textAlign: "center" }}
             onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
             onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
           >
-            {c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : <span style={{ width: 22 }} />}
-            {kindBadge}
-            <span style={{ fontWeight: 600, minWidth: 80 }}>{name || "-"}</span>
-            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 100 }}>{c.court}</span>
-            <span className="mono" style={{ fontSize: 11, color: "var(--tm)", minWidth: 130 }}>{c.caseNumber}</span>
-            <span style={{ fontSize: 12, color: "var(--ts)", minWidth: 90 }}>{dateVal || "-"}</span>
-            {statusVal ? <Badge status={statusVal} /> : null}
-            {!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : null}
-            {inquiryBadge}
-            <span style={{ flex: 1 }} />
-            {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
-            {debtor
-              ? <>
-                  <span className="mono" style={{ fontSize: 12, color: "var(--ok)", fontWeight: 600 }}>{fmt(debtor.finalBalanceLegal)}</span>
-                  <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                    style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
-                </>
-              : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
-                  style={{ fontSize: 11, padding: "3px 9px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
-            }
+            <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
+            <span>{kindBadge}</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{name || "-"}</span>
+            <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
+            <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
+            <span style={{ fontSize: 13, color: "var(--ts)" }}>{dateVal || "-"}</span>
+            <span>{statusVal ? <Badge status={statusVal} /> : "-"}</span>
+            <span>{!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : (inquiryBadge || "-")}</span>
+            <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
+              {debtor
+                ? <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                    style={{ fontSize: 11, padding: "3px 9px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
+                : <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
+                    style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer", fontWeight: 600 }}>연결</button>
+              }
+            </span>
           </div>
           {isMatching && <ManualMatchPanel caseId={c.id} ovKey={ovKey} dataKey={dataKey} onClose={() => { setMatchingCase(null); setMatchQ(""); }} />}
         </div>
@@ -6764,13 +6763,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
 
         {/* 리스트 헤더 */}
-        <div style={{ display: "flex", gap: 10, padding: "4px 16px", fontSize: 11, color: "var(--ts)", fontWeight: 600 }}>
-          <span style={{ width: 22 }} /><span style={{ minWidth: 88 }}>구분</span>
-          <span style={{ minWidth: 80 }}>채무자명</span>
-          <span style={{ minWidth: 100 }}>법원/기관</span><span style={{ minWidth: 130 }}>사건번호/죄명</span>
-          <span style={{ minWidth: 90 }}>접수일</span>
-          <span style={{ minWidth: 58, cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
-          <span style={{ flex: 1 }} /><span>잔액</span>
+        <div style={{ display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
+          <span>브랜드</span><span>구분</span><span>대상자</span><span>법원/기관</span><span>사건번호/죄명</span>
+          <span>접수일</span>
+          <span style={{ cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
+          <span>원/피고</span><span>잔액</span><span>매칭</span>
         </div>
 
         {/* 지급명령/압류/재산명시·재산조회/형사고소 통합 리스트 */}
