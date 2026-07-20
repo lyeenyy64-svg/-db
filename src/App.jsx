@@ -8450,8 +8450,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {selCase.brand && <BrandBadge code={selCase.brand} brands={config.brands} />}
               <span style={{ fontSize: 17, fontWeight: 700 }}>{selCase.defendant}</span>
-              <Badge status="민사소송" />
-              {selCase.caseStatus && <Badge status={selCase.caseStatus} small />}
             </div>
             <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
@@ -8493,19 +8491,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   ))}
                 </div>
             }
-          </div>
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
-            {debtor ? (
-              <>
-                <DL label="이름"      val={debtor.name} />
-                <DL label="브랜드"    val={debtor.brandName || debtor.brand} />
-                <DL label="분류"      val={debtor.category} />
+            {debtor && (
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
                 <DL label="담당자"    val={debtor.assignee} />
                 <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
-              </>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
+              </div>
             )}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
