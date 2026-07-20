@@ -8459,10 +8459,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <DL label="사건번호"    val={selCase.caseNumber} />
             <DL label="원고(채권자)" val={selCase.plaintiff} />
             <DL label="피고(채무자)" val={selCase.defendant} />
-            <DL label="접수일자"    val={selCase.filingDate} />
             <DL label="기일시간"    val={selCase.hearingTime} />
             <DL label="기일장소"    val={selCase.hearingLocation} />
-            <DL label="진행상황"    val={selCase.progressStatus} />
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
@@ -8491,12 +8489,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   ))}
                 </div>
             }
-            {debtor && (
-              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
-                <DL label="담당자"    val={debtor.assignee} />
-                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
-              </div>
-            )}
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
+              <DL label="접수일자"    val={selCase.filingDate} />
+              <DL label="진행상황"    val={selCase.progressStatus} />
+              {debtor && <DL label="담당자"    val={debtor.assignee} />}
+              {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             {debtor && (
