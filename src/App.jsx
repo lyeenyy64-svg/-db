@@ -1856,7 +1856,7 @@ export default function App() {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: ex?.guarantors || [],
+          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
           history: ex?.history || [],
           phoneHistory: [],
           monthlyCollected: {},
@@ -2214,7 +2214,7 @@ export default function App() {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: ex?.guarantors || [],
+          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
           history: ex?.history || [],
           phoneHistory: [], monthlyCollected: {},
         };
