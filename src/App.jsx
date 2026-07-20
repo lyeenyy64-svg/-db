@@ -8586,7 +8586,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div key={c.id} style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                           <div
                             onClick={() => !isMatching && setSelCase(c)}
-                            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "13px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10 }}
+                            style={{ background: "var(--card)", borderRadius: isMatching ? "10px 10px 0 0" : 10, border: "1px solid var(--brd)", borderBottom: isMatching ? "none" : "1px solid var(--brd)", padding: "13px 16px", cursor: "pointer", display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, textAlign: "center" }}
                             onMouseEnter={e => { if (!isMatching) e.currentTarget.style.background = "var(--hover)"; }}
                             onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
                           >
@@ -8597,8 +8597,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.filingDate || "-"}</span>
                             <span>{c.progressStatus ? <Badge status={c.progressStatus} /> : "-"}</span>
                             <span>{c.caseStatus ? <Badge status={c.caseStatus} small /> : "-"}</span>
-                            <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600, textAlign: "right" }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
-                            <span style={{ textAlign: "center" }}>
+                            <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
+                            <span>
                               {debtor
                                 ? <button onClick={e => { e.stopPropagation(); setMatchingCase({ id: c.id }); setMatchQ(""); }}
                                     style={{ fontSize: 11, padding: "3px 9px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>재매칭</button>
