@@ -12,6 +12,12 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+// 접수일 등 날짜 문자열을 정렬용 숫자(YYYYMMDD)로 정규화. 구분자(".", "-", "/")와
+// 0패딩 여부가 데이터 소스별로 달라 문자열 그대로 비교하면 순서가 깨지므로 사용.
+const dateSortKey = (s) => {
+  const m = String(s || "").match(/^(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : null;
+};
 const daysUntil = (d) => (d ? Math.ceil((new Date(d) - new Date()) / 864e5) : Infinity);
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
@@ -6170,6 +6176,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         if (typeof va === "number" || typeof vb === "number") {
           return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
         }
+        if (sortField === "date") {
+          const ka = dateSortKey(va), kb = dateSortKey(vb);
+          if (ka !== null && kb !== null) return sortDir === "asc" ? ka - kb : kb - ka;
+        }
         const sa = String(va || ""), sb = String(vb || "");
         return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
       });
@@ -8499,6 +8509,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const va = get(a), vb = get(b);
         if (typeof va === "number" || typeof vb === "number") {
           return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        if (sortField === "date") {
+          const ka = dateSortKey(va), kb = dateSortKey(vb);
+          if (ka !== null && kb !== null) return sortDir === "asc" ? ka - kb : kb - ka;
         }
         const sa = String(va || ""), sb = String(vb || "");
         return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
