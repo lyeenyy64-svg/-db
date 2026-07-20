@@ -6430,10 +6430,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 단일 사건 행 (지급명령/압류)
     // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
     // 컬럼: 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
-    const legalGridCols = "56px 90px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
+    const legalGridCols = "56px 128px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
     const CaseRow = useStableComponent(({ c, kind }) => {
       const kindBadge = (
-        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30` }}>{kind}</span>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30`, whiteSpace: "nowrap" }}>{kind}</span>
       );
 
       if (kind === "형사고소") {
