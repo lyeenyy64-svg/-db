@@ -5897,7 +5897,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setExtractingAddr(true);
       setExtractAddrProgress({ done: 0, total: missingAddr.length });
       for (let i = 0; i < missingAddr.length; i++) {
-        try { await fetch(`/api/debtor/${missingAddr[i].id}/extract-address`, { method: "POST" }); } catch {}
+        // idx/total을 같이 보내면 서버 pm2 로그에 "(4/497) 홍길동"처럼 남아서, 화면 진행률과
+        // 로그를 대조해 어느 채무자에서 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
+        try { await fetch(`/api/debtor/${missingAddr[i].id}/extract-address?idx=${i + 1}&total=${missingAddr.length}`, { method: "POST" }); } catch {}
         setExtractAddrProgress({ done: i + 1, total: missingAddr.length });
       }
       setExtractingAddr(false);

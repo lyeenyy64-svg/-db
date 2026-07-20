@@ -2631,7 +2631,10 @@ function ocrPdfForResident(pdfPath) {
   return new Promise((resolve) => {
     // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
     // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
-    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 240000, windowsHide: true });
+    // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
+    // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
+    // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
+    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2668,7 +2671,8 @@ function ocrPdfForCreditScore(pdfPath) {
 function ocrPdfForCreditAddress(pdfPath) {
   return new Promise((resolve) => {
     // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
-    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 240000, windowsHide: true });
+    // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
+    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2689,12 +2693,16 @@ async function lookupResidentDetails(debtorId, debtor) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
+  // 후보 파일을 5개→2개로 줄임 — 파일마다 OCR이 실패하면 타임아웃까지 기다려야 해서,
+  // 배치로 여러 채무자를 순회할 때 후보를 다 시도하면 한 명당 최악의 경우 너무 오래 걸린다.
+  // 보통 가장 최근 파일에서 바로 성공하므로 2개면 충분하고, 그래도 실패하면 상세화면의
+  // "재조회"로 다시 시도할 수 있다.
   const rows = db.prepare(
     `SELECT file_path, filename, parsed_date FROM file_index
      WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
      AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
      AND ext = 'pdf'
-     ORDER BY parsed_date DESC LIMIT 5`
+     ORDER BY parsed_date DESC LIMIT 2`
   ).all(`%${kor}%`, `%${kor}%`);
 
   for (const c of rows) {
@@ -2895,12 +2903,13 @@ async function lookupCreditAddress(debtor) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
+  // 후보 파일을 5개→2개로 줄임 (사유는 lookupResidentDetails 주석 참고)
   const rows = db.prepare(
     `SELECT file_path, filename, parsed_date FROM file_index
      WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
      AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
      AND ext = 'pdf'
-     ORDER BY parsed_date DESC LIMIT 5`
+     ORDER BY parsed_date DESC LIMIT 2`
   ).all(`%${kor}%`, `%${kor}%`);
 
   for (const c of rows) {
@@ -2965,14 +2974,23 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
 // 채무자 한 명에 대해 비어있는 주소 컬럼(초본/CB)만 골라 OCR 추출을 시도한다.
 // lookupResidentDetails/lookupCreditAddress 둘 다 이미 값이 있는 컬럼은 덮어쓰지 않으므로
 // 안전하게 둘 다 호출할 수 있다 — "전체 채무자 주소 추출" 배치와 수동 추출 버튼이 공유해서 쓴다.
-async function extractAddressForDebtor(debtor) {
+// label(예: "(4/497) 홍길동")을 넘기면 pm2 로그에 시작/완료가 남아 어느 채무자에서
+// 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
+async function extractAddressForDebtor(debtor, label) {
+  const tag = label || debtor.name;
   const result = { residentOk: false, creditOk: false };
+  const parts = [];
   if (!debtor.resident_address) {
-    try { const r = await lookupResidentDetails(debtor.id, debtor); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${debtor.name} 초본 오류:`, e.message); }
+    console.log(`[주소추출] ${tag} 초본 조회 시작`);
+    try { const r = await lookupResidentDetails(debtor.id, debtor); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} 초본 오류:`, e.message); }
+    parts.push(`초본 ${result.residentOk ? "성공" : "실패"}`);
   }
   if (!debtor.latest_address) {
-    try { const r = await lookupCreditAddress(debtor); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${debtor.name} CB 오류:`, e.message); }
+    console.log(`[주소추출] ${tag} CB보고서 조회 시작`);
+    try { const r = await lookupCreditAddress(debtor); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} CB 오류:`, e.message); }
+    parts.push(`CB ${result.creditOk ? "성공" : "실패"}`);
   }
+  console.log(`[주소추출] ${tag} 완료 — ${parts.length ? parts.join(", ") : "둘 다 이미 있음(스킵)"}`);
   return result;
 }
 
@@ -2987,7 +3005,9 @@ app.get("/api/debtors/missing-address", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
 });
 
-// 채무자 한 명의 비어있는 주소를 즉시 추출 (프론트 "전체 채무자 주소 추출" 버튼이 순회 호출)
+// 채무자 한 명의 비어있는 주소를 즉시 추출 (프론트 "전체 채무자 주소 추출" 버튼이 순회 호출).
+// 프론트가 idx/total 쿼리를 같이 보내주면 pm2 로그에 "(4/497) 홍길동"처럼 남아, 화면에
+// 표시된 진행률과 로그를 대조해서 어느 채무자에서 멈췄는지/그냥 느린지 확인할 수 있다.
 app.post("/api/debtor/:id/extract-address", async (req, res) => {
   try {
     const debtor = db.prepare(
@@ -2996,7 +3016,9 @@ app.post("/api/debtor/:id/extract-address", async (req, res) => {
        FROM debtors WHERE id = ?`
     ).get(req.params.id);
     if (!debtor) return res.json({ ok: false, error: "채무자 없음" });
-    const result = await extractAddressForDebtor(debtor);
+    const { idx, total } = req.query;
+    const label = idx && total ? `(${idx}/${total}) ${debtor.name}` : null;
+    const result = await extractAddressForDebtor(debtor, label);
     res.json({ ok: true, ...result });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -3182,8 +3204,9 @@ async function runMonthlyAddressBatch() {
      WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
   ).all();
   let extracted = 0;
-  for (const debtor of targets) {
-    const r = await extractAddressForDebtor(debtor);
+  for (let i = 0; i < targets.length; i++) {
+    const debtor = targets[i];
+    const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`);
     if (r.residentOk || r.creditOk) extracted++;
   }
 
