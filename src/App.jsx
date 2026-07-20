@@ -294,6 +294,11 @@ const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 // case_notes_{caseId}: [{id, createdAt, content, createdBy}] — 날짜/작성자 자동 기재
 const getCaseNotes = (id) => { try { return JSON.parse(localStorage.getItem(`case_notes_${id}`) || "[]"); } catch { return []; } };
 const saveCaseNotes = (id, arr) => { localStorage.setItem(`case_notes_${id}`, JSON.stringify(arr)); kvPut(`case_notes_${id}`, arr); };
+
+// ─── 소송 사건 이벤트 날짜 (localStorage + DB 공유 저장) ────
+// case_event_{caseId}: "YYYY-MM-DD" — 기일 등 다가오는 이벤트 알림 기준일
+const getCaseEventDate = (id) => { try { return JSON.parse(localStorage.getItem(`case_event_${id}`) || "null"); } catch { return null; } };
+const saveCaseEventDate = (id, date) => { localStorage.setItem(`case_event_${id}`, JSON.stringify(date)); kvPut(`case_event_${id}`, date); };
 const fmtDateTime = (iso) => {
   if (!iso) return "-";
   const dt = new Date(iso);
@@ -1775,6 +1780,7 @@ export default function App() {
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
+  const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
   const [aiMessages, setAiMessages] = useState([
     { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
@@ -8334,9 +8340,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [matchQ,       setMatchQ]       = useState("");
     const [caseNotes,    setCaseNotes]    = useState([]);
     const [noteDraft,    setNoteDraft]    = useState("");
-    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); }, [selCase?.id]);
+    const [eventDateDraft, setEventDateDraft] = useState("");
+    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); setEventDateDraft(selCase ? (getCaseEventDate(selCase.id) || "") : ""); }, [selCase?.id]);
+    const handleEventDateChange = (val) => {
+      if (!selCase) return;
+      setEventDateDraft(val);
+      saveCaseEventDate(selCase.id, val || null);
+    };
 
     const mc = data.minsaCases || [];
+
+    useEffect(() => {
+      if (!minsaOpenCaseId) return;
+      const found = mc.find(c => c.id === minsaOpenCaseId);
+      if (found) setSelCase(found);
+      setMinsaOpenCaseId(null);
+    }, [minsaOpenCaseId, mc]);
 
     const getCaseType = (caseNumber) => {
       if (!caseNumber) return "기타";
@@ -8475,6 +8494,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }}
               />
               <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: "var(--tm)" }}>이벤트 날짜</span>
+                <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
+                  style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+              </div>
             </div>
             {caseNotes.length === 0
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
@@ -9307,11 +9331,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             const dOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
             const yestStr = dOffset(-1), todayStr = dOffset(0), tmrwStr = dOffset(1);
             const scheds = data.installmentSchedules || [];
+            const minsaEventCases = (data.minsaCases || []).filter(c => {
+              const ev = getCaseEventDate(c.id);
+              if (!ev) return false;
+              const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
+              return diffDays >= 0 && diffDays <= 7;
+            });
             const items = [
               { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
+              { l: "민사소송 이벤트", v: `${minsaEventCases.length}건`, onClick: () => { setTab("minsa"); if (minsaEventCases[0]) setMinsaOpenCaseId(minsaEventCases[0].id); } },
             ];
             return items.map((x, i) => (
               <div key={i} onClick={x.onClick}
