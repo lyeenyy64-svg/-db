@@ -308,6 +308,27 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v4] "알수없음" ${removedUnknown.changes}건, "진단테스트" ${removedDiag.changes}건, 테스트용 kv 키 ${testKeys.length}개 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v4', '1')").run();
   }
+  // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
+  // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
+  // 저장 시각) 묶음으로 근사 복원해서 user_activity_log에 한 번만 채워 넣는다 (1회만 실행).
+  const patchUnifyDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_debtor_patch_unify_v1'").get();
+  if (!patchUnifyDone) {
+    const grouped = db.prepare(`
+      SELECT changed_by AS user, changed_at AS ts, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
+      FROM debtor_edit_log WHERE changed_by != '알수없음'
+      GROUP BY changed_by, debtor_id, changed_at
+    `).all();
+    const insBackfill = db.prepare("INSERT INTO user_activity_log (type, user_name, bytes, path, ts) VALUES ('data_input', ?, ?, '/api/debtors/:id', ?)");
+    let backfilled = 0;
+    const backfillTx = db.transaction(() => {
+      for (const r of grouped) {
+        if (r.bytes > 0) { insBackfill.run(r.user, r.bytes, r.ts); backfilled++; }
+      }
+    });
+    backfillTx();
+    console.log(`[stats_debtor_patch_unify_v1] 채무자 PATCH 이력 ${backfilled}건을 통계용 액션 단위로 백필 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_debtor_patch_unify_v1', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
@@ -1884,22 +1905,29 @@ app.patch("/api/debtors/:id", (req, res) => {
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
     }
 
-    // 변경 항목을 debtor_edit_log에 기록
+    // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
     if (oldRow && changedJsKeys.length > 0) {
       const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
       const insLog = db.prepare(
         "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
       );
+      let statsBytes = 0;
       const logTx = db.transaction(() => {
         for (const jsKey of changedJsKeys) {
           const oldVal = String(oldRow[jsKey] ?? '');
           const newVal = String(coercedVals[jsKey] ?? '');
           if (oldVal !== newVal) {
             insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
+            statsBytes += newVal.length;
           }
         }
       });
       logTx();
+      // 어드민 통계용: 필드가 몇 개 바뀌었든 이 PATCH 요청은 kv 저장과 동일하게
+      // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
+      if (statsBytes > 0 && _userName !== '알수없음') {
+        insertActivityLog.run("data_input", _userName, statsBytes, req.path);
+      }
     }
 
     // 연대보증인 업데이트 (기존 삭제 후 재삽입)
@@ -2441,37 +2469,22 @@ app.get("/api/admin/stats", (req, res) => {
       ORDER BY period DESC
     `).all(STATS_START_DATE);
 
-    const volumeBuckets = (len) => {
-      const fromActivity = db.prepare(`
-        SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-        FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
-        GROUP BY period, user
-      `).all(STATS_START_DATE);
-      const fromEditLog = db.prepare(`
-        SELECT substr(changed_at,1,${len}) AS period, changed_by AS user, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
-        FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음'
-        GROUP BY period, user
-      `).all(STATS_START_DATE);
-      const merged = new Map();
-      for (const r of [...fromActivity, ...fromEditLog]) {
-        const key = r.period + " " + r.user;
-        merged.set(key, (merged.get(key) || 0) + (r.bytes || 0));
-      }
-      return [...merged.entries()]
-        .map(([key, bytes]) => { const [period, user] = key.split(" "); return { period, user, bytes }; })
-        .sort((a, b) => b.period.localeCompare(a.period));
-    };
+    // 채무자 PATCH도 이제 kv 저장과 동일하게 저장 1건당 user_activity_log에 한 번만
+    // 기록되므로(PATCH /api/debtors/:id 핸들러 참고), 입력량은 이 테이블 하나만 보면 된다 —
+    // debtor_edit_log(필드별 상세)를 따로 더하면 액션 단위와 필드 단위가 다시 섞여버린다.
+    const volumeBuckets = (len) => db.prepare(`
+      SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
+      GROUP BY period, user
+      ORDER BY period DESC
+    `).all(STATS_START_DATE);
 
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
 
-    // "총 수정 건수"는 채무자 필드 수정(debtor_edit_log)뿐 아니라, 신용분석/협의/TodoList
-    // 등 kvPut 기반 저장(user_activity_log의 data_input)까지 합산해야 실제 작업량을 반영한다 —
-    // debtor_edit_log만 세면 kvPut으로 저장되는 대부분의 작업이 0건으로 보이게 된다.
-    const editSummary = db.prepare(`
-      SELECT changed_by AS user, COUNT(*) AS cnt, MAX(changed_at) AS lastAt
-      FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음' GROUP BY changed_by
-    `).all(STATS_START_DATE);
+    // "총 수정 건수"는 kv 저장(협의/TodoList/신용분석 등)과 채무자 PATCH를 합쳐 하나의
+    // user_activity_log(data_input)만 보고 센다 — 두 저장 방식 모두 "저장 액션 1건 = 1행"으로
+    // 통일되어 있어(PATCH /api/debtors/:id 핸들러 참고) debtor_edit_log를 따로 셀 필요가 없다.
     const dataInputSummary = db.prepare(`
       SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
       FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
@@ -2487,7 +2500,6 @@ app.get("/api/admin/stats", (req, res) => {
       if (lastAt && (!cur.lastActiveAt || lastAt > cur.lastActiveAt)) cur.lastActiveAt = lastAt;
       summaryMap.set(user, cur);
     };
-    for (const r of editSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of dataInputSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of heartbeatSummary) touch(r.user, 0, r.lastAt);
 
