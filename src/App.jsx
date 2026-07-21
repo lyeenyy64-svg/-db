@@ -6772,7 +6772,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const handleAddNote = () => {
       if (!selCase || !noteDraft.trim()) return;
-      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      // 메모 추가 시점에 이벤트 날짜가 입력돼 있으면(위 "이벤트 날짜" 입력란) 그 메모에도
+      // 같이 기록해둔다 — 목록에서 어떤 메모가 이벤트와 연결된 것인지 아이콘으로 표시하기 위함.
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음", eventDate: eventDateDraft || null }, ...caseNotes];
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
       setNoteDraft("");
@@ -6969,6 +6971,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
+                      {n.eventDate && <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#8b5cf618", color: "#8b5cf6", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
@@ -8786,7 +8789,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const handleAddNote = () => {
       if (!selCase || !noteDraft.trim()) return;
-      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      // 메모 추가 시점에 이벤트 날짜가 입력돼 있으면(위 "이벤트 날짜" 입력란) 그 메모에도
+      // 같이 기록해둔다 — 목록에서 어떤 메모가 이벤트와 연결된 것인지 아이콘으로 표시하기 위함.
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음", eventDate: eventDateDraft || null }, ...caseNotes];
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
       setNoteDraft("");
@@ -8916,6 +8921,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
+                      {n.eventDate && <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#8b5cf618", color: "#8b5cf6", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
