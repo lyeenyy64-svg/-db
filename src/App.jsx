@@ -1491,12 +1491,15 @@ const issueAuto = { fontSize: 12, color: "var(--tm)" };
 const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, children }) => {
   const toggle = (mode) => setViewMode(viewMode === mode ? "all" : mode);
   const btn = (active) => ({ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer", background: active ? "#000" : "var(--bg2)", color: active ? "#fff" : "var(--acc)" });
+  // 완료/삭제 화면에서 [등록]을 누르면 곧바로 새 항목을 만들지 않고, 우선 등록현황(전체) 화면으로
+  // 돌아가기만 한다 — 이미 등록현황 화면일 때 다시 누르면 그때 새 항목이 추가된다.
+  const handleAddClick = () => { if (viewMode !== "all") { setViewMode("all"); return; } onAdd(); };
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={onAdd} style={btn(false)}>등록</button>
+          <button onClick={handleAddClick} style={btn(false)}>등록</button>
           {showComplete && <button onClick={() => toggle("completed")} style={btn(viewMode === "completed")}>완료</button>}
           <button onClick={() => toggle("trash")} style={btn(viewMode === "trash")}>삭제</button>
         </div>
@@ -1519,7 +1522,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false }); }}>
+      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1589,7 +1592,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false }); }}>
+      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1682,7 +1685,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="주요 협의 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} showComplete={false}
-      onAdd={() => { setViewMode("all"); addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null, deleted: false }); }}>
+      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1732,7 +1735,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false }); }}>
+      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
