@@ -9013,7 +9013,61 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       onRemove: (idx) => { setConfig(p => ({ ...p, [key]: p[key].filter((_, i) => i !== idx) })); showToast("삭제 완료"); },
     });
 
-    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서","서류 폴더"];
+    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서","서류 폴더","AI 종합분석"];
+
+    // 예전(줄글/서술형) 프롬프트로 만들어진 "AI 종합분석" 기타사항을, 지금 프롬프트(단답형 목록)로
+    // 일괄 재생성한다. 서술형인 항목만 골라서 다시 만들기 때문에 이미 단답형인 항목은 건드리지 않음.
+    const AnalysisFormatConfig = useStableComponent(() => {
+      const [status, setStatus] = useState(null); // { total, outdated }
+      const [batch, setBatch] = useState(null); // { running, done, total }
+
+      const loadStatus = () => {
+        fetch("/api/debtors/analysis-format-status").then(r => r.json()).then(d => setStatus(d.ok ? d : null)).catch(() => {});
+      };
+      useEffect(() => { loadStatus(); }, []);
+
+      useEffect(() => {
+        let timer = null;
+        const poll = () => {
+          fetch("/api/debtors/batch-regenerate-analysis/status").then(r => r.json()).then(s => {
+            if (!s.ok) return;
+            setBatch(s.running ? s : null);
+            if (!s.running && batch?.running) { loadStatus(); showToast(s.error ? `일괄 재생성 중 오류: ${s.error}` : "AI 종합분석 일괄 재생성 완료"); }
+          }).catch(() => {}).finally(() => { timer = setTimeout(poll, 4000); });
+        };
+        poll();
+        return () => { if (timer) clearTimeout(timer); };
+      }, [batch?.running]);
+
+      const start = async () => {
+        try {
+          const r = await fetch("/api/debtors/batch-regenerate-analysis", { method: "POST" }).then(res => res.json());
+          if (!r.ok) { showToast(r.error); return; }
+          if (!r.started) { showToast(r.message || "대상 없음"); return; }
+          setBatch({ running: true, done: 0, total: r.total });
+          showToast(`서버에서 ${r.total}건 일괄 재생성을 시작했습니다 — 창을 닫아도 계속 진행됩니다`);
+        } catch { showToast("요청에 실패했습니다"); }
+      };
+
+      return (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>AI 종합분석 형식 일괄 재생성</div>
+          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 16, lineHeight: 1.6 }}>
+            예전 프롬프트로 생성돼 줄글(서술형)로 남아있는 "채무자 및 연대보증인 종합분석"을,<br />
+            지금 쓰는 단답형(목록) 형식으로 다시 생성합니다. 이미 단답형인 항목은 건드리지 않습니다.
+          </div>
+          {status && (
+            <div style={{ fontSize: 12, marginBottom: 12 }}>
+              전체 <b>{status.total}</b>건 중 서술형 <b style={{ color: status.outdated > 0 ? "#dc2626" : "var(--tp)" }}>{status.outdated}</b>건
+            </div>
+          )}
+          <button onClick={start} disabled={!status || status.outdated === 0 || batch?.running}
+            style={{ padding: "8px 16px", borderRadius: 8, background: (!status || status.outdated === 0 || batch?.running) ? "var(--bg2)" : "var(--acc)", color: (!status || status.outdated === 0 || batch?.running) ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: (!status || status.outdated === 0 || batch?.running) ? "default" : "pointer" }}>
+            {batch?.running ? `재생성 중... (${batch.done}/${batch.total})` : `서술형 ${status?.outdated || 0}건 일괄 재생성`}
+          </button>
+        </div>
+      );
+    });
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -9044,6 +9098,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {settingTab === "죄명" && <ListEditor title="죄명 관리" items={config.chargeTypes} {...updateList("chargeTypes")} />}
           {settingTab === "경찰서" && <ListEditor title="경찰서 관리" items={config.policeStations} {...updateList("policeStations")} />}
           {settingTab === "서류 폴더" && <DocsFolderConfig />}
+          {settingTab === "AI 종합분석" && <AnalysisFormatConfig />}
         </>}
 
         {/* 사용자 관리 */}

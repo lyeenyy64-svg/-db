@@ -3425,14 +3425,16 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
   }
 });
 
-// 채무자+연대보증인 종합분석 — 신용점수/법적절차내역/히스토리를 근거로 향후 채권회수를
-// 위해 체크할 부분에 대한 실무 의견을 생성한다. (채무자 상세 "기타사항"에 추가하는 용도)
-app.post("/api/debtor/:id/analysis", async (req, res) => {
+const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";
+
+// 채무자+연대보증인 종합분석 텍스트 생성 (OpenAI 호출만, DB 저장은 호출부 책임).
+// 단건 API(/api/debtor/:id/analysis)와 일괄 재생성 배치가 이 함수를 공유한다.
+async function generateDebtorAnalysisText(debtorId) {
   const openaiClient = getOpenAIClient();
-  if (!openaiClient) return res.status(503).json({ ok: false, error: "OPENAI_API_KEY 미설정" });
+  if (!openaiClient) return { ok: false, error: "OPENAI_API_KEY 미설정" };
   try {
-    const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(req.params.id);
-    if (!d) return res.json({ ok: false, error: "채무자 없음" });
+    const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(debtorId);
+    if (!d) return { ok: false, error: "채무자 없음" };
 
     const guarantorNames = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(d.id).map(r => r.name);
     const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(d.id);
@@ -3509,11 +3511,88 @@ ${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity
       temperature: 0.3,
     });
 
-    res.json({ ok: true, text: completion.choices[0].message.content.trim() });
+    return { ok: true, text: completion.choices[0].message.content.trim() };
   } catch (err) {
     console.error("종합분석 오류:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
+    return { ok: false, error: err.message };
   }
+}
+
+app.post("/api/debtor/:id/analysis", async (req, res) => {
+  const result = await generateDebtorAnalysisText(req.params.id);
+  res.status(result.ok ? 200 : (result.error === "OPENAI_API_KEY 미설정" ? 503 : 500)).json(result);
+});
+
+// 기존 기타사항(key_notes)의 마커 이전 텍스트는 보존하고, 마커 이후(AI 종합분석 블록)만 교체한다.
+// 프론트(DebtorDetail.runAnalysis)와 동일한 병합 규칙 — 일괄 재생성도 같은 결과가 나오도록 서버에서 재사용.
+function mergeAnalysisIntoKeyNotes(existingKeyNotes, analysisText) {
+  const cur = existingKeyNotes || "";
+  const idx = cur.indexOf(ANALYSIS_MARKER);
+  const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
+  const block = `${ANALYSIS_MARKER}\n${analysisText}`;
+  return before ? `${before}\n\n${block}` : block;
+}
+
+// 마커 이후 블록에 "- "로 시작하는 줄이 하나도 없으면 예전(줄글/서술형) 프롬프트로 만들어진
+// 것으로 간주한다 — 일괄 재생성 대상을 고를 때 이미 단답형인 항목까지 다시 만들어서
+// OpenAI 비용을 낭비하지 않기 위한 판별 기준.
+function looksLikeOldFormatAnalysis(keyNotes) {
+  const idx = (keyNotes || "").indexOf(ANALYSIS_MARKER);
+  if (idx < 0) return false;
+  const block = keyNotes.slice(idx + ANALYSIS_MARKER.length, idx + ANALYSIS_MARKER.length + 1000);
+  return !/\n\s*-\s/.test(block);
+}
+
+app.get("/api/debtors/analysis-format-status", (req, res) => {
+  try {
+    const rows = db.prepare(`SELECT id FROM debtors WHERE key_notes LIKE '%' || ? || '%'`).all(ANALYSIS_MARKER);
+    let outdated = 0;
+    for (const r of rows) {
+      const row = db.prepare("SELECT key_notes FROM debtors WHERE id = ?").get(r.id);
+      if (looksLikeOldFormatAnalysis(row.key_notes)) outdated++;
+    }
+    res.json({ ok: true, total: rows.length, outdated });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+let analysisBatchStatus = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, error: null };
+const ANALYSIS_REGEN_CONCURRENCY = 3; // OpenAI 요청 동시 개수 제한 — 레이트리밋/비용 관리용 보수적 값
+
+app.post("/api/debtors/batch-regenerate-analysis", (req, res) => {
+  if (analysisBatchStatus.running) return res.json({ ok: false, error: "이미 실행 중입니다" });
+  const targets = db.prepare(`SELECT id, key_notes FROM debtors WHERE key_notes LIKE '%' || ? || '%'`).all(ANALYSIS_MARKER)
+    .filter(r => looksLikeOldFormatAnalysis(r.key_notes));
+  if (targets.length === 0) return res.json({ ok: true, started: false, message: "서술형으로 남은 항목이 없습니다" });
+
+  analysisBatchStatus = { running: true, done: 0, total: targets.length, startedAt: Date.now(), finishedAt: null, error: null };
+  res.json({ ok: true, started: true, total: targets.length });
+
+  runWithConcurrency(targets, async (row) => {
+    try {
+      const result = await generateDebtorAnalysisText(row.id);
+      if (result.ok) {
+        const fresh = db.prepare("SELECT key_notes FROM debtors WHERE id = ?").get(row.id);
+        const merged = mergeAnalysisIntoKeyNotes(fresh.key_notes, result.text);
+        db.prepare("UPDATE debtors SET key_notes = ? WHERE id = ?").run(merged, row.id);
+      } else {
+        console.error(`[종합분석 일괄재생성] ${row.id} 실패:`, result.error);
+      }
+    } catch (e) { console.error(`[종합분석 일괄재생성] ${row.id} 오류:`, e.message); }
+    analysisBatchStatus.done++;
+  }, ANALYSIS_REGEN_CONCURRENCY)
+    .then(() => {
+      analysisBatchStatus = { ...analysisBatchStatus, running: false, finishedAt: Date.now() };
+      console.log(`[종합분석 일괄재생성] 완료 — ${targets.length}건 처리`);
+      broadcast("data-changed", { method: "BATCH", path: "/api/debtors/batch-regenerate-analysis", at: Date.now() });
+    })
+    .catch(e => {
+      analysisBatchStatus = { ...analysisBatchStatus, running: false, finishedAt: Date.now(), error: e.message };
+      console.error("[종합분석 일괄재생성] 오류:", e.message);
+    });
+});
+
+app.get("/api/debtors/batch-regenerate-analysis/status", (req, res) => {
+  res.json({ ok: true, ...analysisBatchStatus });
 });
 
 // ─── 서버 기동 ──────────────────────────────────
