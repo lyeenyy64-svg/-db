@@ -1721,8 +1721,9 @@ export default function App() {
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
   const isAdmin = userPerms.admin;
-  const canEditRecord   = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
-  const canDeleteRecord = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
+  // 매니저는 누가 작성했는지와 무관하게 기록을 수정/삭제할 수 있다(작성자 본인만 가능하던 예전 제한 폐지)
+  const canEditRecord   = () => isAdmin || currentUser?.role === "manager";
+  const canDeleteRecord = () => isAdmin || currentUser?.role === "manager";
 
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
@@ -4400,8 +4401,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <td style={{ padding: "8px 16px", fontSize: 12, lineHeight: 1.6, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
                       <td style={{ width: 60, padding: "8px 10px", verticalAlign: "top" }}>
                         <div style={{ display: "flex", flexDirection: "row", gap: 4 }}>
-                          {(canEditRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
-                          {(canDeleteRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
+                          {canEditRecord(h) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
+                          {canDeleteRecord(h) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
                         </div>
                       </td>
                     </tr>
