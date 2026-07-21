@@ -6971,7 +6971,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
-                      {n.eventDate && <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>}
+                      {n.eventDate && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
+                        </div>
+                      )}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
@@ -8921,7 +8926,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
-                      {n.eventDate && <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>}
+                      {n.eventDate && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
+                        </div>
+                      )}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
