@@ -2627,14 +2627,31 @@ const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
 // 환경변수(backend/.env)로 절대경로를 지정할 수 있다.
 const PYTHON_BIN = process.env.PYTHON_BIN || "pythonw.exe";
 
-function ocrPdfForResident(pdfPath) {
+// OCR(pythonw.exe)는 CPU를 많이 써서, 배치(전체 채무자 주소 추출 등)와 화면에서 직접 여는
+// 개별 조회가 서로 아무 제약 없이 각자 pythonw.exe를 띄우면 서버 PC가 감당 못 하고 전부
+// 같이 느려진다(체감상 "조회 중..."이 끝없이 이어짐). 모든 OCR 호출이 이 슬롯을 거치게 해서
+// 전체 동시 실행 개수를 하나로 통제하고, 화면에서 직접 연 조회(priority="high")는 배치
+// 작업(priority="low")보다 항상 먼저 슬롯을 받도록 큐 앞쪽에 끼워준다.
+const OCR_MAX_CONCURRENT = 3;
+let ocrActiveCount = 0;
+const ocrHighQueue = [];
+const ocrLowQueue = [];
+function ocrSlotRelease() {
+  ocrActiveCount--;
+  const next = ocrHighQueue.shift() || ocrLowQueue.shift();
+  if (next) { ocrActiveCount++; next(); }
+}
+function withOcrSlot(fn, priority) {
+  return new Promise((resolve, reject) => {
+    const run = () => { fn().then(resolve, reject).finally(ocrSlotRelease); };
+    if (ocrActiveCount < OCR_MAX_CONCURRENT) { ocrActiveCount++; run(); }
+    else (priority === "low" ? ocrLowQueue : ocrHighQueue).push(run);
+  });
+}
+
+function spawnOcr(script, pdfPath, timeout) {
   return new Promise((resolve) => {
-    // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
-    // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
-    // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
-    // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
-    // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
-    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
+    const proc = spawn(PYTHON_BIN, [script, pdfPath], { timeout, windowsHide: true });
     let out = "";
     proc.stdout.on("data", d => { out += d.toString(); });
     proc.on("close", () => {
@@ -2644,42 +2661,27 @@ function ocrPdfForResident(pdfPath) {
   });
 }
 
-function ocrPdfForSubrogationDate(pdfPath) {
-  return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_SUBROGATION_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
-  });
+function ocrPdfForResident(pdfPath, priority) {
+  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
+  // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
+  // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
+  // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
+  // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
+  return withOcrSlot(() => spawnOcr(OCR_SCRIPT, pdfPath, 150000), priority);
 }
 
-function ocrPdfForCreditScore(pdfPath) {
-  return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_CREDIT_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
-  });
+function ocrPdfForSubrogationDate(pdfPath, priority) {
+  return withOcrSlot(() => spawnOcr(OCR_SUBROGATION_SCRIPT, pdfPath, 90000), priority);
 }
 
-function ocrPdfForCreditAddress(pdfPath) {
-  return new Promise((resolve) => {
-    // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
-    // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
-    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
-  });
+function ocrPdfForCreditScore(pdfPath, priority) {
+  return withOcrSlot(() => spawnOcr(OCR_CREDIT_SCRIPT, pdfPath, 90000), priority);
+}
+
+function ocrPdfForCreditAddress(pdfPath, priority) {
+  // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
+  // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
+  return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
 }
 
 function korName3(name) {
@@ -2689,7 +2691,7 @@ function korName3(name) {
 
 // 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
 // (예전 로직이 잘못 저장해둔 값은 덮어쓰지 않으므로, 그걸 고치려면 먼저 컬럼을 비워야 한다 — /resident-number/refresh 참고)
-async function lookupResidentDetails(debtorId, debtor) {
+async function lookupResidentDetails(debtorId, debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
@@ -2706,7 +2708,7 @@ async function lookupResidentDetails(debtorId, debtor) {
   ).all(`%${kor}%`, `%${kor}%`);
 
   for (const c of rows) {
-    const r = await ocrPdfForResident(c.file_path);
+    const r = await ocrPdfForResident(c.file_path, priority);
     if (!r.address && !r.registeredDate) continue;
 
     const updates = [], vals = [];
@@ -2878,9 +2880,16 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
       return null;
     };
 
-    // 주채무자
+    // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
+    // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
+    // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다.
     const mainResult = await findScore(debtor.name);
-    if (mainResult) entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
+    if (mainResult) {
+      entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
+      if (!debtor.credit_grade) {
+        db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
+      }
+    }
 
     // 연대보증인
     const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
@@ -2899,7 +2908,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 // debtor 행에 이미 값이 있는 컬럼은 절대 덮어쓰지 않고, 비어있는 컬럼만 골라서 채운다 —
 // 그래서 예전(수정 전) OCR 로직이 잘못 저장해둔 값은 이 함수만으로는 고쳐지지 않는다.
 // 잘못된 캐시를 다시 뽑으려면 먼저 해당 컬럼을 비워야 하고, 그건 /credit-address/refresh가 한다.
-async function lookupCreditAddress(debtor) {
+async function lookupCreditAddress(debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
@@ -2913,7 +2922,7 @@ async function lookupCreditAddress(debtor) {
   ).all(`%${kor}%`, `%${kor}%`);
 
   for (const c of rows) {
-    const r = await ocrPdfForCreditAddress(c.file_path);
+    const r = await ocrPdfForCreditAddress(c.file_path, priority);
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
@@ -2976,18 +2985,18 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
 // 안전하게 둘 다 호출할 수 있다 — "전체 채무자 주소 추출" 배치와 수동 추출 버튼이 공유해서 쓴다.
 // label(예: "(4/497) 홍길동")을 넘기면 pm2 로그에 시작/완료가 남아 어느 채무자에서
 // 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
-async function extractAddressForDebtor(debtor, label) {
+async function extractAddressForDebtor(debtor, label, priority) {
   const tag = label || debtor.name;
   const result = { residentOk: false, creditOk: false };
   const parts = [];
   if (!debtor.resident_address) {
     console.log(`[주소추출] ${tag} 초본 조회 시작`);
-    try { const r = await lookupResidentDetails(debtor.id, debtor); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} 초본 오류:`, e.message); }
+    try { const r = await lookupResidentDetails(debtor.id, debtor, priority); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} 초본 오류:`, e.message); }
     parts.push(`초본 ${result.residentOk ? "성공" : "실패"}`);
   }
   if (!debtor.latest_address) {
     console.log(`[주소추출] ${tag} CB보고서 조회 시작`);
-    try { const r = await lookupCreditAddress(debtor); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} CB 오류:`, e.message); }
+    try { const r = await lookupCreditAddress(debtor, priority); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} CB 오류:`, e.message); }
     parts.push(`CB ${result.creditOk ? "성공" : "실패"}`);
   }
   console.log(`[주소추출] ${tag} 완료 — ${parts.length ? parts.join(", ") : "둘 다 이미 있음(스킵)"}`);
@@ -3229,7 +3238,7 @@ async function runMonthlyAddressBatch() {
   addressBatchStatus.done = 0;
   let extracted = 0;
   await runWithConcurrency(targets, async (debtor, i) => {
-    const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`);
+    const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`, "low");
     if (r.residentOk || r.creditOk) extracted++;
     addressBatchStatus.done++;
   }, ADDRESS_EXTRACT_CONCURRENCY);
@@ -3429,7 +3438,7 @@ const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";
 
 // 채무자+연대보증인 종합분석 텍스트 생성 (OpenAI 호출만, DB 저장은 호출부 책임).
 // 단건 API(/api/debtor/:id/analysis)와 일괄 재생성 배치가 이 함수를 공유한다.
-async function generateDebtorAnalysisText(debtorId) {
+async function generateDebtorAnalysisText(debtorId, priority) {
   const openaiClient = getOpenAIClient();
   if (!openaiClient) return { ok: false, error: "OPENAI_API_KEY 미설정" };
   try {
@@ -3459,7 +3468,7 @@ async function generateDebtorAnalysisText(debtorId) {
          AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 3`
       ).all(`%${kor}%`, `%${kor}%`);
       for (const r of rows) {
-        const result = await ocrPdfForCreditScore(r.file_path);
+        const result = await ocrPdfForCreditScore(r.file_path, priority);
         if (result.ok && result.score) { guarantorScores.push(`${gName}: ${result.score}점`); break; }
       }
     }
@@ -3569,7 +3578,7 @@ app.post("/api/debtors/batch-regenerate-analysis", (req, res) => {
 
   runWithConcurrency(targets, async (row) => {
     try {
-      const result = await generateDebtorAnalysisText(row.id);
+      const result = await generateDebtorAnalysisText(row.id, "low");
       if (result.ok) {
         const fresh = db.prepare("SELECT key_notes FROM debtors WHERE id = ?").get(row.id);
         const merged = mergeAnalysisIntoKeyNotes(fresh.key_notes, result.text);

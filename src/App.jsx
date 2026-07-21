@@ -12,6 +12,14 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+// OCR 자동조회(초본/CB보고서)는 후보 파일이 여러 개면 순차로 최대 150초씩 걸릴 수 있고,
+// 서버가 바쁘면 대기까지 더 걸릴 수 있어 여유 있게 5분을 잡는다 — 그래도 무한정 기다리진
+// 않고, 정말 응답이 끊긴 경우엔 실패로 간주해 "조회 중..." 문구가 끝없이 남지 않게 한다.
+const fetchWithTimeout = (url, ms = 300000) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+};
 // 접수일 등 날짜 문자열을 정렬용 숫자(YYYYMMDD)로 정규화. 구분자(".", "-", "/")와
 // 0패딩 여부가 데이터 소스별로 달라 문자열 그대로 비교하면 순서가 깨지므로 사용.
 const dateSortKey = (s) => {
@@ -1919,7 +1927,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoResidentNums[sel.id] !== undefined) return;
     setAutoResidentNums(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/resident-number`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/resident-number`)
       .then(r => r.json())
       .then(data => {
         setAutoResidentNums(prev => ({ ...prev, [sel.id]: (data.ok && data.entries?.length) ? data.entries : [] }));
@@ -1935,7 +1943,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoCreditScores[sel.id] !== undefined) return;
     setAutoCreditScores(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/credit-score`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/credit-score`)
       .then(r => r.json())
       .then(data => {
         setAutoCreditScores(prev => ({ ...prev, [sel.id]: data.ok && data.entries?.length ? data.entries : [] }));
@@ -1947,7 +1955,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoSubrogationDates[sel.id] !== undefined) return;
     setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/subrogation-date`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/subrogation-date`)
       .then(r => r.json())
       .then(data => {
         setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: data.ok && data.date ? { date: data.date, filename: data.filename } : false }));
@@ -1963,7 +1971,7 @@ export default function App() {
       return;
     }
     setAutoAddresses(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/credit-address`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/credit-address`)
       .then(r => r.json())
       .then(data => {
         setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
