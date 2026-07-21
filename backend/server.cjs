@@ -3329,10 +3329,15 @@ app.get("/api/debtor/:id/subrogation-date", async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "../dist")));
-app.get("/{*splat}", (req, res) => {
+// SPA 라우팅용 폴백 — API 경로는 여기서 그냥 끝내면 안 된다. 이 핸들러가 GET을 전부
+// 매칭하는 와일드카드라서, next()를 안 부르면 이 줄 "아래"에 등록된 /api GET 라우트는
+// (앞쪽에 이미 등록된 라우트와 안 겹치는 한) 영영 도달하지 못하고 응답 없이 멈춘다 —
+// 실제로 이 문제 때문에 나중에 추가한 몇몇 /api 라우트가 응답을 영원히 안 하는 버그가 있었다.
+app.get("/{*splat}", (req, res, next) => {
   if (!req.path.startsWith("/api")) {
-    res.sendFile(path.join(__dirname, "../dist/index.html"));
+    return res.sendFile(path.join(__dirname, "../dist/index.html"));
   }
+  next();
 });
 
 // ─── AI 종합분석 ──────────────────────────────────
@@ -3616,6 +3621,12 @@ app.post("/api/debtors/batch-regenerate-analysis", (req, res) => {
 
 app.get("/api/debtors/batch-regenerate-analysis/status", (req, res) => {
   res.json({ ok: true, ...analysisBatchStatus });
+});
+
+// 어떤 라우트에도 안 걸린 /api 요청은 응답 없이 매달리는 대신 바로 404를 준다
+// (위 SPA 폴백의 next() 누락 같은 문제가 다시 생겨도 요청이 무한 대기하지 않도록 하는 안전망).
+app.use("/api", (req, res) => {
+  res.status(404).json({ ok: false, error: "not found" });
 });
 
 // ─── 서버 기동 ──────────────────────────────────
