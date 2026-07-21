@@ -628,7 +628,7 @@ function loadExcelData(cfg) {
     complaints:       getMR(MK.complaints),
     rehabilitations:  applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]),
     legalCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]),
-    minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
+    minsaCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]),
     assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
     forcedExecutions: getMR(MK.forcedExecutions),
@@ -1890,7 +1890,7 @@ export default function App() {
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
       const legalCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]);
-      const minsaCases      = [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)];
+      const minsaCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]);
       const assetDisclosures  = [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)];
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
       const installmentSchedules = installmentsRes.flatMap(p =>
@@ -8634,15 +8634,45 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setCaseNotes(arr);
     };
 
-    const DetailModal = () => {
+    const DetailModal = useStableComponent(() => {
       if (!selCase) return null;
       const debtor = getDebtor(selCase.debtorId);
+      const [isEditingCase, setIsEditingCase] = useState(false);
+      const [caseDraft, setCaseDraft] = useState(() => ({
+        court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+        plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+        hearingTime: selCase.hearingTime || "", hearingLocation: selCase.hearingLocation || "",
+        filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+      }));
+      const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
+      const startEditCase = () => {
+        setCaseDraft({
+          court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+          plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+          hearingTime: selCase.hearingTime || "", hearingLocation: selCase.hearingLocation || "",
+          filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+        });
+        setIsEditingCase(true);
+      };
+      const saveEditCase = () => {
+        saveCaseFieldOv(selCase.id, caseDraft);
+        setSelCase(prev => ({ ...prev, ...caseDraft }));
+        setData(prev => ({ ...prev, minsaCases: prev.minsaCases.map(c => c.id === selCase.id ? { ...c, ...caseDraft } : c) }));
+        setIsEditingCase(false);
+        showToast("저장 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
           <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
         </div>
       ) : null;
+      const EF = ({ label, children }) => (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1 }}>{children}</div>
+        </div>
+      );
       return (
         <Overlay onClose={() => setSelCase(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -8653,17 +8683,47 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
-            <DL label="법원"        val={selCase.court} />
-            <DL label="사건번호"    val={selCase.caseNumber} />
-            <DL label="원고(채권자)" val={selCase.plaintiff} />
-            <DL label="피고(채무자)" val={selCase.defendant} />
-            <DL label="기일시간"    val={selCase.hearingTime} />
-            <DL label="기일장소"    val={selCase.hearingLocation} />
-            <DL label="접수일자"    val={selCase.filingDate} />
-            <DL label="진행상황"    val={selCase.progressStatus} />
-            {debtor && <DL label="담당자"    val={debtor.assignee} />}
-            {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>사건 정보</div>
+              <span style={{ flex: 1 }} />
+              {isEditingCase ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={saveEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                  <button onClick={() => setIsEditingCase(false)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                </div>
+              ) : (
+                <button onClick={startEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+              )}
+            </div>
+            {isEditingCase ? (
+              <>
+                <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
+                <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="원고(채권자)"><KoreanInput value={caseDraft.plaintiff} onChange={e => setCF("plaintiff", e.target.value)} style={inp} /></EF>
+                <EF label="피고(채무자)"><KoreanInput value={caseDraft.defendant} onChange={e => setCF("defendant", e.target.value)} style={inp} /></EF>
+                <EF label="기일시간"><KoreanInput value={caseDraft.hearingTime} onChange={e => setCF("hearingTime", e.target.value)} style={inp} /></EF>
+                <EF label="기일장소"><KoreanInput value={caseDraft.hearingLocation} onChange={e => setCF("hearingLocation", e.target.value)} style={inp} /></EF>
+                <EF label="접수일자"><KoreanInput value={caseDraft.filingDate} onChange={e => setCF("filingDate", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="진행상황">
+                  <select value={caseDraft.progressStatus} onChange={e => setCF("progressStatus", e.target.value)} style={inp}>
+                    {["진행", "완료", "부분해지", "전부해지"].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </EF>
+              </>
+            ) : (
+              <>
+                <DL label="법원"        val={selCase.court} />
+                <DL label="사건번호"    val={selCase.caseNumber} />
+                <DL label="원고(채권자)" val={selCase.plaintiff} />
+                <DL label="피고(채무자)" val={selCase.defendant} />
+                <DL label="기일시간"    val={selCase.hearingTime} />
+                <DL label="기일장소"    val={selCase.hearingLocation} />
+                <DL label="접수일자"    val={selCase.filingDate} />
+                <DL label="진행상황"    val={selCase.progressStatus} />
+                {debtor && <DL label="담당자"    val={debtor.assignee} />}
+                {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+              </>
+            )}
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
@@ -8711,14 +8771,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </Overlay>
       );
-    };
+    });
 
     const brandCount = (code) => mc.filter(c => c.brand === code).length;
     const typeCount  = (type) => mc.filter(c => getCaseType(c.caseNumber) === type).length;
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {selCase && DetailModal()}
+        {selCase && <DetailModal />}
 
         {/* 사건번호 유형 박스 */}
         <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 12, padding: "10px 16px" }}>
