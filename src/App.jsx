@@ -6058,7 +6058,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
           {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
             <button onClick={runBulkAddressExtract} disabled={extractingAddr}
-              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다"
+              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다. 매일 밤 00시~06시에는 이 작업이 자동으로도 조금씩 진행되니(며칠에 걸쳐 완료), 급하지 않으면 안 눌러도 됩니다"
               style={{ padding: "8px 14px", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
               {extractingAddr
                 ? `${extractAddrProgress?.phase === "geocode" ? "좌표 변환" : "주소 추출"} 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})`

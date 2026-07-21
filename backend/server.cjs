@@ -3145,7 +3145,7 @@ app.get("/api/debtors/locations", (req, res) => {
 });
 
 // 주소 → 좌표 지오코딩 (카카오 로컬 API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
-// 라우트와 매월 자동 배치(runMonthlyAddressBatch)가 함께 쓰도록 함수로 분리했다.
+// 라우트와 야간 자동 배치(runAddressBatch)가 함께 쓰도록 함수로 분리했다.
 async function geocodeDebtorById(debtorId) {
   const debtor = db.prepare(
     `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
@@ -3223,10 +3223,21 @@ let addressBatchStatus = { running: false, phase: null, done: 0, total: 0, start
 const ADDRESS_EXTRACT_CONCURRENCY = 3; // OCR은 CPU를 많이 쓰므로 서버 PC 사양을 고려해 보수적으로 설정
 const GEOCODE_CONCURRENCY = 5; // 좌표 변환은 카카오 API 호출이라 가벼워서 좀 더 높여도 된다
 
-// 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 채무자 수만큼 OCR을 도는
-// 무거운 작업이라 수동 트리거(/api/debtors/batch-extract-addresses)와 매월 1일 새벽
-// 자동 실행(kv_store로 이번달 중복 실행 방지)에서만 호출한다.
-async function runMonthlyAddressBatch() {
+// 심야(00:00~06:00) 자동배치인지 아닌지에 따라 "지금이 그 시간대인지"를 체크한다.
+// 수동 트리거(관리자가 직접 버튼을 누른 경우)는 이 창을 무시하고 바로 돌린다 — 급하게
+// 필요하면 낮에도 쓸 수 있게. 자동 실행만 이 창 밖으로 나가면 남은 대상을 건너뛰고
+// 다음날 밤에 이어서 처리한다(이미 처리된 건 다시 안 함 — 대상 쿼리 자체가 매번
+// "아직 없는 것"만 골라오므로).
+function isNightWindow() {
+  const h = new Date().getHours();
+  return h >= 0 && h < 6;
+}
+
+// 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 수동 트리거
+// (/api/debtors/batch-extract-addresses)와 매일 밤 자동 실행(checkNightlyAddressBatch)이
+// 공유해서 쓴다. respectNightWindow가 true면(자동 실행) 창을 벗어나는 순간부터 남은
+// 대상은 건너뛰고, false면(수동 트리거) 시간대와 무관하게 끝까지 돌린다.
+async function runAddressBatch(respectNightWindow) {
   const targets = db.prepare(
     `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
             latest_address, credit_phone, credit_queried_date
@@ -3237,7 +3248,9 @@ async function runMonthlyAddressBatch() {
   addressBatchStatus.total = targets.length;
   addressBatchStatus.done = 0;
   let extracted = 0;
+  let stoppedForWindow = false;
   await runWithConcurrency(targets, async (debtor, i) => {
+    if (respectNightWindow && !isNightWindow()) { stoppedForWindow = true; addressBatchStatus.done++; return; }
     const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`, "low");
     if (r.residentOk || r.creditOk) extracted++;
     addressBatchStatus.done++;
@@ -3253,6 +3266,7 @@ async function runMonthlyAddressBatch() {
   addressBatchStatus.done = 0;
   let geocoded = 0;
   await runWithConcurrency(geoTargets, async (row) => {
+    if (respectNightWindow && !isNightWindow()) { stoppedForWindow = true; addressBatchStatus.done++; return; }
     try {
       const r = await geocodeDebtorById(row.id);
       if (r.ok) geocoded++;
@@ -3260,7 +3274,7 @@ async function runMonthlyAddressBatch() {
     addressBatchStatus.done++;
   }, GEOCODE_CONCURRENCY);
 
-  return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded };
+  return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded, stoppedForWindow };
 }
 
 // 수동 트리거 — "채무자 위치" 화면의 "전체 채무자 주소 추출" 버튼이 호출.
@@ -3271,7 +3285,7 @@ app.post("/api/debtors/batch-extract-addresses", (req, res) => {
   if (addressBatchStatus.running) return res.json({ ok: false, error: "이미 실행 중입니다" });
   addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
   res.json({ ok: true, started: true });
-  runMonthlyAddressBatch()
+  runAddressBatch(false)
     .then(result => {
       addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
       console.log(`[주소배치] 수동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
@@ -3652,30 +3666,31 @@ app.listen(PORT, () => {
   setTimeout(runAutoDocSync, 30000);
   setInterval(runAutoDocSync, 30 * 60 * 1000);
 
-  // 매월 1일 새벽 3시: 채무자 위치 지도용 주소 전체 배치 추출 + 좌표변환
-  // 채무자 수만큼 OCR을 도는 무거운 작업이라 사람들이 안 쓰는 새벽 시간에만 자동 실행하고,
-  // kv_store에 이번 달 실행 여부를 기록해 30분마다 재확인해도 같은 달에 중복 실행되지 않는다
-  // (매월 알림 발송과 동일한 안전장치 패턴).
-  const checkMonthlyAddressBatch = () => {
-    const now = new Date();
-    if (now.getDate() !== 1 || now.getHours() !== 3) return;
-    if (addressBatchStatus.running) return; // 수동 실행이 이미 돌고 있으면 다음 30분 체크로 미룬다
-    const monthStr = now.toISOString().slice(0, 7);
-    const kvKey = `address_batch_${monthStr}`;
+  // 매일 밤 00:00~06:00: 채무자 위치 지도용 주소 배치 추출 + 좌표변환을 조금씩 돌린다.
+  // 채무자 수가 많아 하룻밤에 다 못 끝내도 괜찮다 — 대상 쿼리가 매번 "아직 주소/좌표
+  // 없는 것"만 골라오므로, runAddressBatch(true)가 06시를 넘기는 순간부터 남은 건
+  // 건너뛰고 다음날 밤에 이어서 처리된다. kv_store에 그날 밤 실행 여부를 기록해
+  // 15분마다 재확인해도 하룻밤에 중복 시작되지 않는다.
+  const checkNightlyAddressBatch = () => {
+    if (!isNightWindow()) return;
+    if (addressBatchStatus.running) return; // 수동 실행 중이거나 이미 오늘 밤 시작됨
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const kvKey = `address_batch_night_${dateStr}`;
     if (db.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey)) return;
-    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: now.toISOString() }));
-    console.log("[주소배치] 매월 자동 실행 시작");
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: new Date().toISOString() }));
+    console.log("[주소배치] 야간 자동 실행 시작");
     addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
-    runMonthlyAddressBatch()
+    runAddressBatch(true)
       .then(result => {
         addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
-        console.log(`[주소배치] 매월 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
-        broadcast("data-changed", { method: "BATCH", path: "monthly-address-batch", at: Date.now() });
+        console.log(`[주소배치] 야간 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환${result.stoppedForWindow ? " (06시가 되어 중단 — 남은 건 내일 밤 계속)" : ""}`);
+        broadcast("data-changed", { method: "BATCH", path: "nightly-address-batch", at: Date.now() });
       })
       .catch(e => {
         addressBatchStatus = { ...addressBatchStatus, running: false, phase: "error", finishedAt: Date.now(), error: e.message };
-        console.error("[주소배치] 매월 자동 실행 오류:", e.message);
+        console.error("[주소배치] 야간 자동 실행 오류:", e.message);
       });
   };
-  setInterval(checkMonthlyAddressBatch, 30 * 60 * 1000);
+  setTimeout(checkNightlyAddressBatch, 60000); // 서버 기동 시점이 이미 밤 시간대면 곧바로 시작
+  setInterval(checkNightlyAddressBatch, 15 * 60 * 1000);
 });
