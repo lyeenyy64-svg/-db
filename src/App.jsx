@@ -5905,23 +5905,49 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, []);
 
     // 초본/CB 주소가 아예 없는(한 번도 열어보지 않은) 채무자까지 전부 OCR로 추출한다.
-    // 무거운 작업이라 확인 없이 바로 돌리지 않고, 눌렀을 때만 순회한다 — 매월 1일 새벽에는
+    // 무거운 작업이라 확인 없이 바로 돌리지 않고, 눌렀을 때만 시작한다 — 매월 1일 새벽에는
     // 서버가 자동으로 같은 작업을 한 번 더 돌려서 새로 들어온 문서를 반영한다.
+    // 브라우저에서 채무자를 하나씩 순회하며 기다리는 대신 서버에 "시작만" 요청하고,
+    // 실제 작업은 서버 백그라운드에서 진행된다 — 탭을 닫거나 이 PC가 잠들어도
+    // 서버 PC만 켜져 있으면 계속 진행되고, 아래 polling으로 진행률을 이어서 볼 수 있다.
     const runBulkAddressExtract = async () => {
-      if (extractingAddr || !missingAddr || missingAddr.length === 0) return;
-      setExtractingAddr(true);
-      setExtractAddrProgress({ done: 0, total: missingAddr.length });
-      for (let i = 0; i < missingAddr.length; i++) {
-        // idx/total을 같이 보내면 서버 pm2 로그에 "(4/497) 홍길동"처럼 남아서, 화면 진행률과
-        // 로그를 대조해 어느 채무자에서 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
-        try { await fetch(`/api/debtor/${missingAddr[i].id}/extract-address?idx=${i + 1}&total=${missingAddr.length}`, { method: "POST" }); } catch {}
-        setExtractAddrProgress({ done: i + 1, total: missingAddr.length });
-      }
-      setExtractingAddr(false);
-      loadLocations();
-      loadMissingAddr();
-      showToast("주소 추출 완료 — '주소→좌표 변환'을 눌러 지도에 표시해주세요");
+      if (extractingAddr) return;
+      try {
+        const r = await fetch("/api/debtors/batch-extract-addresses", { method: "POST" }).then(res => res.json());
+        if (!r.ok) { showToast(r.error || "이미 실행 중입니다"); return; }
+        setExtractingAddr(true);
+        setExtractAddrProgress({ done: 0, total: missingAddr?.length || 0, phase: "extract" });
+        showToast("서버에서 주소 추출을 시작했습니다 — 이 창을 닫아도 계속 진행됩니다");
+      } catch { showToast("요청에 실패했습니다"); }
     };
+
+    // 배치 진행 상황을 주기적으로 확인 — 이 화면을 처음 열었을 때 이미 배치가 돌고 있던
+    // 경우(다른 사람이 시작했거나, 새로고침 전에 시작한 경우)에도 진행률을 이어서 보여준다.
+    const wasBatchRunningRef = useRef(false);
+    useEffect(() => {
+      let timer = null;
+      const poll = () => {
+        fetch("/api/debtors/batch-extract-addresses/status").then(r => r.json()).then(s => {
+          if (!s.ok) return;
+          if (s.running) {
+            wasBatchRunningRef.current = true;
+            setExtractingAddr(true);
+            setExtractAddrProgress({ done: s.done, total: s.total, phase: s.phase });
+          } else {
+            setExtractingAddr(false);
+            setExtractAddrProgress(null);
+            if (wasBatchRunningRef.current) {
+              wasBatchRunningRef.current = false;
+              loadLocations();
+              loadMissingAddr();
+              showToast(s.error ? `주소 추출 중 오류: ${s.error}` : "주소 추출 완료 — '주소→좌표 변환'을 눌러 지도에 표시해주세요");
+            }
+          }
+        }).catch(() => {}).finally(() => { timer = setTimeout(poll, 4000); });
+      };
+      poll();
+      return () => { if (timer) clearTimeout(timer); };
+    }, []);
 
     // 카카오맵 JS SDK 동적 로드 (JavaScript 키는 비밀값 아님 — URL에 그대로 노출돼도 안전)
     useEffect(() => {
@@ -6021,11 +6047,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 16px", border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)" }}>
             주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
           </div>
-          {canEdit && missingAddr && missingAddr.length > 0 && (
+          {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
             <button onClick={runBulkAddressExtract} disabled={extractingAddr}
-              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 OCR 추출을 돌립니다 — 채무자 수가 많으면 시간이 걸립니다"
+              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다"
               style={{ padding: "8px 14px", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
-              {extractingAddr ? `주소 추출 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})` : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
+              {extractingAddr
+                ? `${extractAddrProgress?.phase === "geocode" ? "좌표 변환" : "주소 추출"} 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})`
+                : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
             </button>
           )}
           {mapAppKey && noCoords.length > 0 && (

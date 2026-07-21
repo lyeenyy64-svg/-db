@@ -3193,6 +3193,27 @@ app.post("/api/debtor/:id/geocode", async (req, res) => {
 
 // 채무자 위치 지도를 전체 채무자 기준으로 채워두기 위한 배치 — 평소엔 그 채무자 화면을
 // 열 때만 지연 추출하지만(서버 부담 방지), 이 배치는 초본/CB 주소가 하나라도 비어있는
+// 항목들을 최대 concurrency개씩 동시에 처리 — OCR 프로세스 하나가 대부분의 시간을
+// 파이썬 기동+모델 로딩에 쓰고 있어서(실제 인식 자체보다 오래 걸림), 순차 처리 대신
+// 몇 개씩 동시에 띄우면 전체 소요 시간이 그만큼 줄어든다.
+async function runWithConcurrency(items, worker, concurrency) {
+  let idx = 0;
+  const lanes = new Array(Math.min(concurrency, items.length) || 0).fill(null).map(async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      await worker(items[i], i);
+    }
+  });
+  await Promise.all(lanes);
+}
+
+// 지금 배치가 얼마나 진행됐는지 프론트가 polling으로 확인할 수 있게 메모리에 상태를 둔다.
+// 이 상태 덕분에 브라우저 탭을 닫거나 PC가 절전모드에 들어가도(서버 PC만 살아있으면)
+// 배치 자체는 서버에서 계속 진행되고, 나중에 다시 화면을 열면 진행 상황을 이어서 볼 수 있다.
+let addressBatchStatus = { running: false, phase: null, done: 0, total: 0, startedAt: null, finishedAt: null, result: null, error: null };
+const ADDRESS_EXTRACT_CONCURRENCY = 3; // OCR은 CPU를 많이 쓰므로 서버 PC 사양을 고려해 보수적으로 설정
+const GEOCODE_CONCURRENCY = 5; // 좌표 변환은 카카오 API 호출이라 가벼워서 좀 더 높여도 된다
+
 // 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 채무자 수만큼 OCR을 도는
 // 무거운 작업이라 수동 트리거(/api/debtors/batch-extract-addresses)와 매월 1일 새벽
 // 자동 실행(kv_store로 이번달 중복 실행 방지)에서만 호출한다.
@@ -3203,38 +3224,58 @@ async function runMonthlyAddressBatch() {
      FROM debtors
      WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
   ).all();
+  addressBatchStatus.phase = "extract";
+  addressBatchStatus.total = targets.length;
+  addressBatchStatus.done = 0;
   let extracted = 0;
-  for (let i = 0; i < targets.length; i++) {
-    const debtor = targets[i];
+  await runWithConcurrency(targets, async (debtor, i) => {
     const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`);
     if (r.residentOk || r.creditOk) extracted++;
-  }
+    addressBatchStatus.done++;
+  }, ADDRESS_EXTRACT_CONCURRENCY);
 
   const geoTargets = db.prepare(
     `SELECT id FROM debtors
      WHERE (latest_address IS NOT NULL AND latest_address != '' AND latest_address_lat IS NULL)
         OR (resident_address IS NOT NULL AND resident_address != '' AND resident_address_lat IS NULL)`
   ).all();
+  addressBatchStatus.phase = "geocode";
+  addressBatchStatus.total = geoTargets.length;
+  addressBatchStatus.done = 0;
   let geocoded = 0;
-  for (const row of geoTargets) {
+  await runWithConcurrency(geoTargets, async (row) => {
     try {
       const r = await geocodeDebtorById(row.id);
       if (r.ok) geocoded++;
     } catch (e) { console.error(`[주소배치] ${row.id} 좌표변환 오류:`, e.message); }
-  }
+    addressBatchStatus.done++;
+  }, GEOCODE_CONCURRENCY);
+
   return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded };
 }
 
 // 수동 트리거 — "채무자 위치" 화면의 "전체 채무자 주소 추출" 버튼이 호출.
 // OCR을 다수 순회하는 무거운 작업이라 응답은 즉시 반환하고 백그라운드에서 계속 진행한다.
+// 브라우저 탭을 닫아도(서버 PC만 켜져 있으면) 끝까지 진행된다 — 진행 상황은
+// /api/debtors/batch-extract-addresses/status 로 polling해서 확인한다.
 app.post("/api/debtors/batch-extract-addresses", (req, res) => {
+  if (addressBatchStatus.running) return res.json({ ok: false, error: "이미 실행 중입니다" });
+  addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
   res.json({ ok: true, started: true });
   runMonthlyAddressBatch()
     .then(result => {
+      addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
       console.log(`[주소배치] 수동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
       broadcast("data-changed", { method: "BATCH", path: "/api/debtors/batch-extract-addresses", at: Date.now() });
     })
-    .catch(e => console.error("[주소배치] 수동 실행 오류:", e.message));
+    .catch(e => {
+      addressBatchStatus = { ...addressBatchStatus, running: false, phase: "error", finishedAt: Date.now(), error: e.message };
+      console.error("[주소배치] 수동 실행 오류:", e.message);
+    });
+});
+
+app.get("/api/debtors/batch-extract-addresses/status", (req, res) => {
+  res.json({ ok: true, ...addressBatchStatus });
 });
 
 // ─── 대위변제일 자동 추출 (대위변제증명서 PDF → Python Windows OCR) ──
@@ -3530,17 +3571,23 @@ app.listen(PORT, () => {
   const checkMonthlyAddressBatch = () => {
     const now = new Date();
     if (now.getDate() !== 1 || now.getHours() !== 3) return;
+    if (addressBatchStatus.running) return; // 수동 실행이 이미 돌고 있으면 다음 30분 체크로 미룬다
     const monthStr = now.toISOString().slice(0, 7);
     const kvKey = `address_batch_${monthStr}`;
     if (db.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey)) return;
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: now.toISOString() }));
     console.log("[주소배치] 매월 자동 실행 시작");
+    addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
     runMonthlyAddressBatch()
       .then(result => {
+        addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
         console.log(`[주소배치] 매월 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
         broadcast("data-changed", { method: "BATCH", path: "monthly-address-batch", at: Date.now() });
       })
-      .catch(e => console.error("[주소배치] 매월 자동 실행 오류:", e.message));
+      .catch(e => {
+        addressBatchStatus = { ...addressBatchStatus, running: false, phase: "error", finishedAt: Date.now(), error: e.message };
+        console.error("[주소배치] 매월 자동 실행 오류:", e.message);
+      });
   };
   setInterval(checkMonthlyAddressBatch, 30 * 60 * 1000);
 });
