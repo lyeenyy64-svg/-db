@@ -33,7 +33,7 @@ def get_engine():
         use_textline_orientation=False,
     )
     try:
-        _ENGINE = PaddleOCR(enable_mkldnn=False, **common_kwargs)
+        _ENGINE = PaddleOCR(enable_mkldnn=True, **common_kwargs)
     except TypeError:
         _ENGINE = PaddleOCR(**common_kwargs)
     return _ENGINE
