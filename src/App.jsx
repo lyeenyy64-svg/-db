@@ -313,6 +313,13 @@ const saveCaseNotes = (id, arr) => { localStorage.setItem(`case_notes_${id}`, JS
 // case_event_{caseId}: "YYYY-MM-DD" — 기일 등 다가오는 이벤트 알림 기준일
 const getCaseEventDate = (id) => { try { return JSON.parse(localStorage.getItem(`case_event_${id}`) || "null"); } catch { return null; } };
 const saveCaseEventDate = (id, date) => { localStorage.setItem(`case_event_${id}`, JSON.stringify(date)); kvPut(`case_event_${id}`, date); };
+// 이벤트일 일주일 전부터만 알림 표시(붉은 강조) — 그 전에는 일반 메모와 동일하게 보임
+const isEventDateSoon = (eventDate) => {
+  if (!eventDate) return false;
+  const todayStr = new Date().toISOString().split("T")[0];
+  const diffDays = Math.round((new Date(eventDate) - new Date(todayStr)) / 86400000);
+  return diffDays <= 7;
+};
 const fmtDateTime = (iso) => {
   if (!iso) return "-";
   const dt = new Date(iso);
@@ -6966,7 +6973,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
               : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
                   {caseNotes.map(n => (
-                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: n.eventDate ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: isEventDateSoon(n.eventDate) ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
                           <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
@@ -6974,7 +6981,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
-                      {n.eventDate && (
+                      {isEventDateSoon(n.eventDate) && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
                           <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
                           <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
@@ -8713,15 +8720,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     // 헤더 클릭 정렬용 컬럼별 값 추출기
     const MINSA_SORT_GETTERS = {
-      brand:  (c) => c.brand || "",
-      target: (c) => c.defendant || "",
-      court:  (c) => c.court || "",
-      caseNo: (c) => c.caseNumber || "",
-      date:   (c) => c.filingDate || "",
-      status: (c) => c.progressStatus || "",
-      role:   (c) => c.caseStatus || "",
-      amount: (c) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
-      matched:(c) => getDebtor(c.debtorId) ? 1 : 0,
+      brand:     (c) => c.brand || "",
+      plaintiff: (c) => c.plaintiff || "",
+      defendant: (c) => c.defendant || "",
+      court:     (c) => c.court || "",
+      caseNo:    (c) => c.caseNumber || "",
+      date:      (c) => c.filingDate || "",
+      status:    (c) => c.progressStatus || "",
+      amount:    (c) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched:   (c) => getDebtor(c.debtorId) ? 1 : 0,
     };
     const sorted = useMemo(() => {
       if (!sortField || !sortDir) return filtered;
@@ -8921,7 +8928,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
               : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
                   {caseNotes.map(n => (
-                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: n.eventDate ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: isEventDateSoon(n.eventDate) ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
                           <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
@@ -8929,7 +8936,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
-                      {n.eventDate && (
+                      {isEventDateSoon(n.eventDate) && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
                           <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
                           <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
@@ -9009,12 +9016,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 헤더 */}
         {(() => {
-          const gridCols = "56px minmax(90px,1fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 72px 130px 90px";
+          const gridCols = "56px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 130px 90px";
           return (
             <>
               <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-                <SortTh field="brand" label="브랜드" /><SortTh field="target" label="대상자" /><SortTh field="court" label="법원" /><SortTh field="caseNo" label="사건번호" />
-                <SortTh field="date" label="접수일" /><SortTh field="status" label="상태" /><SortTh field="role" label="원/피고" />
+                <SortTh field="brand" label="브랜드" /><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /><SortTh field="court" label="법원" /><SortTh field="caseNo" label="사건번호" />
+                <SortTh field="date" label="접수일" /><SortTh field="status" label="상태" />
                 <SortTh field="amount" label="금액" /><SortTh field="matched" label="매칭" />
               </div>
 
@@ -9034,12 +9041,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
                           >
                             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
-                            <span style={{ fontSize: 14, fontWeight: 600 }}>{c.defendant || "-"}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{c.plaintiff || "-"}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{c.defendant || "-"}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
                             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.filingDate || "-"}</span>
                             <span>{c.progressStatus ? <Badge status={c.progressStatus} /> : "-"}</span>
-                            <span>{c.caseStatus ? <Badge status={c.caseStatus} small /> : "-"}</span>
                             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
                             <span>
                               {debtor
