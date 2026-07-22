@@ -41,6 +41,9 @@ def get_engine():
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
+        # 기본 감지 모델(PP-OCRv5_server_det)이 가속(mkldnn) 없는 CPU에서 페이지당 6분 넘게
+        # 걸리는 게 실측으로 확인됨 — 가벼운 mobile_det로 바꿔서 속도 확인 (원인 확인되면 조정할 것)
+        text_detection_model_name="PP-OCRv5_mobile_det",
     )
     try:
         _ENGINE = PaddleOCR(enable_mkldnn=False, **common_kwargs)
