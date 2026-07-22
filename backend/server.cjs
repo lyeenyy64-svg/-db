@@ -2667,12 +2667,13 @@ function withOcrSlot(fn, priority) {
 function spawnOcr(script, pdfPath, timeout) {
   return new Promise((resolve) => {
     const proc = spawn(PYTHON_BIN, [script, pdfPath], { timeout, windowsHide: true });
-    let out = "";
+    let out = "", err = ""; // err: 임시 디버그용 stderr 캡처 — 원인 확인되면 제거할 것
     proc.stdout.on("data", d => { out += d.toString(); });
+    proc.stderr.on("data", d => { err += d.toString(); });
     proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+      try { resolve({ ...JSON.parse(out.trim()), _stderr: err }); } catch { resolve({ ok: false, _stderr: err }); }
     });
-    proc.on("error", () => resolve({ ok: false }));
+    proc.on("error", () => resolve({ ok: false, _stderr: err }));
   });
 }
 
@@ -2940,7 +2941,7 @@ async function lookupCreditAddress(debtor, priority) {
   const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
   for (const c of rows) {
     const r = await ocrPdfForCreditAddress(c.file_path, priority);
-    _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null });
+    _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null, stderr: r._stderr || null });
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];

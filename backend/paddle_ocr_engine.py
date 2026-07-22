@@ -16,10 +16,17 @@ ocr_resident.py / ocr_credit_address.py / ocr_credit_score.py / ocr_subrogation_
 import os
 os.environ.setdefault("FLAGS_enable_pir_api", "0")
 
+import sys
+import time
 import fitz  # PyMuPDF
 import tempfile
 
 _ENGINE = None
+
+
+def _dbg(msg):
+    # 임시 디버그 — 어느 단계에서 시간이 오래 걸리는지 확인용 (원인 확인되면 제거할 것)
+    print(f"[ocr_timing] {time.monotonic():.1f} {msg}", file=sys.stderr, flush=True)
 
 
 def get_engine():
@@ -27,6 +34,7 @@ def get_engine():
     if _ENGINE is not None:
         return _ENGINE
 
+    _dbg("get_engine: start (import + model load)")
     from paddleocr import PaddleOCR
     common_kwargs = dict(
         lang="korean",
@@ -38,6 +46,7 @@ def get_engine():
         _ENGINE = PaddleOCR(enable_mkldnn=False, **common_kwargs)
     except TypeError:
         _ENGINE = PaddleOCR(**common_kwargs)
+    _dbg("get_engine: done")
     return _ENGINE
 
 
@@ -58,10 +67,12 @@ def ocr_pdf_pages(pdf_path, max_pages):
 
     try:
         n_pages = min(max_pages, doc.page_count)
+        _dbg(f"ocr_pdf_pages: doc.page_count={doc.page_count} n_pages={n_pages}")
         for page_num in range(n_pages):
             page = doc[page_num]
             mat = fitz.Matrix(3, 3)  # 3x 해상도
             pix = page.get_pixmap(matrix=mat)
+            _dbg(f"page {page_num}: rendered {pix.width}x{pix.height}, predicting...")
 
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
                 tmp_path = f.name
@@ -69,6 +80,7 @@ def ocr_pdf_pages(pdf_path, max_pages):
             pix.save(tmp_path)
 
             result = engine.predict(tmp_path)
+            _dbg(f"page {page_num}: predict done, {len(result[0]['rec_texts']) if result else 0} boxes")
             page_words = []
             if result:
                 res = result[0]
