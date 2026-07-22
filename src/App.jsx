@@ -6706,8 +6706,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     // 단일 사건 행 (지급명령/압류)
     // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
-    // 컬럼: 브랜드 / 구분 / 원고 / 피고 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 잔액 / 매칭
-    const legalGridCols = "56px 128px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 120px 100px";
+    // 지급명령만 단독으로 필터링해서 볼 때만 원고/피고로 분리 표시한다.
+    // 압류/재산명시·재산조회/형사고소는(그리고 "전체" 통합 보기는) 원래 형태(대상자 + 원/피고)를 그대로 유지 — 이 세 유형은
+    // 원고/피고 개념이 별 의미가 없거나(재산명시·재산조회, 형사고소) 굳이 나눌 필요가 없다는(압류) 피드백에 따름
+    const useSplitParties = legalTypeFilter === "지급명령";
+    // 컬럼(분리): 브랜드 / 구분 / 원고 / 피고 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 잔액 / 매칭
+    // 컬럼(원본): 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
+    const legalGridCols = useSplitParties
+      ? "56px 128px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 120px 100px"
+      : "56px 128px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
     const CaseRow = useStableComponent(({ c, kind }) => {
       const kindBadge = (
         <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30`, whiteSpace: "nowrap" }}>{kind}</span>
@@ -6724,12 +6731,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
-            <span>-</span>
+            {useSplitParties && <span>-</span>}
             <span style={{ fontSize: 14, fontWeight: 600 }}>{c.debtorName || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.policeStation || "-"}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.charge || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.complaintDate || "-"}</span>
             <span><Badge status={c.status || "준비중"} small /></span>
+            {!useSplitParties && <span>-</span>}
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span>-</span>
           </div>
@@ -6759,12 +6767,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
-            <span style={{ fontSize: 13, fontWeight: 600 }}>{isAD ? (inquiryBadge || "-") : (c.plaintiff || "-")}</span>
+            {useSplitParties && <span style={{ fontSize: 13, fontWeight: 600 }}>{isAD ? (inquiryBadge || "-") : (c.plaintiff || "-")}</span>}
             <span style={{ fontSize: 14, fontWeight: 600 }}>{name || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{dateVal || "-"}</span>
             <span>{statusVal ? <Badge status={statusVal} /> : "-"}</span>
+            {!useSplitParties && <span>{!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : (inquiryBadge || "-")}</span>}
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
@@ -7089,9 +7098,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 리스트 헤더 */}
         <div style={{ display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" /><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /><SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
+          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" />
+          {useSplitParties
+            ? <><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /></>
+            : <SortTh field="defendant" label="대상자" />}
+          <SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
           <SortTh field="date" label="접수일" />
           <SortTh field="status" label="상태" />
+          {!useSplitParties && <SortTh field="plaintiff" label="원/피고" />}
           <SortTh field="balance" label="잔액" /><SortTh field="matched" label="매칭" />
         </div>
 
@@ -9017,7 +9031,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 헤더 */}
         {(() => {
-          const gridCols = "56px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 130px 90px";
+          const gridCols = "56px minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(90px,0.8fr) minmax(110px,0.9fr) 100px 84px 130px 90px";
           return (
             <>
               <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>

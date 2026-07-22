@@ -480,7 +480,10 @@ db.exec(`
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
+// express.json() 기본값(strict:true)은 최상위가 객체/배열이 아닌 JSON 바디를 거부해서
+// 원시값 PUT이 전부 400으로 조용히 실패하고 있었다 (예: 이벤트 날짜 "YYYY-MM-DD" 저장)
+app.use(express.json({ strict: false }));
 
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();
