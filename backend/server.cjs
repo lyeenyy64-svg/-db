@@ -2696,7 +2696,8 @@ function ocrPdfForCreditScore(pdfPath, priority) {
 function ocrPdfForCreditAddress(pdfPath, priority) {
   // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
   // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
-  return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
+  // 임시 디버그: 150초 안에 안 끝나서 강제종료되어 디버그 정보를 못 보고 있어 400초로 늘림 — 원인 확인되면 되돌릴 것
+  return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 400000), priority);
 }
 
 function korName3(name) {
