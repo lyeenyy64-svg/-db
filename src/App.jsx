@@ -6342,17 +6342,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     ].filter(({ kind }) => legalTypeFilter === "전체" || legalTypeFilter === kind);
 
     // 헤더 클릭 정렬용 컬럼별 값 추출기 (4개 유형의 필드명이 서로 달라 kind별로 분기)
+    // plaintiff 슬롯: 지급명령/압류는 원고명, 재산명시·재산조회는 재산조회명령 O/X(기존 원/피고 컬럼 자리 그대로 유지), 형사고소는 해당 없음
     const LEGAL_SORT_GETTERS = {
-      brand:   ({ c }) => c.brand || "",
-      kind:    ({ kind }) => kind,
-      target:  ({ c, kind }) => (kind === "지급명령" || kind === "압류") ? c.defendant : c.debtorName,
-      org:     ({ c, kind }) => kind === "형사고소" ? c.policeStation : c.court,
-      caseNo:  ({ c, kind }) => kind === "형사고소" ? c.charge : c.caseNumber,
-      date:    ({ c, kind }) => kind === "형사고소" ? c.complaintDate : (kind === "재산명시·재산조회" ? c.applicationDate : c.filingDate),
-      status:  ({ c, kind }) => kind === "형사고소" ? (c.status || "준비중") : (kind === "재산명시·재산조회" ? (c.status || "진행") : c.progressStatus),
-      role:    ({ c, kind }) => kind === "형사고소" ? "" : (kind === "재산명시·재산조회" ? (c.hasInquiryOrder ? "O" : "X") : (c.caseStatus || "")),
-      balance: ({ c }) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
-      matched: ({ c }) => getDebtor(c.debtorId) ? 1 : 0,
+      brand:     ({ c }) => c.brand || "",
+      kind:      ({ kind }) => kind,
+      plaintiff: ({ c, kind }) => kind === "재산명시·재산조회" ? (c.hasInquiryOrder ? "O" : "X") : (kind === "형사고소" ? "" : (c.plaintiff || "")),
+      defendant: ({ c, kind }) => (kind === "지급명령" || kind === "압류") ? c.defendant : c.debtorName,
+      org:       ({ c, kind }) => kind === "형사고소" ? c.policeStation : c.court,
+      caseNo:    ({ c, kind }) => kind === "형사고소" ? c.charge : c.caseNumber,
+      date:      ({ c, kind }) => kind === "형사고소" ? c.complaintDate : (kind === "재산명시·재산조회" ? c.applicationDate : c.filingDate),
+      status:    ({ c, kind }) => kind === "형사고소" ? (c.status || "준비중") : (kind === "재산명시·재산조회" ? (c.status || "진행") : c.progressStatus),
+      balance:   ({ c }) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched:   ({ c }) => getDebtor(c.debtorId) ? 1 : 0,
     };
     const allItems = (() => {
       if (!sortField || !sortDir) return kindItems;
@@ -6705,8 +6706,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     // 단일 사건 행 (지급명령/압류)
     // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
-    // 컬럼: 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
-    const legalGridCols = "56px 128px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
+    // 컬럼: 브랜드 / 구분 / 원고 / 피고 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 잔액 / 매칭
+    const legalGridCols = "56px 128px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 120px 100px";
     const CaseRow = useStableComponent(({ c, kind }) => {
       const kindBadge = (
         <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30`, whiteSpace: "nowrap" }}>{kind}</span>
@@ -6723,12 +6724,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
+            <span>-</span>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{c.debtorName || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.policeStation || "-"}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.charge || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.complaintDate || "-"}</span>
             <span><Badge status={c.status || "준비중"} small /></span>
-            <span>-</span>
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span>-</span>
           </div>
@@ -6758,12 +6759,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{isAD ? (inquiryBadge || "-") : (c.plaintiff || "-")}</span>
             <span style={{ fontSize: 14, fontWeight: 600 }}>{name || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{dateVal || "-"}</span>
             <span>{statusVal ? <Badge status={statusVal} /> : "-"}</span>
-            <span>{!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : (inquiryBadge || "-")}</span>
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
@@ -7088,10 +7089,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 리스트 헤더 */}
         <div style={{ display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" /><SortTh field="target" label="대상자" /><SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
+          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" /><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /><SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
           <SortTh field="date" label="접수일" />
           <SortTh field="status" label="상태" />
-          <SortTh field="role" label="원/피고" /><SortTh field="balance" label="잔액" /><SortTh field="matched" label="매칭" />
+          <SortTh field="balance" label="잔액" /><SortTh field="matched" label="매칭" />
         </div>
 
         {/* 지급명령/압류/재산명시·재산조회/형사고소 통합 리스트 */}
