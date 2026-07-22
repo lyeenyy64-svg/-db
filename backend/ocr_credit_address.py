@@ -260,7 +260,17 @@ def ocr_pdf(pdf_path):
     phone = last_row["phone"] if last_row else None
 
     if not address:
-        return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
+        # 임시 디버그 정보 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
+        return {
+            "ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date,
+            "debug": {
+                "pages_scanned": len(all_page_words),
+                "words_per_page": [len(w) for w in all_page_words],
+                "last_row_found": last_row is not None,
+                "last_row_raw": last_row,
+                "first_page_sample": first_page_text[:300],
+            },
+        }
 
     return {
         "ok": True,

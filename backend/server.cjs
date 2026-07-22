@@ -2936,8 +2936,10 @@ async function lookupCreditAddress(debtor, priority) {
      ORDER BY parsed_date DESC LIMIT 2`
   ).all(`%${kor}%`, `%${kor}%`);
 
+  const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
   for (const c of rows) {
     const r = await ocrPdfForCreditAddress(c.file_path, priority);
+    _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null });
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
@@ -2961,7 +2963,7 @@ async function lookupCreditAddress(debtor, priority) {
     };
   }
 
-  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" };
+  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패", _debugAttempts };
 }
 
 app.get("/api/debtor/:id/credit-address", async (req, res) => {
