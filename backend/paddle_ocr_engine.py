@@ -7,6 +7,8 @@ ocr_resident.py / ocr_credit_address.py / ocr_credit_score.py / ocr_subrogation_
   "(Unimplemented) ConvertPirAttribute2RuntimeAttribute not support
   [pir::ArrayAttribute<pir::DoubleAttribute>]" 에러가 발생함을 확인 — PIR을 끄고(예전
   실행 경로 사용) enable_mkldnn=False로 가속도 꺼서 회피한다.
+  (2026-07-22 재확인: FLAGS_enable_pir_api=0만으로는 이 에러가 안 막히고 enable_mkldnn=True로
+  두면 여전히 동일 에러로 즉시 실패한다 — 두 플래그 다 꺼야 한다. enable_mkldnn=True로 바꾸지 말 것.)
 - 문서방향분류/휘어짐보정/텍스트줄방향분류(use_doc_orientation_classify 등)는 스캔
   방향이 항상 바른 우리 문서에는 불필요해서 끈다 — 처리 속도도 빨라짐.
 - PaddleOCR 엔진 생성(모델 로드)이 느려서, 한 프로세스 안에서는 한 번만 만들어 재사용한다.
@@ -33,7 +35,7 @@ def get_engine():
         use_textline_orientation=False,
     )
     try:
-        _ENGINE = PaddleOCR(enable_mkldnn=True, **common_kwargs)
+        _ENGINE = PaddleOCR(enable_mkldnn=False, **common_kwargs)
     except TypeError:
         _ENGINE = PaddleOCR(**common_kwargs)
     return _ENGINE
