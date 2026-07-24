@@ -44,6 +44,16 @@ HEADER_LABELS = {"정보갱신일", "주소", "휴대폰번호", "휴대폰"}
 # OCR 박스 분할 때문에 라벨 문자열로 안 걸러지고 주소 칸에 섞여 들어오는 경우가 있어
 # (ocr_resident.py에서 실제로 확인된 문제, 여기도 동일하게 방어) 한자 포함 단어는 제외한다.
 HANJA_RE = re.compile(r'[一-鿿]')
+# 자택정보이력정보 표에 이력이 0건이면 CB보고서 자체가 "조회된 데이터가 없습니다"라고
+# 명시한다 — 이 경우는 OCR 실패가 아니라 이 보고서엔 정말 주소 이력이 없다는 뜻이므로,
+# (server.cjs가 더 오래된 CB보고서로 폴백하지 않고) 확정적으로 "없음"으로 처리하도록
+# 별도 플래그로 알려준다.
+NO_HISTORY_RE = re.compile(r'조회된\s*데이터가\s*없습니다')
+# Windows OCR이 표의 여러 행을 같은 y좌표 밴드로 잘못 묶으면, 채택한 행이 아닌 다른
+# 행의 날짜(예: "2024. 05. 29")가 공백 낀 채로 주소 텍스트에 그대로 남는 경우가 실제로
+# 확인됨. 정상 주소엔 날짜가 남을 일이 없으니, 남아있으면 여러 행이 섞인 것으로 보고
+# 그 주소는 통째로 버린다(잘못된 값을 캐시하는 것보다 "없음" 처리가 안전).
+LOOSE_DATE_RE = re.compile(r'\d{4}\.\s*\d{1,2}\.\s*\d{1,2}')
 
 
 def _clean(s):
@@ -239,6 +249,8 @@ def find_last_home_row(pages_words):
             and not HANJA_RE.search(text)
         ]
         address_text = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
+        if LOOSE_DATE_RE.search(address_text):
+            address_text = ""
 
         row = {
             "page": page_idx,
@@ -269,6 +281,7 @@ async def ocr_pdf(pdf_path):
     doc = fitz.open(pdf_path)
     tmp_files = []
     all_page_words = []
+    all_text = ""
     first_page_text = ""
     fallback_address = None
 
@@ -291,6 +304,7 @@ async def ocr_pdf(pdf_path):
             bitmap = await decoder.get_software_bitmap_async()
             result = await engine.recognize_async(bitmap)
             text = result.text
+            all_text += text
 
             if page_num == 0:
                 first_page_text = text
@@ -318,7 +332,11 @@ async def ocr_pdf(pdf_path):
         phone = last_row["phone"] if last_row else None
 
         if not address:
-            return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
+            # "자택정보이력정보" 표에 이력이 0건이라고 보고서가 명시하는 경우 — OCR 실패가
+            # 아니라 이 보고서엔 정말 주소 이력이 없다는 뜻이므로, 확정 응답으로 알려줘서
+            # server.cjs가 더 오래된(그리고 잘못 파싱될 수 있는) CB보고서로 넘어가지 않게 한다.
+            no_history = bool(NO_HISTORY_RE.search(all_text))
+            return {"ok": False, "error": "이력 없음" if no_history else "주소 없음", "phone": phone, "queriedDate": queried_date, "noHistory": no_history}
 
         return {
             "ok": True,

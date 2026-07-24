@@ -4409,7 +4409,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       const res = await fetch(`/api/debtor/${d.id}/credit-address/refresh`, { method: "POST" });
                       const data = await res.json();
                       setAutoAddresses(prev => ({ ...prev, [d.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
-                      showToast(data.ok ? "CB보고서에서 다시 추출했습니다" : "재추출 실패 — CB 보기로 직접 확인해주세요");
+                      showToast(data.ok ? "CB보고서에서 다시 추출했습니다" : (data.error === "CB보고서에 자택정보이력 없음" ? "최신 CB보고서에 자택정보이력이 없습니다" : "재추출 실패 — CB 보기로 직접 확인해주세요"));
                     } catch { setAutoAddresses(prev => ({ ...prev, [d.id]: false })); showToast("재추출 실패"); }
                   }}
                   title="예전에 잘못 저장된 값을 지우고 CB보고서에서 다시 추출합니다"

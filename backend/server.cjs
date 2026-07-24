@@ -2939,9 +2939,20 @@ async function lookupCreditAddress(debtor, priority) {
   ).all(`%${kor}%`, `%${kor}%`);
 
   const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
+  let noHistoryResult = null;
   for (const c of rows) {
     const r = await ocrPdfForCreditAddress(c.file_path, priority);
     _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null, stderr: r._stderr || null });
+    if (r.noHistory) {
+      // 가장 최근 CB보고서가 "자택정보이력 0건"이라고 명시하면, 그보다 오래된 보고서로
+      // 넘어가지 않는다 — 더 오래된 보고서의 이력을 잘못 캐치는 것보다 "없음"이 안전하다.
+      const noHistUpdates = [], noHistVals = [];
+      if (!debtor.credit_phone && r.phone) { noHistUpdates.push("credit_phone = ?"); noHistVals.push(r.phone); }
+      if (!debtor.credit_queried_date && r.queriedDate) { noHistUpdates.push("credit_queried_date = ?"); noHistVals.push(r.queriedDate); }
+      if (noHistUpdates.length) db.prepare(`UPDATE debtors SET ${noHistUpdates.join(", ")} WHERE id = ?`).run(...noHistVals, debtor.id);
+      noHistoryResult = { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || r.phone || null, queriedDate: debtor.credit_queried_date || r.queriedDate || null, error: "CB보고서에 자택정보이력 없음", filename: c.filename };
+      break;
+    }
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
@@ -2965,6 +2976,7 @@ async function lookupCreditAddress(debtor, priority) {
     };
   }
 
+  if (noHistoryResult) return { ...noHistoryResult, _debugAttempts };
   return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패", _debugAttempts };
 }
 
