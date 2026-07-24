@@ -2684,11 +2684,7 @@ function spawnOcr(script, pdfPath, timeout) {
 }
 
 function ocrPdfForResident(pdfPath, priority) {
-  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
-  // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
-  // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
-  // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
-  // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
+  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. Windows OCR(winrt) 기준이라 여유를 둔다.
   return withOcrSlot(() => spawnOcr(OCR_SCRIPT, pdfPath, 150000), priority);
 }
 
@@ -2701,10 +2697,7 @@ function ocrPdfForCreditScore(pdfPath, priority) {
 }
 
 function ocrPdfForCreditAddress(pdfPath, priority) {
-  // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
-  // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
-  // 2026-07-22 실측: 가속 없는 CPU에서 페이지 1개 예측에만 368초가 걸리는 파일이 있어 150초 안엔
-  // 어차피 못 끝나는 경우가 있음을 확인 — 근본 해결(가속/모델 교체)은 별도 작업으로 미루고 원래 값 유지.
+  // 자택정보이력표(보통 3페이지)까지 스캔. Windows OCR(winrt) 기준이라 여유를 둔다.
   return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
 }
 
