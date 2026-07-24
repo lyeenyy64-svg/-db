@@ -9517,7 +9517,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <Field label="트리거"><select value={rule.trigger} onChange={e => patchAlertRule(rule.id, { trigger: e.target.value })} style={inp}>{TRIGGER_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></Field>
                   <Field label="조건 설명"><KoreanInput value={rule.condition} onChange={e => patchAlertRule(rule.id, { condition: e.target.value })} style={inp} placeholder="예: 잔액 1,000만원 초과" /></Field>
                   <Field label="알림 대상"><select value={rule.target} onChange={e => patchAlertRule(rule.id, { target: e.target.value })} style={inp}><option value="channel">Slack 채널</option><option value="dm">개인 DM</option></select></Field>
-                  {rule.target === "channel" && <Field label="Slack 채널"><KoreanInput value={rule.channel} onChange={e => patchAlertRule(rule.id, { channel: e.target.value })} style={inp} placeholder="#채널명 (표시용 라벨 — 실제 발송은 서버에 설정된 알림 채널로 통합 전송됩니다)" /></Field>}
+                  {rule.target === "channel" && <Field label="Slack 채널"><KoreanInput value={rule.channel} onChange={e => patchAlertRule(rule.id, { channel: e.target.value })} style={inp} placeholder="개인정보 보호를 위해 채널 발송은 비활성화되어 있습니다 — DM으로 전환 후 Slack ID를 등록하세요" /></Field>}
                   {rule.target === "dm" && <Field label="DM 대상자"><select value={rule.assignee} onChange={e => patchAlertRule(rule.id, { assignee: e.target.value })} style={inp}><option value="">-- 선택 --</option>{users.filter(u => u.approved).map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}</select></Field>}
                   {rule.target === "dm" && <Field label="DM 대상자 Slack ID"><KoreanInput value={rule.assigneeSlackId || ""} onChange={e => patchAlertRule(rule.id, { assigneeSlackId: e.target.value.trim() })} style={inp} placeholder="예: U0123ABCDE (Slack 프로필 > 멤버 ID 복사)" /></Field>}
                 </div>
@@ -9529,8 +9529,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {TRIGGER_TYPES.map(t => (<div key={t.key} style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}><span className="mono" style={{ fontWeight: 500, minWidth: 160, color: "var(--tm)" }}>{t.key}</span><span style={{ color: "var(--ts)" }}>{t.label}</span>{t.key === "seizure_collected" && <span style={{ fontSize: 11, color: "var(--err)" }}>(아직 자동 감지 미지원)</span>}</div>))}
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--brd)", fontSize: 11, color: "var(--tm)", lineHeight: 1.6 }}>
               분할상환 미납/회생 변제금 미납/고액 잔액/장기 미연락은 30분마다 서버가 자동 점검해 하루 1회 요약 발송하고,
-              신규 입금/신규 채권 등록/추심상태 변경은 발생 즉시 발송됩니다. DM 발송은 대상자의 Slack ID를 등록해야 실제로 개인에게 전달되며,
-              등록하지 않으면 알림 채널로 대체 발송됩니다.
+              신규 입금/신규 채권 등록/추심상태 변경은 발생 즉시 발송됩니다. 채무자 개인정보가 포함되므로 채널 발송은 금지되어 있으며,
+              DM 대상자의 Slack ID를 등록해야만 실제로 발송됩니다 — 등록하지 않으면 채널로 새지 않고 그냥 발송이 건너뜁니다.
             </div>
           </div>
         </div>}

@@ -1009,19 +1009,17 @@ function markAlertSentToday(ruleId, count) {
   db.prepare("INSERT OR REPLACE INTO alert_sent_log (rule_id, sent_date, entity_count) VALUES (?, ?, ?)").run(ruleId, today, count);
 }
 
+// 채무자 개인정보(이름/금액/잔액 등)가 포함되므로 다인원 채널에는 절대 발송하지 않고
+// 반드시 등록된 개인 Slack ID로만 DM 발송한다. Slack ID가 없으면 채널로 대체하지 않고
+// 그냥 건너뛴다 — 어드민 > 알림 설정에서 DM 대상자 Slack ID를 등록해야 발송이 시작된다.
 async function deliverAlert(rule, text) {
   if (!slackNotify) { console.warn(`[알림규칙] Slack 미설정 — "${rule.name}" 발송 건너뜀`); return false; }
+  if (!rule.assignee_slack_id) {
+    console.warn(`[알림규칙] "${rule.name}" DM 대상자 Slack ID 미등록 — 채널 대체발송 금지 정책으로 발송 건너뜀`);
+    return false;
+  }
   try {
-    if (rule.target === "dm" && rule.assignee_slack_id) {
-      await slackNotify.chat.postMessage({ channel: rule.assignee_slack_id, text });
-      return true;
-    }
-    if (!NOTIFY_CHANNEL) { console.warn(`[알림규칙] 알림 채널 미설정 — "${rule.name}" 발송 건너뜀`); return false; }
-    // DM 대상인데 Slack ID가 등록 안 된 경우, 조용히 누락되지 않도록 채널로 대체 발송
-    const prefix = rule.target === "dm"
-      ? `*[DM 대상: ${rule.assignee || "미지정"} — Slack ID 미등록, 채널로 대체 발송]*\n`
-      : (rule.channel ? `*[${rule.channel}]*\n` : "");
-    await slackNotify.chat.postMessage({ channel: NOTIFY_CHANNEL, text: prefix + text });
+    await slackNotify.chat.postMessage({ channel: rule.assignee_slack_id, text });
     return true;
   } catch (e) {
     console.warn(`[알림규칙] "${rule.name}" 발송 실패:`, e.message);
