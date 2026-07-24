@@ -2911,7 +2911,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="브랜드"><select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>
           <Field label="분류"><select value={f.category} onChange={e => set("category", e.target.value)} style={inp}>{config.categories.map(c => <option key={c}>{c}</option>)}</select></Field>
-          <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
+          <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{!config.assignees.includes(f.assignee) && <option value={f.assignee || ""}>{f.assignee || "(미지정)"}</option>}{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
           <Field label="채무자명"><KoreanInput value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
           <Field label="연대보증인" span={2}><KoreanInput value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
           <Field label="연락처" span={3}>
