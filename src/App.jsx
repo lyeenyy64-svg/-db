@@ -4075,13 +4075,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 채무자 상세를 열었을 때 "AI 종합분석"이 아직 없으면 버튼을 누르지 않아도 자동으로 생성한다.
     // 이미 있으면(마커 존재) 건드리지 않음 — 매번 새로 생성하면 API 호출이 계속 반복되고
     // 직접 입력한 기존 메모가 있을 때 불필요하게 다시 쓰게 된다.
+    // 신용점수는 CB보고서 OCR로 화면에 뜨는 것과 별개로 DB(credit_grade)에도 저장되는데,
+    // 그 OCR(자동 조회 useEffect, autoCreditScores)이 끝나기 전에 여기서 먼저 분석을 생성하면
+    // AI가 "신용점수 확인 필요"라고 쓴 문구가 그대로 캐시돼버린다(실제로는 옆에 점수가 뜨는데
+    // 분석 문구만 예전 상태로 남는 원인). OCR 조회가 끝난 뒤(성공/실패 무관)에 생성한다.
     useEffect(() => {
       if (!canEdit) return;
       if ((d.keyNotes || "").includes("[채무자 및 연대보증인 종합분석]")) return;
       if (analyzedIdsRef.current.has(d.id)) return;
+      if (!Array.isArray(autoCreditScores[d.id])) return;
       analyzedIdsRef.current.add(d.id);
       runAnalysis(d);
-    }, [d.id]);
+    }, [d.id, autoCreditScores[d.id]]);
 
     const updHistM = (arr) => { saveHistM(d.id, arr); setHistManual_(arr); };
     const updHistE = (obj) => { saveHistE(d.id, obj); setHistEdits_(obj); };
