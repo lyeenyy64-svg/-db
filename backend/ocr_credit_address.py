@@ -39,7 +39,7 @@ PHONE_RE = re.compile(r'01[016789][-\s]?\d{3,4}[-\s]?\d{4}')
 GENERAL_PHONE_RE = re.compile(r'0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}')
 QUERY_LABELS = ("조회일자", "조회일", "발급일자", "발급일", "출력일자", "출력일")
 
-HEADER_LABELS = {"정보갱신일", "주소", "휴대폰번호", "휴대폰"}
+HEADER_LABELS = {"정보갱신일", "우편번호", "우편", "번호", "자택주소", "주소", "자택전화번호", "자택전화", "휴대폰번호", "휴대폰"}
 # 등록된 주소엔 한자가 나올 일이 없다 — 세대원/명의자 이름을 한자와 함께 표기한 부분이
 # OCR 박스 분할 때문에 라벨 문자열로 안 걸러지고 주소 칸에 섞여 들어오는 경우가 있어
 # (ocr_resident.py에서 실제로 확인된 문제, 여기도 동일하게 방어) 한자 포함 단어는 제외한다.
@@ -327,6 +327,13 @@ async def ocr_pdf(pdf_path):
             last_row = find_last_home_row(all_page_words)
         except Exception:
             last_row = None
+
+        # find_address()는 좌표 없이 raw 텍스트에서 "주소" 라벨 뒤를 정규식으로 잡는 폴백이라,
+        # Windows OCR이 표를 세로 컬럼 단위로 통째로 읽어버리면(자택주소 컬럼 전체를 위→아래로
+        # 다 읽은 뒤에야 다음 컬럼을 읽는 경우) 이 폴백도 여러 행이 섞인 텍스트를 잡을 수 있다 —
+        # find_last_home_row와 같은 기준으로 방어한다.
+        if fallback_address and LOOSE_DATE_RE.search(fallback_address):
+            fallback_address = None
 
         address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
         phone = last_row["phone"] if last_row else None
