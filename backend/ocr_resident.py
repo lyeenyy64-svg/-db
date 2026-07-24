@@ -56,6 +56,9 @@ def find_resident_number(text):
     return None
 
 
+HANJA_RE = re.compile(r'[一-鿿]')
+
+
 def _is_noise_word(t):
     t = t.strip()
     if not t:
@@ -65,6 +68,12 @@ def _is_noise_word(t):
     if any(k in t for k in NOISE_KEYWORDS):
         return True
     if re.fullmatch(r'\d{1,3}', t):
+        return True
+    # 등록된 주소엔 한자가 나올 일이 없다 — "성명(한자)"처럼 세대원 이름을 한자와 함께
+    # 표기한 부분이 OCR 박스 분할 때문에 "성명" 같은 정확한 라벨 문자열로 안 걸러지고
+    # 주소/비고 칸에 그대로 섞여 들어오는 경우가 실제로 확인됨(예: "노유나 (魯唯娜"),
+    # 한자가 포함된 단어는 통째로 노이즈로 간주해 걸러낸다.
+    if HANJA_RE.search(t):
         return True
     return False
 
@@ -183,7 +192,7 @@ def find_last_history_row(pages_words):
 
     note_raw = _collect(min_x=date_hi + 10)
     note_words = [w for w in note_raw.split()
-                  if w not in HEADER_LABELS and not any(s in w for s in STATUS_WORDS)]
+                  if w not in HEADER_LABELS and not any(s in w for s in STATUS_WORDS) and not HANJA_RE.search(w)]
     note = re.sub(r'\s+', ' ', " ".join(note_words)).strip() or None
     if note and FOOTER_NOISE_RE.search(note):
         note = None

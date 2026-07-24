@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
@@ -12,6 +12,20 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+// OCR 자동조회(초본/CB보고서)는 후보 파일이 여러 개면 순차로 최대 150초씩 걸릴 수 있고,
+// 서버가 바쁘면 대기까지 더 걸릴 수 있어 여유 있게 5분을 잡는다 — 그래도 무한정 기다리진
+// 않고, 정말 응답이 끊긴 경우엔 실패로 간주해 "조회 중..." 문구가 끝없이 남지 않게 한다.
+const fetchWithTimeout = (url, ms = 300000) => {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(timer));
+};
+// 접수일 등 날짜 문자열을 정렬용 숫자(YYYYMMDD)로 정규화. 구분자(".", "-", "/")와
+// 0패딩 여부가 데이터 소스별로 달라 문자열 그대로 비교하면 순서가 깨지므로 사용.
+const dateSortKey = (s) => {
+  const m = String(s || "").match(/^(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
+  return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : null;
+};
 const daysUntil = (d) => (d ? Math.ceil((new Date(d) - new Date()) / 864e5) : Infinity);
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
@@ -444,6 +458,136 @@ function applyCaseFieldOv(cases) {
   return cases.map(c => ov[c.id] !== undefined ? { ...c, ...ov[c.id] } : c);
 }
 
+// ─── 제3채무자 편집 override (localStorage 영구 저장) ────────
+const THIRDS_OV_KEY = "legal_thirds_overrides";
+function getThirdsOv() { try { return JSON.parse(localStorage.getItem(THIRDS_OV_KEY) || "{}"); } catch { return {}; } }
+function saveThirdsOv(caseId, thirds) {
+  const ov = getThirdsOv();
+  ov[caseId] = thirds;
+  localStorage.setItem(THIRDS_OV_KEY, JSON.stringify(ov));
+  kvPut(THIRDS_OV_KEY, ov);
+}
+function applyThirdsOv(cases) {
+  const ov = getThirdsOv();
+  if (!Object.keys(ov).length) return cases;
+  return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
+}
+
+// ─── 제3채무자 편집 섹션 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
+const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
+  const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
+  const [isEditing, setIsEditing] = useState(false);
+  const [checked, setChecked] = useState(() => new Set());
+
+  const setRow = useCallback((i, k, v) => {
+    setRows(prev => prev.map((r, ri) => ri === i ? { ...r, [k]: v } : r));
+  }, []);
+
+  const startEdit = useCallback(() => {
+    setRows(thirds.map(t => ({ ...t })));
+    setChecked(new Set());
+    setIsEditing(true);
+  }, [thirds]);
+
+  const handleSave = useCallback(() => {
+    const cleaned = rows.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
+    saveThirdsOv(caseId, cleaned);
+    onSave(cleaned);
+    setRows(cleaned);
+    setChecked(new Set());
+    setIsEditing(false);
+  }, [rows, caseId, onSave]);
+
+  const handleCancel = useCallback(() => {
+    setRows(thirds.map(t => ({ ...t })));
+    setChecked(new Set());
+    setIsEditing(false);
+  }, [thirds]);
+
+  const addRow = useCallback(() => {
+    setRows(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }]);
+  }, []);
+
+  const toggleCheck = useCallback((i) => {
+    setChecked(prev => { const n = new Set(prev); n.has(i) ? n.delete(i) : n.add(i); return n; });
+  }, []);
+
+  const deleteChecked = useCallback(() => {
+    if (checked.size === 0) return;
+    setRows(prev => prev.filter((_, ri) => !checked.has(ri)));
+    setChecked(new Set());
+  }, [checked]);
+
+  const display = isEditing ? rows : thirds;
+  const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
+  const numInpS = { ...inpS, textAlign: "right", width: 90 };
+
+  return (
+    <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 진술서 (압류 은행)</div>
+        <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>{display.length}건</span>
+        {!isEditing && (
+          <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
+            잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {!isEditing ? (
+          <button onClick={startEdit} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={addRow} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>+ 행 추가</button>
+            <button onClick={deleteChecked} disabled={checked.size === 0} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: checked.size === 0 ? "var(--bg2)" : "#fef2f2", color: checked.size === 0 ? "var(--tm)" : "#ef4444", border: `1px solid ${checked.size === 0 ? "var(--brd)" : "#fecaca"}`, cursor: checked.size === 0 ? "default" : "pointer" }}>행삭제{checked.size > 0 ? ` (${checked.size})` : ""}</button>
+            <button onClick={handleSave} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+            <button onClick={handleCancel} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+          </div>
+        )}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: "2px solid var(--brd)" }}>
+              {isEditing && <th style={{ padding: "4px 6px", width: 20 }} />}
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>#</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", minWidth: 90 }}>제3채무자</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>청구금액</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>잔액</th>
+              <th style={{ padding: "4px 8px", textAlign: "right", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회수액</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>회신일</th>
+              <th style={{ padding: "4px 8px", textAlign: "left", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>비고</th>
+            </tr>
+          </thead>
+          <tbody>
+            {display.map((t, i) => isEditing ? (
+              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: checked.has(i) ? "#fef2f2" : "transparent" }}>
+                <td style={{ padding: "4px 6px", textAlign: "center" }}><input type="checkbox" checked={checked.has(i)} onChange={() => toggleCheck(i)} style={{ cursor: "pointer" }} /></td>
+                <td style={{ padding: "4px 6px", color: "var(--ts)", textAlign: "center", width: 24 }}>{i + 1}</td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.bankName} onChange={e => setRow(i, "bankName", e.target.value)} style={{ ...inpS, minWidth: 80 }} placeholder="은행명" /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.claimAmount || "")} onChange={v => setRow(i, "claimAmount", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.balance || "")} onChange={v => setRow(i, "balance", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><MoneyInput value={String(t.collected || "")} onChange={v => setRow(i, "collected", Number(v) || 0)} style={numInpS} /></td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.responseDate || ""} onChange={e => setRow(i, "responseDate", e.target.value)} style={{ ...inpS, minWidth: 90 }} placeholder="YYYY.MM.DD" /></td>
+                <td style={{ padding: "4px 6px" }}><KoreanInput value={t.remarks || ""} onChange={e => setRow(i, "remarks", e.target.value)} style={{ ...inpS, minWidth: 100 }} /></td>
+              </tr>
+            ) : (
+              <tr key={i} style={{ borderBottom: "1px solid var(--brd)", background: i % 2 === 0 ? "transparent" : "var(--bg2)" }}>
+                <td style={{ padding: "5px 8px", color: "var(--ts)" }}>{t.seqNo}</td>
+                <td style={{ padding: "5px 8px", fontWeight: 600 }}>{t.bankName}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: "var(--tm)" }}>{t.claimAmount > 0 ? fmt(t.claimAmount) : "-"}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600, color: t.balance > 0 ? "var(--ok)" : "var(--tp)" }}>{t.balance > 0 ? fmt(t.balance) : "-"}</td>
+                <td className="mono" style={{ padding: "5px 8px", textAlign: "right", color: t.collected > 0 ? "#3b82f6" : "var(--tm)" }}>{t.collected > 0 ? fmt(t.collected) : "-"}</td>
+                <td style={{ padding: "5px 8px", color: "var(--ts)", whiteSpace: "nowrap" }}>{t.responseDate || "-"}</td>
+                <td style={{ padding: "5px 8px", color: "var(--ts)", fontSize: 11, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.remarks || ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+});
+
 // ─── 강화된 이름 정규화 (전자소송 피고명용) ────────────────
 function normLegalName(raw) {
   return String(raw || "")
@@ -613,9 +757,9 @@ function loadExcelData(cfg) {
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
     rehabilitations:  applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]),
-    legalCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]),
-    minsaCases:       [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)],
-    assetDisclosures:  [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)],
+    legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
+    minsaCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]),
+    assetDisclosures:  applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]),
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
     forcedExecutions: getMR(MK.forcedExecutions),
     creditAnalyses:   getMR(MK.creditAnalyses),
@@ -717,21 +861,29 @@ const KoreanInput = ({ value, onChange, ...rest }) => {
     />
   );
 };
-const KoreanTextarea = ({ value, onChange, ...rest }) => {
+// autoResize: true면 내용 길이에 따라 높이를 자동으로 늘리고/줄인다 (수동 resize 핸들과 함께 쓰지 않음)
+const KoreanTextarea = ({ value, onChange, autoResize, ...rest }) => {
   const ref = useRef(null);
   const composing = useRef(false);
+  const fitHeight = () => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
   useEffect(() => {
     if (ref.current && !composing.current && ref.current.value !== (value ?? ""))
       ref.current.value = value ?? "";
-  }, [value]);
+    if (autoResize) fitHeight();
+  }, [value, autoResize]);
   return (
     <textarea
       ref={ref}
       {...rest}
       defaultValue={value ?? ""}
-      onChange={e => { if (!composing.current && onChange) onChange(e); }}
+      onChange={e => { if (!composing.current && onChange) onChange(e); if (autoResize) fitHeight(); }}
       onCompositionStart={() => { composing.current = true; }}
-      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); }}
+      onCompositionEnd={e => { composing.current = false; if (onChange) onChange(e); if (autoResize) fitHeight(); }}
     />
   );
 };
@@ -1339,12 +1491,15 @@ const issueAuto = { fontSize: 12, color: "var(--tm)" };
 const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, children }) => {
   const toggle = (mode) => setViewMode(viewMode === mode ? "all" : mode);
   const btn = (active) => ({ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer", background: active ? "#000" : "var(--bg2)", color: active ? "#fff" : "var(--acc)" });
+  // 완료/삭제 화면에서 [등록]을 누르면 곧바로 새 항목을 만들지 않고, 우선 등록현황(전체) 화면으로
+  // 돌아가기만 한다 — 이미 등록현황 화면일 때 다시 누르면 그때 새 항목이 추가된다.
+  const handleAddClick = () => { if (viewMode !== "all") { setViewMode("all"); return; } onAdd(); };
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
         <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={onAdd} style={btn(false)}>등록</button>
+          <button onClick={handleAddClick} style={btn(false)}>등록</button>
           {showComplete && <button onClick={() => toggle("completed")} style={btn(viewMode === "completed")}>완료</button>}
           <button onClick={() => toggle("trash")} style={btn(viewMode === "trash")}>삭제</button>
         </div>
@@ -1367,7 +1522,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false }); }}>
+      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1437,7 +1592,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false }); }}>
+      onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1530,7 +1685,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="주요 협의 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} showComplete={false}
-      onAdd={() => { setViewMode("all"); addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null, deleted: false }); }}>
+      onAdd={() => addKeyIssue("negotiations", { id: uid("NEG"), debtorId: "", note: "", histId: null, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, textAlign: "center", color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1549,8 +1704,9 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
                   onChange={e => updateKeyIssue("negotiations", r.id, { note: e.target.value })}
                   onBlur={e => syncNoteToHistory(r, r.debtorId, e.target.value)}
                   placeholder="주요 협의 사항"
-                  rows={2}
-                  style={{ ...issueInp, textAlign: "left", resize: "vertical", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
+                  rows={1}
+                  autoResize
+                  style={{ ...issueInp, textAlign: "left", resize: "none", overflow: "hidden", minHeight: 32, lineHeight: 1.5, whiteSpace: "pre-wrap" }}
                 />
               </td>
               <td style={{ ...issueTd, width: viewMode === "trash" ? 88 : colWidths[3], textAlign: "center" }}>
@@ -1579,7 +1735,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => { setViewMode("all"); addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false }); }}>
+      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -1706,8 +1862,9 @@ export default function App() {
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
   const isAdmin = userPerms.admin;
-  const canEditRecord   = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
-  const canDeleteRecord = (record) => isAdmin || (currentUser?.role === "manager" && (record?.createdBy === currentUser?.name || record?.createdBy === currentUser?.id));
+  // 매니저는 누가 작성했는지와 무관하게 기록을 수정/삭제할 수 있다(작성자 본인만 가능하던 예전 제한 폐지)
+  const canEditRecord   = () => isAdmin || currentUser?.role === "manager";
+  const canDeleteRecord = () => isAdmin || currentUser?.role === "manager";
 
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
@@ -1856,7 +2013,7 @@ export default function App() {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: ex?.guarantors || [],
+          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
           history: ex?.history || [],
           phoneHistory: [],
           monthlyCollected: {},
@@ -1865,9 +2022,9 @@ export default function App() {
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
-      const legalCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]);
-      const minsaCases      = [...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)];
-      const assetDisclosures  = [...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)];
+      const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
+      const minsaCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]);
+      const assetDisclosures  = applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]);
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
       const installmentSchedules = installmentsRes.flatMap(p =>
         (p.schedules || []).map(s => ({ ...s, debtorId: p.debtorId, debtorName: p.debtorName, brand: p.brand, assignee: p.assignee, hubCode: p.hubCode, hubName: p.hubName }))
@@ -1903,7 +2060,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoResidentNums[sel.id] !== undefined) return;
     setAutoResidentNums(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/resident-number`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/resident-number`)
       .then(r => r.json())
       .then(data => {
         setAutoResidentNums(prev => ({ ...prev, [sel.id]: (data.ok && data.entries?.length) ? data.entries : [] }));
@@ -1919,7 +2076,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoCreditScores[sel.id] !== undefined) return;
     setAutoCreditScores(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/credit-score`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/credit-score`)
       .then(r => r.json())
       .then(data => {
         setAutoCreditScores(prev => ({ ...prev, [sel.id]: data.ok && data.entries?.length ? data.entries : [] }));
@@ -1931,7 +2088,7 @@ export default function App() {
   useEffect(() => {
     if (!sel || autoSubrogationDates[sel.id] !== undefined) return;
     setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/subrogation-date`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/subrogation-date`)
       .then(r => r.json())
       .then(data => {
         setAutoSubrogationDates(prev => ({ ...prev, [sel.id]: data.ok && data.date ? { date: data.date, filename: data.filename } : false }));
@@ -1947,7 +2104,7 @@ export default function App() {
       return;
     }
     setAutoAddresses(prev => ({ ...prev, [sel.id]: null }));
-    fetch(`/api/debtor/${sel.id}/credit-address`)
+    fetchWithTimeout(`/api/debtor/${sel.id}/credit-address`)
       .then(r => r.json())
       .then(data => {
         setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
@@ -2214,7 +2371,7 @@ export default function App() {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: ex?.guarantors || [],
+          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
           history: ex?.history || [],
           phoneHistory: [], monthlyCollected: {},
         };
@@ -4385,8 +4542,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <td style={{ padding: "8px 16px", fontSize: 12, lineHeight: 1.6, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
                       <td style={{ width: 60, padding: "8px 10px", verticalAlign: "top" }}>
                         <div style={{ display: "flex", flexDirection: "row", gap: 4 }}>
-                          {(canEditRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
-                          {(canDeleteRecord(h) || (h.isManual && !h.createdBy && canEdit)) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
+                          {canEditRecord(h) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
+                          {canDeleteRecord(h) && <button onClick={() => handleHistDelete(h)} title="삭제" style={{ width: 26, height: 26, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={12} /></button>}
                         </div>
                       </td>
                     </tr>
@@ -5890,23 +6047,49 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, []);
 
     // 초본/CB 주소가 아예 없는(한 번도 열어보지 않은) 채무자까지 전부 OCR로 추출한다.
-    // 무거운 작업이라 확인 없이 바로 돌리지 않고, 눌렀을 때만 순회한다 — 매월 1일 새벽에는
+    // 무거운 작업이라 확인 없이 바로 돌리지 않고, 눌렀을 때만 시작한다 — 매월 1일 새벽에는
     // 서버가 자동으로 같은 작업을 한 번 더 돌려서 새로 들어온 문서를 반영한다.
+    // 브라우저에서 채무자를 하나씩 순회하며 기다리는 대신 서버에 "시작만" 요청하고,
+    // 실제 작업은 서버 백그라운드에서 진행된다 — 탭을 닫거나 이 PC가 잠들어도
+    // 서버 PC만 켜져 있으면 계속 진행되고, 아래 polling으로 진행률을 이어서 볼 수 있다.
     const runBulkAddressExtract = async () => {
-      if (extractingAddr || !missingAddr || missingAddr.length === 0) return;
-      setExtractingAddr(true);
-      setExtractAddrProgress({ done: 0, total: missingAddr.length });
-      for (let i = 0; i < missingAddr.length; i++) {
-        // idx/total을 같이 보내면 서버 pm2 로그에 "(4/497) 홍길동"처럼 남아서, 화면 진행률과
-        // 로그를 대조해 어느 채무자에서 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
-        try { await fetch(`/api/debtor/${missingAddr[i].id}/extract-address?idx=${i + 1}&total=${missingAddr.length}`, { method: "POST" }); } catch {}
-        setExtractAddrProgress({ done: i + 1, total: missingAddr.length });
-      }
-      setExtractingAddr(false);
-      loadLocations();
-      loadMissingAddr();
-      showToast("주소 추출 완료 — '주소→좌표 변환'을 눌러 지도에 표시해주세요");
+      if (extractingAddr) return;
+      try {
+        const r = await fetch("/api/debtors/batch-extract-addresses", { method: "POST" }).then(res => res.json());
+        if (!r.ok) { showToast(r.error || "이미 실행 중입니다"); return; }
+        setExtractingAddr(true);
+        setExtractAddrProgress({ done: 0, total: missingAddr?.length || 0, phase: "extract" });
+        showToast("서버에서 주소 추출을 시작했습니다 — 이 창을 닫아도 계속 진행됩니다");
+      } catch { showToast("요청에 실패했습니다"); }
     };
+
+    // 배치 진행 상황을 주기적으로 확인 — 이 화면을 처음 열었을 때 이미 배치가 돌고 있던
+    // 경우(다른 사람이 시작했거나, 새로고침 전에 시작한 경우)에도 진행률을 이어서 보여준다.
+    const wasBatchRunningRef = useRef(false);
+    useEffect(() => {
+      let timer = null;
+      const poll = () => {
+        fetch("/api/debtors/batch-extract-addresses/status").then(r => r.json()).then(s => {
+          if (!s.ok) return;
+          if (s.running) {
+            wasBatchRunningRef.current = true;
+            setExtractingAddr(true);
+            setExtractAddrProgress({ done: s.done, total: s.total, phase: s.phase });
+          } else {
+            setExtractingAddr(false);
+            setExtractAddrProgress(null);
+            if (wasBatchRunningRef.current) {
+              wasBatchRunningRef.current = false;
+              loadLocations();
+              loadMissingAddr();
+              showToast(s.error ? `주소 추출 중 오류: ${s.error}` : "주소 추출 완료 — '주소→좌표 변환'을 눌러 지도에 표시해주세요");
+            }
+          }
+        }).catch(() => {}).finally(() => { timer = setTimeout(poll, 4000); });
+      };
+      poll();
+      return () => { if (timer) clearTimeout(timer); };
+    }, []);
 
     // 카카오맵 JS SDK 동적 로드 (JavaScript 키는 비밀값 아님 — URL에 그대로 노출돼도 안전)
     useEffect(() => {
@@ -6006,11 +6189,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 16px", border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)" }}>
             주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
           </div>
-          {canEdit && missingAddr && missingAddr.length > 0 && (
+          {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
             <button onClick={runBulkAddressExtract} disabled={extractingAddr}
-              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 OCR 추출을 돌립니다 — 채무자 수가 많으면 시간이 걸립니다"
+              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다. 매일 밤 00시~06시에는 이 작업이 자동으로도 조금씩 진행되니(며칠에 걸쳐 완료), 급하지 않으면 안 눌러도 됩니다"
               style={{ padding: "8px 14px", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
-              {extractingAddr ? `주소 추출 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})` : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
+              {extractingAddr
+                ? `${extractAddrProgress?.phase === "geocode" ? "좌표 변환" : "주소 추출"} 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})`
+                : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
             </button>
           )}
           {mapAppKey && noCoords.length > 0 && (
@@ -6100,8 +6285,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [isEditingComplaint, setIsEditingComplaint] = useState(false); // 기본정보/수사정보 수정 모드
     const [cmpHistory,        setCmpHistory]         = useState([]);    // 진행 히스토리
     const [cmpHistForm,       setCmpHistForm]        = useState(null);  // 추가/수정 폼
-    const [statusSort,        setStatusSort]         = useState(null);  // null | "asc" | "desc"
-    const toggleSort = () => setStatusSort(s => s === null ? "asc" : s === "asc" ? "desc" : null);
+    const [sortField, setSortField] = useState(null);  // null | 컬럼 필드명
+    const [sortDir,   setSortDir]   = useState(null);  // null | "asc" | "desc"
+    const toggleColSort = (field) => {
+      if (sortField !== field) { setSortField(field); setSortDir("asc"); }
+      else if (sortDir === "asc") setSortDir("desc");
+      else { setSortField(null); setSortDir(null); }
+    };
 
     const lc  = data.legalCases       || [];
     const ad  = data.assetDisclosures  || [];
@@ -6131,30 +6321,55 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const filteredAD  = applyFilter(ad, "debtorName");
     const filteredCmp = applyFilter(cmp, "debtorName");
 
-    const sortByStatus = (arr, getStatus) => {
-      if (!statusSort) return arr;
-      return [...arr].sort((a, b) => {
-        const sa = getStatus(a) || ""; const sb = getStatus(b) || "";
-        return statusSort === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
-      });
-    };
-    const sortedPO  = sortByStatus(filteredPO,  c => c.progressStatus || "");
-    const sortedSz  = sortByStatus(filteredSz,  c => c.progressStatus || "");
-    const sortedAD  = sortByStatus(filteredAD,  c => c.status || "진행");
-    const sortedCmp = sortByStatus(filteredCmp, c => c.status || "준비중");
+    // 연동 채무자 찾기
+    const getDebtor = (id) => data.debtors.find(d => d.id === id);
 
     // 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 함께 검색·조회할 수 있도록 통합
     // (유형 드롭다운이 "전체"가 아니면 해당 유형만 남긴다)
     const KIND_COLOR = { "지급명령": "#3b82f6", "압류": "#8b5cf6", "재산명시·재산조회": "#f59e0b", "형사고소": "#ef4444" };
-    const allItems = [
-      ...sortedPO.map(c => ({ c, kind: "지급명령" })),
-      ...sortedSz.map(c => ({ c, kind: "압류" })),
-      ...sortedAD.map(c => ({ c, kind: "재산명시·재산조회" })),
-      ...sortedCmp.map(c => ({ c, kind: "형사고소" })),
+    const kindItems = [
+      ...filteredPO.map(c => ({ c, kind: "지급명령" })),
+      ...filteredSz.map(c => ({ c, kind: "압류" })),
+      ...filteredAD.map(c => ({ c, kind: "재산명시·재산조회" })),
+      ...filteredCmp.map(c => ({ c, kind: "형사고소" })),
     ].filter(({ kind }) => legalTypeFilter === "전체" || legalTypeFilter === kind);
 
-    // 연동 채무자 찾기
-    const getDebtor = (id) => data.debtors.find(d => d.id === id);
+    // 헤더 클릭 정렬용 컬럼별 값 추출기 (4개 유형의 필드명이 서로 달라 kind별로 분기)
+    // plaintiff 슬롯: 지급명령/압류는 원고명, 재산명시·재산조회는 재산조회명령 O/X(기존 원/피고 컬럼 자리 그대로 유지), 형사고소는 해당 없음
+    const LEGAL_SORT_GETTERS = {
+      brand:     ({ c }) => c.brand || "",
+      kind:      ({ kind }) => kind,
+      plaintiff: ({ c, kind }) => kind === "재산명시·재산조회" ? (c.hasInquiryOrder ? "O" : "X") : (kind === "형사고소" ? "" : (c.plaintiff || "")),
+      defendant: ({ c, kind }) => (kind === "지급명령" || kind === "압류") ? c.defendant : c.debtorName,
+      org:       ({ c, kind }) => kind === "형사고소" ? c.policeStation : c.court,
+      caseNo:    ({ c, kind }) => kind === "형사고소" ? c.charge : c.caseNumber,
+      date:      ({ c, kind }) => kind === "형사고소" ? c.complaintDate : (kind === "재산명시·재산조회" ? c.applicationDate : c.filingDate),
+      status:    ({ c, kind }) => kind === "형사고소" ? (c.status || "준비중") : (kind === "재산명시·재산조회" ? (c.status || "진행") : c.progressStatus),
+      balance:   ({ c }) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched:   ({ c }) => getDebtor(c.debtorId) ? 1 : 0,
+    };
+    const allItems = (() => {
+      if (!sortField || !sortDir) return kindItems;
+      const get = LEGAL_SORT_GETTERS[sortField];
+      return [...kindItems].sort((a, b) => {
+        const va = get(a), vb = get(b);
+        if (typeof va === "number" || typeof vb === "number") {
+          return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        if (sortField === "date") {
+          const ka = dateSortKey(va), kb = dateSortKey(vb);
+          if (ka !== null && kb !== null) return sortDir === "asc" ? ka - kb : kb - ka;
+        }
+        const sa = String(va || ""), sb = String(vb || "");
+        return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
+      });
+    })();
+
+    const SortTh = ({ field, label }) => (
+      <span style={{ cursor: "pointer", userSelect: "none" }} onClick={() => toggleColSort(field)}>
+        {label}{sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+      </span>
+    );
 
     // 수동 매칭 후보 목록
     const matchCandidates = useMemo(() => {
@@ -6484,8 +6699,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     // 단일 사건 행 (지급명령/압류)
     // 지급명령/압류/재산명시·재산조회/형사고소 4종을 한 행 컴포넌트로 통합 — kind로 분기
-    // 컬럼: 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
-    const legalGridCols = "56px 128px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
+    // 지급명령만 단독으로 필터링해서 볼 때만 원고/피고로 분리 표시한다.
+    // 압류/재산명시·재산조회/형사고소는(그리고 "전체" 통합 보기는) 원래 형태(대상자 + 원/피고)를 그대로 유지 — 이 세 유형은
+    // 원고/피고 개념이 별 의미가 없거나(재산명시·재산조회, 형사고소) 굳이 나눌 필요가 없다는(압류) 피드백에 따름
+    const useSplitParties = legalTypeFilter === "지급명령";
+    // 컬럼(분리): 브랜드 / 구분 / 원고 / 피고 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 잔액 / 매칭
+    // 컬럼(원본): 브랜드 / 구분 / 대상자 / 법원·기관 / 사건번호·죄명 / 접수일 / 상태 / 원피고·조회 / 잔액 / 매칭
+    const legalGridCols = useSplitParties
+      ? "56px 128px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 120px 100px"
+      : "56px 128px minmax(90px,1fr) minmax(100px,1.1fr) minmax(130px,1.3fr) 96px 84px 74px 120px 100px";
     const CaseRow = useStableComponent(({ c, kind }) => {
       const kindBadge = (
         <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 6, background: `${KIND_COLOR[kind]}18`, color: KIND_COLOR[kind], border: `1px solid ${KIND_COLOR[kind]}30`, whiteSpace: "nowrap" }}>{kind}</span>
@@ -6502,12 +6724,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
+            {useSplitParties && <span>-</span>}
             <span style={{ fontSize: 14, fontWeight: 600 }}>{c.debtorName || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.policeStation || "-"}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.charge || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.complaintDate || "-"}</span>
             <span><Badge status={c.status || "준비중"} small /></span>
-            <span>-</span>
+            {!useSplitParties && <span>-</span>}
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span>-</span>
           </div>
@@ -6537,12 +6760,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           >
             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
             <span>{kindBadge}</span>
+            {useSplitParties && <span style={{ fontSize: 13, fontWeight: 600 }}>{isAD ? (inquiryBadge || "-") : (c.plaintiff || "-")}</span>}
             <span style={{ fontSize: 14, fontWeight: 600 }}>{name || "-"}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
             <span style={{ fontSize: 13, color: "var(--ts)" }}>{dateVal || "-"}</span>
             <span>{statusVal ? <Badge status={statusVal} /> : "-"}</span>
-            <span>{!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : (inquiryBadge || "-")}</span>
+            {!useSplitParties && <span>{!isAD && c.caseStatus ? <Badge status={c.caseStatus} small /> : (inquiryBadge || "-")}</span>}
             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
             <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               {getCaseUrl(c.id) && <a href={getCaseUrl(c.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
@@ -6561,7 +6785,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const handleAddNote = () => {
       if (!selCase || !noteDraft.trim()) return;
-      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      // 메모 추가 시점에 이벤트 날짜가 입력돼 있으면(위 "이벤트 날짜" 입력란) 그 메모에도
+      // 같이 기록해둔다 — 목록에서 어떤 메모가 이벤트와 연결된 것인지 아이콘으로 표시하기 위함.
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음", eventDate: eventDateDraft || null }, ...caseNotes];
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
       setNoteDraft("");
@@ -6582,24 +6808,30 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const [docUrl, setDocUrl] = useState(() => getCaseUrl(selCase.id));
       const saveDocUrl = () => { saveCaseUrl(selCase.id, docUrl); showToast("문서 링크 저장됨"); };
       const [isEditingCase, setIsEditingCase] = useState(false);
-      const [caseDraft, setCaseDraft] = useState(() => ({
+      const buildCaseDraft = () => isAD ? {
+        court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+        debtorName: selCase.debtorName || "",
+        applicationDate: selCase.applicationDate || "", decisionDate: selCase.decisionDate || "",
+        result: selCase.result || "", status: selCase.status || "", withdrawReason: selCase.withdrawReason || "",
+        detentionDecision: selCase.detentionDecision || "",
+        propertyList: selCase.propertyList || "", propertyListDesc: selCase.propertyListDesc || "",
+        executionExpiration: selCase.executionExpiration || "",
+      } : {
         court: selCase.court || "", caseNumber: selCase.caseNumber || "",
         plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
         filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
-      }));
+      };
+      const [caseDraft, setCaseDraft] = useState(buildCaseDraft);
       const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
       const startEditCase = () => {
-        setCaseDraft({
-          court: selCase.court || "", caseNumber: selCase.caseNumber || "",
-          plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
-          filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
-        });
+        setCaseDraft(buildCaseDraft());
         setIsEditingCase(true);
       };
       const saveEditCase = () => {
         saveCaseFieldOv(selCase.id, caseDraft);
         setSelCase(prev => ({ ...prev, ...caseDraft }));
-        setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, ...caseDraft } : c) }));
+        const listKey = isAD ? "assetDisclosures" : "legalCases";
+        setData(prev => ({ ...prev, [listKey]: prev[listKey].map(c => c.id === selCase.id ? { ...c, ...caseDraft } : c) }));
         setIsEditingCase(false);
         showToast("저장 완료");
       };
@@ -6630,16 +6862,31 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>사건 정보</div>
               <span style={{ flex: 1 }} />
-              {!isAD && (isEditingCase ? (
+              {isEditingCase ? (
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={saveEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
                   <button onClick={() => setIsEditingCase(false)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
                 </div>
               ) : (
                 <button onClick={startEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
-              ))}
+              )}
             </div>
-            {!isAD && isEditingCase ? (
+            {isEditingCase ? (isAD ? (
+              <>
+                <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
+                <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="대상자"><KoreanInput value={caseDraft.debtorName} onChange={e => setCF("debtorName", e.target.value)} style={inp} /></EF>
+                <EF label="신청일"><KoreanInput value={caseDraft.applicationDate} onChange={e => setCF("applicationDate", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="결정일"><KoreanInput value={caseDraft.decisionDate} onChange={e => setCF("decisionDate", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="결과"><KoreanInput value={caseDraft.result} onChange={e => setCF("result", e.target.value)} style={inp} /></EF>
+                <EF label="결과 상태"><KoreanInput value={caseDraft.status} onChange={e => setCF("status", e.target.value)} style={inp} placeholder="예: 취하, 각하" /></EF>
+                <EF label="취하/각하 사유"><KoreanInput value={caseDraft.withdrawReason} onChange={e => setCF("withdrawReason", e.target.value)} style={inp} /></EF>
+                <EF label="감치결정"><KoreanInput value={caseDraft.detentionDecision} onChange={e => setCF("detentionDecision", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="재산목록 제출"><KoreanInput value={caseDraft.propertyList} onChange={e => setCF("propertyList", e.target.value)} style={inp} /></EF>
+                <EF label="재산목록 내용"><KoreanInput value={caseDraft.propertyListDesc} onChange={e => setCF("propertyListDesc", e.target.value)} style={inp} /></EF>
+                <EF label="집행장 만료/취하"><KoreanInput value={caseDraft.executionExpiration} onChange={e => setCF("executionExpiration", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+              </>
+            ) : (
               <>
                 <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
                 <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
@@ -6652,7 +6899,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </select>
                 </EF>
               </>
-            ) : (
+            )) : (
               <>
                 <DL label="법원"       val={selCase.court} />
                 <DL label="사건번호"   val={selCase.caseNumber} />
@@ -6696,6 +6943,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           )}
 
+          {/* 제3채무자 진술서 (압류인 경우) */}
+          {!isAD && selCase.thirdParties != null && (
+            <ThirdsEditorSection
+              key={selCase.id}
+              thirds={selCase.thirdParties}
+              caseId={selCase.id}
+              onSave={cleaned => {
+                setSelCase(prev => ({ ...prev, thirdParties: cleaned }));
+                setData(prev => ({ ...prev, legalCases: prev.legalCases.map(c => c.id === selCase.id ? { ...c, thirdParties: cleaned } : c) }));
+              }}
+            />
+          )}
+
           {/* 진행상황 메모 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
@@ -6716,7 +6976,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
               : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
                   {caseNotes.map(n => (
-                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", padding: "8px 10px" }}>
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: n.eventDate ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
                           <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
@@ -6724,6 +6984,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
+                      {n.eventDate && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
+                        </div>
+                      )}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
@@ -6825,10 +7091,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 리스트 헤더 */}
         <div style={{ display: "grid", gridTemplateColumns: legalGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-          <span>브랜드</span><span>구분</span><span>대상자</span><span>법원/기관</span><span>사건번호/죄명</span>
-          <span>접수일</span>
-          <span style={{ cursor: "pointer", userSelect: "none" }} onClick={toggleSort}>상태{statusSort === "asc" ? " ↑" : statusSort === "desc" ? " ↓" : ""}</span>
-          <span>원/피고</span><span>잔액</span><span>매칭</span>
+          <SortTh field="brand" label="브랜드" /><SortTh field="kind" label="구분" />
+          {useSplitParties
+            ? <><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /></>
+            : <SortTh field="defendant" label="대상자" />}
+          <SortTh field="org" label="법원/기관" /><SortTh field="caseNo" label="사건번호/죄명" />
+          <SortTh field="date" label="접수일" />
+          <SortTh field="status" label="상태" />
+          {!useSplitParties && <SortTh field="plaintiff" label="원/피고" />}
+          <SortTh field="balance" label="잔액" /><SortTh field="matched" label="매칭" />
         </div>
 
         {/* 지급명령/압류/재산명시·재산조회/형사고소 통합 리스트 */}
@@ -8392,6 +8663,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [brandF,       setBrandF]       = useState("전체");
     const [typeF,        setTypeF]        = useState("전체");
     const [searchQ,      setSearchQ]      = useState("");
+    const [sortField,    setSortField]    = useState(null);  // null | 컬럼 필드명
+    const [sortDir,       setSortDir]      = useState(null);  // null | "asc" | "desc"
+    const toggleColSort = (field) => {
+      if (sortField !== field) { setSortField(field); setSortDir("asc"); }
+      else if (sortDir === "asc") setSortDir("desc");
+      else { setSortField(null); setSortDir(null); }
+    };
     useEffect(() => { if (minsaSearchInit) { setSearchQ(minsaSearchInit); setMinsaSearchInit(null); } }, [minsaSearchInit]);
     const [selCase,      setSelCase]      = useState(null);
     const [matchingCase, setMatchingCase] = useState(null);
@@ -8448,6 +8726,40 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
 
+    // 헤더 클릭 정렬용 컬럼별 값 추출기
+    const MINSA_SORT_GETTERS = {
+      brand:     (c) => c.brand || "",
+      plaintiff: (c) => c.plaintiff || "",
+      defendant: (c) => c.defendant || "",
+      court:     (c) => c.court || "",
+      caseNo:    (c) => c.caseNumber || "",
+      date:      (c) => c.filingDate || "",
+      status:    (c) => c.progressStatus || "",
+      amount:    (c) => { const d = getDebtor(c.debtorId); return d ? (d.finalBalanceLegal || 0) : -Infinity; },
+      matched:   (c) => getDebtor(c.debtorId) ? 1 : 0,
+    };
+    const sorted = useMemo(() => {
+      if (!sortField || !sortDir) return filtered;
+      const get = MINSA_SORT_GETTERS[sortField];
+      return [...filtered].sort((a, b) => {
+        const va = get(a), vb = get(b);
+        if (typeof va === "number" || typeof vb === "number") {
+          return sortDir === "asc" ? (va || 0) - (vb || 0) : (vb || 0) - (va || 0);
+        }
+        if (sortField === "date") {
+          const ka = dateSortKey(va), kb = dateSortKey(vb);
+          if (ka !== null && kb !== null) return sortDir === "asc" ? ka - kb : kb - ka;
+        }
+        const sa = String(va || ""), sb = String(vb || "");
+        return sortDir === "asc" ? sa.localeCompare(sb, "ko") : sb.localeCompare(sa, "ko");
+      });
+    }, [filtered, sortField, sortDir]);
+    const SortTh = ({ field, label }) => (
+      <span style={{ cursor: "pointer", userSelect: "none" }} onClick={() => toggleColSort(field)}>
+        {label}{sortField === field ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+      </span>
+    );
+
     const matchCandidates = useMemo(() => {
       if (!matchingCase) return [];
       const q = matchQ.toLowerCase().trim();
@@ -8500,7 +8812,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const handleAddNote = () => {
       if (!selCase || !noteDraft.trim()) return;
-      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음" }, ...caseNotes];
+      // 메모 추가 시점에 이벤트 날짜가 입력돼 있으면(위 "이벤트 날짜" 입력란) 그 메모에도
+      // 같이 기록해둔다 — 목록에서 어떤 메모가 이벤트와 연결된 것인지 아이콘으로 표시하기 위함.
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음", eventDate: eventDateDraft || null }, ...caseNotes];
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
       setNoteDraft("");
@@ -8512,15 +8826,45 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setCaseNotes(arr);
     };
 
-    const DetailModal = () => {
+    const DetailModal = useStableComponent(() => {
       if (!selCase) return null;
       const debtor = getDebtor(selCase.debtorId);
+      const [isEditingCase, setIsEditingCase] = useState(false);
+      const [caseDraft, setCaseDraft] = useState(() => ({
+        court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+        plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+        hearingTime: selCase.hearingTime || "", hearingLocation: selCase.hearingLocation || "",
+        filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+      }));
+      const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
+      const startEditCase = () => {
+        setCaseDraft({
+          court: selCase.court || "", caseNumber: selCase.caseNumber || "",
+          plaintiff: selCase.plaintiff || "", defendant: selCase.defendant || "",
+          hearingTime: selCase.hearingTime || "", hearingLocation: selCase.hearingLocation || "",
+          filingDate: selCase.filingDate || "", progressStatus: selCase.progressStatus || "진행",
+        });
+        setIsEditingCase(true);
+      };
+      const saveEditCase = () => {
+        saveCaseFieldOv(selCase.id, caseDraft);
+        setSelCase(prev => ({ ...prev, ...caseDraft }));
+        setData(prev => ({ ...prev, minsaCases: prev.minsaCases.map(c => c.id === selCase.id ? { ...c, ...caseDraft } : c) }));
+        setIsEditingCase(false);
+        showToast("저장 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
           <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
         </div>
       ) : null;
+      const EF = ({ label, children }) => (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1 }}>{children}</div>
+        </div>
+      );
       return (
         <Overlay onClose={() => setSelCase(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -8531,17 +8875,47 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button onClick={() => setSelCase(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
-            <DL label="법원"        val={selCase.court} />
-            <DL label="사건번호"    val={selCase.caseNumber} />
-            <DL label="원고(채권자)" val={selCase.plaintiff} />
-            <DL label="피고(채무자)" val={selCase.defendant} />
-            <DL label="기일시간"    val={selCase.hearingTime} />
-            <DL label="기일장소"    val={selCase.hearingLocation} />
-            <DL label="접수일자"    val={selCase.filingDate} />
-            <DL label="진행상황"    val={selCase.progressStatus} />
-            {debtor && <DL label="담당자"    val={debtor.assignee} />}
-            {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>사건 정보</div>
+              <span style={{ flex: 1 }} />
+              {isEditingCase ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={saveEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                  <button onClick={() => setIsEditingCase(false)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                </div>
+              ) : (
+                <button onClick={startEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+              )}
+            </div>
+            {isEditingCase ? (
+              <>
+                <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
+                <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="원고(채권자)"><KoreanInput value={caseDraft.plaintiff} onChange={e => setCF("plaintiff", e.target.value)} style={inp} /></EF>
+                <EF label="피고(채무자)"><KoreanInput value={caseDraft.defendant} onChange={e => setCF("defendant", e.target.value)} style={inp} /></EF>
+                <EF label="기일시간"><KoreanInput value={caseDraft.hearingTime} onChange={e => setCF("hearingTime", e.target.value)} style={inp} /></EF>
+                <EF label="기일장소"><KoreanInput value={caseDraft.hearingLocation} onChange={e => setCF("hearingLocation", e.target.value)} style={inp} /></EF>
+                <EF label="접수일자"><KoreanInput value={caseDraft.filingDate} onChange={e => setCF("filingDate", e.target.value)} style={inp} placeholder="YYYY.MM.DD" /></EF>
+                <EF label="진행상황">
+                  <select value={caseDraft.progressStatus} onChange={e => setCF("progressStatus", e.target.value)} style={inp}>
+                    {["진행", "완료", "부분해지", "전부해지"].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </EF>
+              </>
+            ) : (
+              <>
+                <DL label="법원"        val={selCase.court} />
+                <DL label="사건번호"    val={selCase.caseNumber} />
+                <DL label="원고(채권자)" val={selCase.plaintiff} />
+                <DL label="피고(채무자)" val={selCase.defendant} />
+                <DL label="기일시간"    val={selCase.hearingTime} />
+                <DL label="기일장소"    val={selCase.hearingLocation} />
+                <DL label="접수일자"    val={selCase.filingDate} />
+                <DL label="진행상황"    val={selCase.progressStatus} />
+                {debtor && <DL label="담당자"    val={debtor.assignee} />}
+                {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+              </>
+            )}
           </div>
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
@@ -8562,7 +8936,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
               : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
                   {caseNotes.map(n => (
-                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", padding: "8px 10px" }}>
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: n.eventDate ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
                           <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
@@ -8570,6 +8944,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
                       </div>
+                      {n.eventDate && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
+                        </div>
+                      )}
                       {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
                     </div>
                   ))}
@@ -8589,14 +8969,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </Overlay>
       );
-    };
+    });
 
     const brandCount = (code) => mc.filter(c => c.brand === code).length;
     const typeCount  = (type) => mc.filter(c => getCaseType(c.caseNumber) === type).length;
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {selCase && DetailModal()}
+        {selCase && <DetailModal />}
 
         {/* 사건번호 유형 박스 */}
         <div style={{ display: "flex", gap: 6, alignItems: "center", background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 12, padding: "10px 16px" }}>
@@ -8644,20 +9024,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 헤더 */}
         {(() => {
-          const gridCols = "56px minmax(90px,1fr) minmax(100px,1.1fr) minmax(140px,1.3fr) 100px 84px 72px 130px 90px";
+          const gridCols = "56px minmax(100px,1.3fr) minmax(100px,1.3fr) minmax(90px,0.8fr) minmax(110px,0.9fr) 100px 84px 130px 90px";
           return (
             <>
               <div style={{ display: "grid", gridTemplateColumns: gridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
-                <span>브랜드</span><span>대상자</span><span>법원</span><span>사건번호</span>
-                <span>접수일</span><span>상태</span><span>원/피고</span>
-                <span>금액</span><span>매칭</span>
+                <SortTh field="brand" label="브랜드" /><SortTh field="plaintiff" label="원고" /><SortTh field="defendant" label="피고" /><SortTh field="court" label="법원" /><SortTh field="caseNo" label="사건번호" />
+                <SortTh field="date" label="접수일" /><SortTh field="status" label="상태" />
+                <SortTh field="amount" label="금액" /><SortTh field="matched" label="매칭" />
               </div>
 
               {/* 리스트 */}
-              {filtered.length === 0
+              {sorted.length === 0
                 ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>민사소송 사건이 없습니다.</div>
                 : <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    {filtered.map(c => {
+                    {sorted.map(c => {
                       const debtor     = getDebtor(c.debtorId);
                       const isMatching = matchingCase?.id === c.id;
                       return (
@@ -8669,12 +9049,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             onMouseLeave={e => { if (!isMatching) e.currentTarget.style.background = "var(--card)"; }}
                           >
                             <span>{c.brand ? <BrandBadge code={c.brand} brands={config.brands} /> : "-"}</span>
-                            <span style={{ fontSize: 14, fontWeight: 600 }}>{c.defendant || "-"}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{c.plaintiff || "-"}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600 }}>{c.defendant || "-"}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.court}</span>
                             <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{c.caseNumber}</span>
                             <span style={{ fontSize: 13, color: "var(--ts)" }}>{c.filingDate || "-"}</span>
                             <span>{c.progressStatus ? <Badge status={c.progressStatus} /> : "-"}</span>
-                            <span>{c.caseStatus ? <Badge status={c.caseStatus} small /> : "-"}</span>
                             <span className="mono" style={{ fontSize: 14, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceLegal) : "-"}</span>
                             <span>
                               {debtor
@@ -8899,7 +9279,61 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       onRemove: (idx) => { setConfig(p => ({ ...p, [key]: p[key].filter((_, i) => i !== idx) })); showToast("삭제 완료"); },
     });
 
-    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서","서류 폴더"];
+    const settingTabs = ["담당자","브랜드","허브/지점","채무발생원인","추심상태","분류","활동유형","입금채널","납부시기","법원","죄명","경찰서","서류 폴더","AI 종합분석"];
+
+    // 예전(줄글/서술형) 프롬프트로 만들어진 "AI 종합분석" 기타사항을, 지금 프롬프트(단답형 목록)로
+    // 일괄 재생성한다. 서술형인 항목만 골라서 다시 만들기 때문에 이미 단답형인 항목은 건드리지 않음.
+    const AnalysisFormatConfig = useStableComponent(() => {
+      const [status, setStatus] = useState(null); // { total, outdated }
+      const [batch, setBatch] = useState(null); // { running, done, total }
+
+      const loadStatus = () => {
+        fetch("/api/debtors/analysis-format-status").then(r => r.json()).then(d => setStatus(d.ok ? d : null)).catch(() => {});
+      };
+      useEffect(() => { loadStatus(); }, []);
+
+      useEffect(() => {
+        let timer = null;
+        const poll = () => {
+          fetch("/api/debtors/batch-regenerate-analysis/status").then(r => r.json()).then(s => {
+            if (!s.ok) return;
+            setBatch(s.running ? s : null);
+            if (!s.running && batch?.running) { loadStatus(); showToast(s.error ? `일괄 재생성 중 오류: ${s.error}` : "AI 종합분석 일괄 재생성 완료"); }
+          }).catch(() => {}).finally(() => { timer = setTimeout(poll, 4000); });
+        };
+        poll();
+        return () => { if (timer) clearTimeout(timer); };
+      }, [batch?.running]);
+
+      const start = async () => {
+        try {
+          const r = await fetch("/api/debtors/batch-regenerate-analysis", { method: "POST" }).then(res => res.json());
+          if (!r.ok) { showToast(r.error); return; }
+          if (!r.started) { showToast(r.message || "대상 없음"); return; }
+          setBatch({ running: true, done: 0, total: r.total });
+          showToast(`서버에서 ${r.total}건 일괄 재생성을 시작했습니다 — 창을 닫아도 계속 진행됩니다`);
+        } catch { showToast("요청에 실패했습니다"); }
+      };
+
+      return (
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>AI 종합분석 형식 일괄 재생성</div>
+          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 16, lineHeight: 1.6 }}>
+            예전 프롬프트로 생성돼 줄글(서술형)로 남아있는 "채무자 및 연대보증인 종합분석"을,<br />
+            지금 쓰는 단답형(목록) 형식으로 다시 생성합니다. 이미 단답형인 항목은 건드리지 않습니다.
+          </div>
+          {status && (
+            <div style={{ fontSize: 12, marginBottom: 12 }}>
+              전체 <b>{status.total}</b>건 중 서술형 <b style={{ color: status.outdated > 0 ? "#dc2626" : "var(--tp)" }}>{status.outdated}</b>건
+            </div>
+          )}
+          <button onClick={start} disabled={!status || status.outdated === 0 || batch?.running}
+            style={{ padding: "8px 16px", borderRadius: 8, background: (!status || status.outdated === 0 || batch?.running) ? "var(--bg2)" : "var(--acc)", color: (!status || status.outdated === 0 || batch?.running) ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: (!status || status.outdated === 0 || batch?.running) ? "default" : "pointer" }}>
+            {batch?.running ? `재생성 중... (${batch.done}/${batch.total})` : `서술형 ${status?.outdated || 0}건 일괄 재생성`}
+          </button>
+        </div>
+      );
+    });
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -8930,6 +9364,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {settingTab === "죄명" && <ListEditor title="죄명 관리" items={config.chargeTypes} {...updateList("chargeTypes")} />}
           {settingTab === "경찰서" && <ListEditor title="경찰서 관리" items={config.policeStations} {...updateList("policeStations")} />}
           {settingTab === "서류 폴더" && <DocsFolderConfig />}
+          {settingTab === "AI 종합분석" && <AnalysisFormatConfig />}
         </>}
 
         {/* 사용자 관리 */}

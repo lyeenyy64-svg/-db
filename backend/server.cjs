@@ -316,6 +316,27 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v4] "알수없음" ${removedUnknown.changes}건, "진단테스트" ${removedDiag.changes}건, 테스트용 kv 키 ${testKeys.length}개 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v4', '1')").run();
   }
+  // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
+  // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
+  // 저장 시각) 묶음으로 근사 복원해서 user_activity_log에 한 번만 채워 넣는다 (1회만 실행).
+  const patchUnifyDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_debtor_patch_unify_v1'").get();
+  if (!patchUnifyDone) {
+    const grouped = db.prepare(`
+      SELECT changed_by AS user, changed_at AS ts, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
+      FROM debtor_edit_log WHERE changed_by != '알수없음'
+      GROUP BY changed_by, debtor_id, changed_at
+    `).all();
+    const insBackfill = db.prepare("INSERT INTO user_activity_log (type, user_name, bytes, path, ts) VALUES ('data_input', ?, ?, '/api/debtors/:id', ?)");
+    let backfilled = 0;
+    const backfillTx = db.transaction(() => {
+      for (const r of grouped) {
+        if (r.bytes > 0) { insBackfill.run(r.user, r.bytes, r.ts); backfilled++; }
+      }
+    });
+    backfillTx();
+    console.log(`[stats_debtor_patch_unify_v1] 채무자 PATCH 이력 ${backfilled}건을 통계용 액션 단위로 백필 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_debtor_patch_unify_v1', '1')").run();
+  }
 }
 
 // 월별 회수 채널 수기 입력 테이블 (캐쉬충전, 웰컴직접상환 수동 기록 + 과거 데이터)
@@ -467,7 +488,10 @@ db.exec(`
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
+// express.json() 기본값(strict:true)은 최상위가 객체/배열이 아닌 JSON 바디를 거부해서
+// 원시값 PUT이 전부 400으로 조용히 실패하고 있었다 (예: 이벤트 날짜 "YYYY-MM-DD" 저장)
+app.use(express.json({ strict: false }));
 
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();
@@ -635,8 +659,8 @@ app.get("/api/debtors", (req, res) => {
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
            final_balance_finance AS finalBalanceFinance,
            final_balance_legal AS finalBalanceLegal,
-           (SELECT GROUP_CONCAT(name, ',') FROM debtor_guarantors WHERE debtor_id = id) AS guarantors_str
-    FROM v_debtors
+           (SELECT GROUP_CONCAT(name, ',') FROM debtor_guarantors WHERE debtor_id = vd.id) AS guarantors_str
+    FROM v_debtors vd
     ${where.length ? "WHERE " + where.join(" AND ") : ""}
     ORDER BY final_balance_legal DESC
   `;
@@ -1892,22 +1916,29 @@ app.patch("/api/debtors/:id", (req, res) => {
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
     }
 
-    // 변경 항목을 debtor_edit_log에 기록
+    // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
     if (oldRow && changedJsKeys.length > 0) {
       const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
       const insLog = db.prepare(
         "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
       );
+      let statsBytes = 0;
       const logTx = db.transaction(() => {
         for (const jsKey of changedJsKeys) {
           const oldVal = String(oldRow[jsKey] ?? '');
           const newVal = String(coercedVals[jsKey] ?? '');
           if (oldVal !== newVal) {
             insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
+            statsBytes += newVal.length;
           }
         }
       });
       logTx();
+      // 어드민 통계용: 필드가 몇 개 바뀌었든 이 PATCH 요청은 kv 저장과 동일하게
+      // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
+      if (statsBytes > 0 && _userName !== '알수없음') {
+        insertActivityLog.run("data_input", _userName, statsBytes, req.path);
+      }
     }
 
     // 연대보증인 업데이트 (기존 삭제 후 재삽입)
@@ -2449,37 +2480,22 @@ app.get("/api/admin/stats", (req, res) => {
       ORDER BY period DESC
     `).all(STATS_START_DATE);
 
-    const volumeBuckets = (len) => {
-      const fromActivity = db.prepare(`
-        SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-        FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
-        GROUP BY period, user
-      `).all(STATS_START_DATE);
-      const fromEditLog = db.prepare(`
-        SELECT substr(changed_at,1,${len}) AS period, changed_by AS user, SUM(LENGTH(COALESCE(new_value,''))) AS bytes
-        FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음'
-        GROUP BY period, user
-      `).all(STATS_START_DATE);
-      const merged = new Map();
-      for (const r of [...fromActivity, ...fromEditLog]) {
-        const key = r.period + " " + r.user;
-        merged.set(key, (merged.get(key) || 0) + (r.bytes || 0));
-      }
-      return [...merged.entries()]
-        .map(([key, bytes]) => { const [period, user] = key.split(" "); return { period, user, bytes }; })
-        .sort((a, b) => b.period.localeCompare(a.period));
-    };
+    // 채무자 PATCH도 이제 kv 저장과 동일하게 저장 1건당 user_activity_log에 한 번만
+    // 기록되므로(PATCH /api/debtors/:id 핸들러 참고), 입력량은 이 테이블 하나만 보면 된다 —
+    // debtor_edit_log(필드별 상세)를 따로 더하면 액션 단위와 필드 단위가 다시 섞여버린다.
+    const volumeBuckets = (len) => db.prepare(`
+      SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
+      GROUP BY period, user
+      ORDER BY period DESC
+    `).all(STATS_START_DATE);
 
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
 
-    // "총 수정 건수"는 채무자 필드 수정(debtor_edit_log)뿐 아니라, 신용분석/협의/TodoList
-    // 등 kvPut 기반 저장(user_activity_log의 data_input)까지 합산해야 실제 작업량을 반영한다 —
-    // debtor_edit_log만 세면 kvPut으로 저장되는 대부분의 작업이 0건으로 보이게 된다.
-    const editSummary = db.prepare(`
-      SELECT changed_by AS user, COUNT(*) AS cnt, MAX(changed_at) AS lastAt
-      FROM debtor_edit_log WHERE changed_at >= ? AND changed_by != '알수없음' GROUP BY changed_by
-    `).all(STATS_START_DATE);
+    // "총 수정 건수"는 kv 저장(협의/TodoList/신용분석 등)과 채무자 PATCH를 합쳐 하나의
+    // user_activity_log(data_input)만 보고 센다 — 두 저장 방식 모두 "저장 액션 1건 = 1행"으로
+    // 통일되어 있어(PATCH /api/debtors/:id 핸들러 참고) debtor_edit_log를 따로 셀 필요가 없다.
     const dataInputSummary = db.prepare(`
       SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
       FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
@@ -2495,7 +2511,6 @@ app.get("/api/admin/stats", (req, res) => {
       if (lastAt && (!cur.lastActiveAt || lastAt > cur.lastActiveAt)) cur.lastActiveAt = lastAt;
       summaryMap.set(user, cur);
     };
-    for (const r of editSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of dataInputSummary) touch(r.user, r.cnt, r.lastAt);
     for (const r of heartbeatSummary) touch(r.user, 0, r.lastAt);
 
@@ -2635,59 +2650,64 @@ const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
 // 환경변수(backend/.env)로 절대경로를 지정할 수 있다.
 const PYTHON_BIN = process.env.PYTHON_BIN || "pythonw.exe";
 
-function ocrPdfForResident(pdfPath) {
-  return new Promise((resolve) => {
-    // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
-    // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
-    // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
-    // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
-    // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
-    const proc = spawn(PYTHON_BIN, [OCR_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
+// OCR(pythonw.exe)는 CPU를 많이 써서, 배치(전체 채무자 주소 추출 등)와 화면에서 직접 여는
+// 개별 조회가 서로 아무 제약 없이 각자 pythonw.exe를 띄우면 서버 PC가 감당 못 하고 전부
+// 같이 느려진다(체감상 "조회 중..."이 끝없이 이어짐). 모든 OCR 호출이 이 슬롯을 거치게 해서
+// 전체 동시 실행 개수를 하나로 통제하고, 화면에서 직접 연 조회(priority="high")는 배치
+// 작업(priority="low")보다 항상 먼저 슬롯을 받도록 큐 앞쪽에 끼워준다.
+const OCR_MAX_CONCURRENT = 3;
+let ocrActiveCount = 0;
+const ocrHighQueue = [];
+const ocrLowQueue = [];
+function ocrSlotRelease() {
+  ocrActiveCount--;
+  const next = ocrHighQueue.shift() || ocrLowQueue.shift();
+  if (next) { ocrActiveCount++; next(); }
+}
+function withOcrSlot(fn, priority) {
+  return new Promise((resolve, reject) => {
+    const run = () => { fn().then(resolve, reject).finally(ocrSlotRelease); };
+    if (ocrActiveCount < OCR_MAX_CONCURRENT) { ocrActiveCount++; run(); }
+    else (priority === "low" ? ocrLowQueue : ocrHighQueue).push(run);
   });
 }
 
-function ocrPdfForSubrogationDate(pdfPath) {
+function spawnOcr(script, pdfPath, timeout) {
   return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_SUBROGATION_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
-    let out = "";
+    const proc = spawn(PYTHON_BIN, [script, pdfPath], { timeout, windowsHide: true });
+    let out = "", err = ""; // err: 임시 디버그용 stderr 캡처 — 원인 확인되면 제거할 것
     proc.stdout.on("data", d => { out += d.toString(); });
+    proc.stderr.on("data", d => { err += d.toString(); });
     proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
+      try { resolve({ ...JSON.parse(out.trim()), _stderr: err }); } catch { resolve({ ok: false, _stderr: err }); }
     });
-    proc.on("error", () => resolve({ ok: false }));
+    proc.on("error", () => resolve({ ok: false, _stderr: err }));
   });
 }
 
-function ocrPdfForCreditScore(pdfPath) {
-  return new Promise((resolve) => {
-    const proc = spawn(PYTHON_BIN, [OCR_CREDIT_SCRIPT, pdfPath], { timeout: 90000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
-  });
+function ocrPdfForResident(pdfPath, priority) {
+  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
+  // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
+  // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
+  // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
+  // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
+  return withOcrSlot(() => spawnOcr(OCR_SCRIPT, pdfPath, 150000), priority);
 }
 
-function ocrPdfForCreditAddress(pdfPath) {
-  return new Promise((resolve) => {
-    // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
-    // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
-    const proc = spawn(PYTHON_BIN, [OCR_ADDRESS_SCRIPT, pdfPath], { timeout: 150000, windowsHide: true });
-    let out = "";
-    proc.stdout.on("data", d => { out += d.toString(); });
-    proc.on("close", () => {
-      try { resolve(JSON.parse(out.trim())); } catch { resolve({ ok: false }); }
-    });
-    proc.on("error", () => resolve({ ok: false }));
-  });
+function ocrPdfForSubrogationDate(pdfPath, priority) {
+  return withOcrSlot(() => spawnOcr(OCR_SUBROGATION_SCRIPT, pdfPath, 90000), priority);
+}
+
+function ocrPdfForCreditScore(pdfPath, priority) {
+  return withOcrSlot(() => spawnOcr(OCR_CREDIT_SCRIPT, pdfPath, 90000), priority);
+}
+
+function ocrPdfForCreditAddress(pdfPath, priority) {
+  // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
+  // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
+  // 2026-07-22 실측: 가속 없는 CPU에서 페이지 1개 예측에만 368초가 걸리는 파일이 있어 150초 안엔
+  // 어차피 못 끝나는 경우가 있음을 확인 — 근본 해결(가속/모델 교체)은 별도 작업으로 미루고 원래 값 유지.
+  return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
 }
 
 function korName3(name) {
@@ -2697,7 +2717,7 @@ function korName3(name) {
 
 // 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
 // (예전 로직이 잘못 저장해둔 값은 덮어쓰지 않으므로, 그걸 고치려면 먼저 컬럼을 비워야 한다 — /resident-number/refresh 참고)
-async function lookupResidentDetails(debtorId, debtor) {
+async function lookupResidentDetails(debtorId, debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
@@ -2714,7 +2734,7 @@ async function lookupResidentDetails(debtorId, debtor) {
   ).all(`%${kor}%`, `%${kor}%`);
 
   for (const c of rows) {
-    const r = await ocrPdfForResident(c.file_path);
+    const r = await ocrPdfForResident(c.file_path, priority);
     if (!r.address && !r.registeredDate) continue;
 
     const updates = [], vals = [];
@@ -2886,9 +2906,16 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
       return null;
     };
 
-    // 주채무자
+    // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
+    // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
+    // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다.
     const mainResult = await findScore(debtor.name);
-    if (mainResult) entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
+    if (mainResult) {
+      entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
+      if (!debtor.credit_grade) {
+        db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
+      }
+    }
 
     // 연대보증인
     const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
@@ -2907,7 +2934,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 // debtor 행에 이미 값이 있는 컬럼은 절대 덮어쓰지 않고, 비어있는 컬럼만 골라서 채운다 —
 // 그래서 예전(수정 전) OCR 로직이 잘못 저장해둔 값은 이 함수만으로는 고쳐지지 않는다.
 // 잘못된 캐시를 다시 뽑으려면 먼저 해당 컬럼을 비워야 하고, 그건 /credit-address/refresh가 한다.
-async function lookupCreditAddress(debtor) {
+async function lookupCreditAddress(debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
 
@@ -2920,8 +2947,10 @@ async function lookupCreditAddress(debtor) {
      ORDER BY parsed_date DESC LIMIT 2`
   ).all(`%${kor}%`, `%${kor}%`);
 
+  const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
   for (const c of rows) {
-    const r = await ocrPdfForCreditAddress(c.file_path);
+    const r = await ocrPdfForCreditAddress(c.file_path, priority);
+    _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null, stderr: r._stderr || null });
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
@@ -2945,7 +2974,7 @@ async function lookupCreditAddress(debtor) {
     };
   }
 
-  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" };
+  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패", _debugAttempts };
 }
 
 app.get("/api/debtor/:id/credit-address", async (req, res) => {
@@ -2984,18 +3013,18 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
 // 안전하게 둘 다 호출할 수 있다 — "전체 채무자 주소 추출" 배치와 수동 추출 버튼이 공유해서 쓴다.
 // label(예: "(4/497) 홍길동")을 넘기면 pm2 로그에 시작/완료가 남아 어느 채무자에서
 // 오래 걸리는지(멈춘 건지 그냥 느린 건지) 확인할 수 있다.
-async function extractAddressForDebtor(debtor, label) {
+async function extractAddressForDebtor(debtor, label, priority) {
   const tag = label || debtor.name;
   const result = { residentOk: false, creditOk: false };
   const parts = [];
   if (!debtor.resident_address) {
     console.log(`[주소추출] ${tag} 초본 조회 시작`);
-    try { const r = await lookupResidentDetails(debtor.id, debtor); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} 초본 오류:`, e.message); }
+    try { const r = await lookupResidentDetails(debtor.id, debtor, priority); result.residentOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} 초본 오류:`, e.message); }
     parts.push(`초본 ${result.residentOk ? "성공" : "실패"}`);
   }
   if (!debtor.latest_address) {
     console.log(`[주소추출] ${tag} CB보고서 조회 시작`);
-    try { const r = await lookupCreditAddress(debtor); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} CB 오류:`, e.message); }
+    try { const r = await lookupCreditAddress(debtor, priority); result.creditOk = !!r.ok; } catch (e) { console.error(`[주소추출] ${tag} CB 오류:`, e.message); }
     parts.push(`CB ${result.creditOk ? "성공" : "실패"}`);
   }
   console.log(`[주소추출] ${tag} 완료 — ${parts.length ? parts.join(", ") : "둘 다 이미 있음(스킵)"}`);
@@ -3144,7 +3173,7 @@ app.get("/api/debtors/locations", (req, res) => {
 });
 
 // 주소 → 좌표 지오코딩 (카카오 로컬 API). 이미 좌표가 캐시돼 있으면 API 호출 없이 반환.
-// 라우트와 매월 자동 배치(runMonthlyAddressBatch)가 함께 쓰도록 함수로 분리했다.
+// 라우트와 야간 자동 배치(runAddressBatch)가 함께 쓰도록 함수로 분리했다.
 async function geocodeDebtorById(debtorId) {
   const debtor = db.prepare(
     `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
@@ -3201,48 +3230,103 @@ app.post("/api/debtor/:id/geocode", async (req, res) => {
 
 // 채무자 위치 지도를 전체 채무자 기준으로 채워두기 위한 배치 — 평소엔 그 채무자 화면을
 // 열 때만 지연 추출하지만(서버 부담 방지), 이 배치는 초본/CB 주소가 하나라도 비어있는
-// 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 채무자 수만큼 OCR을 도는
-// 무거운 작업이라 수동 트리거(/api/debtors/batch-extract-addresses)와 매월 1일 새벽
-// 자동 실행(kv_store로 이번달 중복 실행 방지)에서만 호출한다.
-async function runMonthlyAddressBatch() {
+// 항목들을 최대 concurrency개씩 동시에 처리 — OCR 프로세스 하나가 대부분의 시간을
+// 파이썬 기동+모델 로딩에 쓰고 있어서(실제 인식 자체보다 오래 걸림), 순차 처리 대신
+// 몇 개씩 동시에 띄우면 전체 소요 시간이 그만큼 줄어든다.
+async function runWithConcurrency(items, worker, concurrency) {
+  let idx = 0;
+  const lanes = new Array(Math.min(concurrency, items.length) || 0).fill(null).map(async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      await worker(items[i], i);
+    }
+  });
+  await Promise.all(lanes);
+}
+
+// 지금 배치가 얼마나 진행됐는지 프론트가 polling으로 확인할 수 있게 메모리에 상태를 둔다.
+// 이 상태 덕분에 브라우저 탭을 닫거나 PC가 절전모드에 들어가도(서버 PC만 살아있으면)
+// 배치 자체는 서버에서 계속 진행되고, 나중에 다시 화면을 열면 진행 상황을 이어서 볼 수 있다.
+let addressBatchStatus = { running: false, phase: null, done: 0, total: 0, startedAt: null, finishedAt: null, result: null, error: null };
+const ADDRESS_EXTRACT_CONCURRENCY = 3; // OCR은 CPU를 많이 쓰므로 서버 PC 사양을 고려해 보수적으로 설정
+const GEOCODE_CONCURRENCY = 5; // 좌표 변환은 카카오 API 호출이라 가벼워서 좀 더 높여도 된다
+
+// 심야(00:00~06:00) 자동배치인지 아닌지에 따라 "지금이 그 시간대인지"를 체크한다.
+// 수동 트리거(관리자가 직접 버튼을 누른 경우)는 이 창을 무시하고 바로 돌린다 — 급하게
+// 필요하면 낮에도 쓸 수 있게. 자동 실행만 이 창 밖으로 나가면 남은 대상을 건너뛰고
+// 다음날 밤에 이어서 처리한다(이미 처리된 건 다시 안 함 — 대상 쿼리 자체가 매번
+// "아직 없는 것"만 골라오므로).
+function isNightWindow() {
+  const h = new Date().getHours();
+  return h >= 0 && h < 6;
+}
+
+// 채무자 전원에 대해 OCR 추출 + 좌표변환까지 한 번에 돌린다. 수동 트리거
+// (/api/debtors/batch-extract-addresses)와 매일 밤 자동 실행(checkNightlyAddressBatch)이
+// 공유해서 쓴다. respectNightWindow가 true면(자동 실행) 창을 벗어나는 순간부터 남은
+// 대상은 건너뛰고, false면(수동 트리거) 시간대와 무관하게 끝까지 돌린다.
+async function runAddressBatch(respectNightWindow) {
   const targets = db.prepare(
     `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
             latest_address, credit_phone, credit_queried_date
      FROM debtors
      WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
   ).all();
+  addressBatchStatus.phase = "extract";
+  addressBatchStatus.total = targets.length;
+  addressBatchStatus.done = 0;
   let extracted = 0;
-  for (let i = 0; i < targets.length; i++) {
-    const debtor = targets[i];
-    const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`);
+  let stoppedForWindow = false;
+  await runWithConcurrency(targets, async (debtor, i) => {
+    if (respectNightWindow && !isNightWindow()) { stoppedForWindow = true; addressBatchStatus.done++; return; }
+    const r = await extractAddressForDebtor(debtor, `(${i + 1}/${targets.length}) ${debtor.name}`, "low");
     if (r.residentOk || r.creditOk) extracted++;
-  }
+    addressBatchStatus.done++;
+  }, ADDRESS_EXTRACT_CONCURRENCY);
 
   const geoTargets = db.prepare(
     `SELECT id FROM debtors
      WHERE (latest_address IS NOT NULL AND latest_address != '' AND latest_address_lat IS NULL)
         OR (resident_address IS NOT NULL AND resident_address != '' AND resident_address_lat IS NULL)`
   ).all();
+  addressBatchStatus.phase = "geocode";
+  addressBatchStatus.total = geoTargets.length;
+  addressBatchStatus.done = 0;
   let geocoded = 0;
-  for (const row of geoTargets) {
+  await runWithConcurrency(geoTargets, async (row) => {
+    if (respectNightWindow && !isNightWindow()) { stoppedForWindow = true; addressBatchStatus.done++; return; }
     try {
       const r = await geocodeDebtorById(row.id);
       if (r.ok) geocoded++;
     } catch (e) { console.error(`[주소배치] ${row.id} 좌표변환 오류:`, e.message); }
-  }
-  return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded };
+    addressBatchStatus.done++;
+  }, GEOCODE_CONCURRENCY);
+
+  return { targeted: targets.length, extracted, geoTargeted: geoTargets.length, geocoded, stoppedForWindow };
 }
 
 // 수동 트리거 — "채무자 위치" 화면의 "전체 채무자 주소 추출" 버튼이 호출.
 // OCR을 다수 순회하는 무거운 작업이라 응답은 즉시 반환하고 백그라운드에서 계속 진행한다.
+// 브라우저 탭을 닫아도(서버 PC만 켜져 있으면) 끝까지 진행된다 — 진행 상황은
+// /api/debtors/batch-extract-addresses/status 로 polling해서 확인한다.
 app.post("/api/debtors/batch-extract-addresses", (req, res) => {
+  if (addressBatchStatus.running) return res.json({ ok: false, error: "이미 실행 중입니다" });
+  addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
   res.json({ ok: true, started: true });
-  runMonthlyAddressBatch()
+  runAddressBatch(false)
     .then(result => {
+      addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
       console.log(`[주소배치] 수동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
       broadcast("data-changed", { method: "BATCH", path: "/api/debtors/batch-extract-addresses", at: Date.now() });
     })
-    .catch(e => console.error("[주소배치] 수동 실행 오류:", e.message));
+    .catch(e => {
+      addressBatchStatus = { ...addressBatchStatus, running: false, phase: "error", finishedAt: Date.now(), error: e.message };
+      console.error("[주소배치] 수동 실행 오류:", e.message);
+    });
+});
+
+app.get("/api/debtors/batch-extract-addresses/status", (req, res) => {
+  res.json({ ok: true, ...addressBatchStatus });
 });
 
 // ─── 대위변제일 자동 추출 (대위변제증명서 PDF → Python Windows OCR) ──
@@ -3273,10 +3357,15 @@ app.get("/api/debtor/:id/subrogation-date", async (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "../dist")));
-app.get("/{*splat}", (req, res) => {
+// SPA 라우팅용 폴백 — API 경로는 여기서 그냥 끝내면 안 된다. 이 핸들러가 GET을 전부
+// 매칭하는 와일드카드라서, next()를 안 부르면 이 줄 "아래"에 등록된 /api GET 라우트는
+// (앞쪽에 이미 등록된 라우트와 안 겹치는 한) 영영 도달하지 못하고 응답 없이 멈춘다 —
+// 실제로 이 문제 때문에 나중에 추가한 몇몇 /api 라우트가 응답을 영원히 안 하는 버그가 있었다.
+app.get("/{*splat}", (req, res, next) => {
   if (!req.path.startsWith("/api")) {
-    res.sendFile(path.join(__dirname, "../dist/index.html"));
+    return res.sendFile(path.join(__dirname, "../dist/index.html"));
   }
+  next();
 });
 
 // ─── AI 종합분석 ──────────────────────────────────
@@ -3392,14 +3481,16 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
   }
 });
 
-// 채무자+연대보증인 종합분석 — 신용점수/법적절차내역/히스토리를 근거로 향후 채권회수를
-// 위해 체크할 부분에 대한 실무 의견을 생성한다. (채무자 상세 "기타사항"에 추가하는 용도)
-app.post("/api/debtor/:id/analysis", async (req, res) => {
+const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";
+
+// 채무자+연대보증인 종합분석 텍스트 생성 (OpenAI 호출만, DB 저장은 호출부 책임).
+// 단건 API(/api/debtor/:id/analysis)와 일괄 재생성 배치가 이 함수를 공유한다.
+async function generateDebtorAnalysisText(debtorId, priority) {
   const openaiClient = getOpenAIClient();
-  if (!openaiClient) return res.status(503).json({ ok: false, error: "OPENAI_API_KEY 미설정" });
+  if (!openaiClient) return { ok: false, error: "OPENAI_API_KEY 미설정" };
   try {
-    const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(req.params.id);
-    if (!d) return res.json({ ok: false, error: "채무자 없음" });
+    const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(debtorId);
+    if (!d) return { ok: false, error: "채무자 없음" };
 
     const guarantorNames = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(d.id).map(r => r.name);
     const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(d.id);
@@ -3424,7 +3515,7 @@ app.post("/api/debtor/:id/analysis", async (req, res) => {
          AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 3`
       ).all(`%${kor}%`, `%${kor}%`);
       for (const r of rows) {
-        const result = await ocrPdfForCreditScore(r.file_path);
+        const result = await ocrPdfForCreditScore(r.file_path, priority);
         if (result.ok && result.score) { guarantorScores.push(`${gName}: ${result.score}점`); break; }
       }
     }
@@ -3476,11 +3567,94 @@ ${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity
       temperature: 0.3,
     });
 
-    res.json({ ok: true, text: completion.choices[0].message.content.trim() });
+    return { ok: true, text: completion.choices[0].message.content.trim() };
   } catch (err) {
     console.error("종합분석 오류:", err.message);
-    res.status(500).json({ ok: false, error: err.message });
+    return { ok: false, error: err.message };
   }
+}
+
+app.post("/api/debtor/:id/analysis", async (req, res) => {
+  const result = await generateDebtorAnalysisText(req.params.id);
+  res.status(result.ok ? 200 : (result.error === "OPENAI_API_KEY 미설정" ? 503 : 500)).json(result);
+});
+
+// 기존 기타사항(key_notes)의 마커 이전 텍스트는 보존하고, 마커 이후(AI 종합분석 블록)만 교체한다.
+// 프론트(DebtorDetail.runAnalysis)와 동일한 병합 규칙 — 일괄 재생성도 같은 결과가 나오도록 서버에서 재사용.
+function mergeAnalysisIntoKeyNotes(existingKeyNotes, analysisText) {
+  const cur = existingKeyNotes || "";
+  const idx = cur.indexOf(ANALYSIS_MARKER);
+  const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
+  const block = `${ANALYSIS_MARKER}\n${analysisText}`;
+  return before ? `${before}\n\n${block}` : block;
+}
+
+// 마커 이후 블록에 "- "로 시작하는 줄이 하나도 없으면 예전(줄글/서술형) 프롬프트로 만들어진
+// 것으로 간주한다 — 일괄 재생성 대상을 고를 때 이미 단답형인 항목까지 다시 만들어서
+// OpenAI 비용을 낭비하지 않기 위한 판별 기준.
+function looksLikeOldFormatAnalysis(keyNotes) {
+  const idx = (keyNotes || "").indexOf(ANALYSIS_MARKER);
+  if (idx < 0) return false;
+  const block = keyNotes.slice(idx + ANALYSIS_MARKER.length, idx + ANALYSIS_MARKER.length + 1000);
+  return !/\n\s*-\s/.test(block);
+}
+
+app.get("/api/debtors/analysis-format-status", (req, res) => {
+  try {
+    const rows = db.prepare(`SELECT id FROM debtors WHERE key_notes LIKE '%' || ? || '%'`).all(ANALYSIS_MARKER);
+    let outdated = 0;
+    for (const r of rows) {
+      const row = db.prepare("SELECT key_notes FROM debtors WHERE id = ?").get(r.id);
+      if (looksLikeOldFormatAnalysis(row.key_notes)) outdated++;
+    }
+    res.json({ ok: true, total: rows.length, outdated });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+let analysisBatchStatus = { running: false, done: 0, total: 0, startedAt: null, finishedAt: null, error: null };
+const ANALYSIS_REGEN_CONCURRENCY = 3; // OpenAI 요청 동시 개수 제한 — 레이트리밋/비용 관리용 보수적 값
+
+app.post("/api/debtors/batch-regenerate-analysis", (req, res) => {
+  if (analysisBatchStatus.running) return res.json({ ok: false, error: "이미 실행 중입니다" });
+  const targets = db.prepare(`SELECT id, key_notes FROM debtors WHERE key_notes LIKE '%' || ? || '%'`).all(ANALYSIS_MARKER)
+    .filter(r => looksLikeOldFormatAnalysis(r.key_notes));
+  if (targets.length === 0) return res.json({ ok: true, started: false, message: "서술형으로 남은 항목이 없습니다" });
+
+  analysisBatchStatus = { running: true, done: 0, total: targets.length, startedAt: Date.now(), finishedAt: null, error: null };
+  res.json({ ok: true, started: true, total: targets.length });
+
+  runWithConcurrency(targets, async (row) => {
+    try {
+      const result = await generateDebtorAnalysisText(row.id, "low");
+      if (result.ok) {
+        const fresh = db.prepare("SELECT key_notes FROM debtors WHERE id = ?").get(row.id);
+        const merged = mergeAnalysisIntoKeyNotes(fresh.key_notes, result.text);
+        db.prepare("UPDATE debtors SET key_notes = ? WHERE id = ?").run(merged, row.id);
+      } else {
+        console.error(`[종합분석 일괄재생성] ${row.id} 실패:`, result.error);
+      }
+    } catch (e) { console.error(`[종합분석 일괄재생성] ${row.id} 오류:`, e.message); }
+    analysisBatchStatus.done++;
+  }, ANALYSIS_REGEN_CONCURRENCY)
+    .then(() => {
+      analysisBatchStatus = { ...analysisBatchStatus, running: false, finishedAt: Date.now() };
+      console.log(`[종합분석 일괄재생성] 완료 — ${targets.length}건 처리`);
+      broadcast("data-changed", { method: "BATCH", path: "/api/debtors/batch-regenerate-analysis", at: Date.now() });
+    })
+    .catch(e => {
+      analysisBatchStatus = { ...analysisBatchStatus, running: false, finishedAt: Date.now(), error: e.message };
+      console.error("[종합분석 일괄재생성] 오류:", e.message);
+    });
+});
+
+app.get("/api/debtors/batch-regenerate-analysis/status", (req, res) => {
+  res.json({ ok: true, ...analysisBatchStatus });
+});
+
+// 어떤 라우트에도 안 걸린 /api 요청은 응답 없이 매달리는 대신 바로 404를 준다
+// (위 SPA 폴백의 next() 누락 같은 문제가 다시 생겨도 요청이 무한 대기하지 않도록 하는 안전망).
+app.use("/api", (req, res) => {
+  res.status(404).json({ ok: false, error: "not found" });
 });
 
 // ─── 서버 기동 ──────────────────────────────────
@@ -3531,24 +3705,31 @@ app.listen(PORT, () => {
   setTimeout(runAutoDocSync, 30000);
   setInterval(runAutoDocSync, 30 * 60 * 1000);
 
-  // 매월 1일 새벽 3시: 채무자 위치 지도용 주소 전체 배치 추출 + 좌표변환
-  // 채무자 수만큼 OCR을 도는 무거운 작업이라 사람들이 안 쓰는 새벽 시간에만 자동 실행하고,
-  // kv_store에 이번 달 실행 여부를 기록해 30분마다 재확인해도 같은 달에 중복 실행되지 않는다
-  // (매월 알림 발송과 동일한 안전장치 패턴).
-  const checkMonthlyAddressBatch = () => {
-    const now = new Date();
-    if (now.getDate() !== 1 || now.getHours() !== 3) return;
-    const monthStr = now.toISOString().slice(0, 7);
-    const kvKey = `address_batch_${monthStr}`;
+  // 매일 밤 00:00~06:00: 채무자 위치 지도용 주소 배치 추출 + 좌표변환을 조금씩 돌린다.
+  // 채무자 수가 많아 하룻밤에 다 못 끝내도 괜찮다 — 대상 쿼리가 매번 "아직 주소/좌표
+  // 없는 것"만 골라오므로, runAddressBatch(true)가 06시를 넘기는 순간부터 남은 건
+  // 건너뛰고 다음날 밤에 이어서 처리된다. kv_store에 그날 밤 실행 여부를 기록해
+  // 15분마다 재확인해도 하룻밤에 중복 시작되지 않는다.
+  const checkNightlyAddressBatch = () => {
+    if (!isNightWindow()) return;
+    if (addressBatchStatus.running) return; // 수동 실행 중이거나 이미 오늘 밤 시작됨
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const kvKey = `address_batch_night_${dateStr}`;
     if (db.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey)) return;
-    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: now.toISOString() }));
-    console.log("[주소배치] 매월 자동 실행 시작");
-    runMonthlyAddressBatch()
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: new Date().toISOString() }));
+    console.log("[주소배치] 야간 자동 실행 시작");
+    addressBatchStatus = { running: true, phase: "extract", done: 0, total: 0, startedAt: Date.now(), finishedAt: null, result: null, error: null };
+    runAddressBatch(true)
       .then(result => {
-        console.log(`[주소배치] 매월 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환`);
-        broadcast("data-changed", { method: "BATCH", path: "monthly-address-batch", at: Date.now() });
+        addressBatchStatus = { ...addressBatchStatus, running: false, phase: "done", finishedAt: Date.now(), result };
+        console.log(`[주소배치] 야간 자동 실행 완료 — 대상 ${result.targeted}건 중 ${result.extracted}건 추출, 좌표 ${result.geocoded}/${result.geoTargeted}건 변환${result.stoppedForWindow ? " (06시가 되어 중단 — 남은 건 내일 밤 계속)" : ""}`);
+        broadcast("data-changed", { method: "BATCH", path: "nightly-address-batch", at: Date.now() });
       })
-      .catch(e => console.error("[주소배치] 매월 자동 실행 오류:", e.message));
+      .catch(e => {
+        addressBatchStatus = { ...addressBatchStatus, running: false, phase: "error", finishedAt: Date.now(), error: e.message };
+        console.error("[주소배치] 야간 자동 실행 오류:", e.message);
+      });
   };
-  setInterval(checkMonthlyAddressBatch, 30 * 60 * 1000);
+  setTimeout(checkNightlyAddressBatch, 60000); // 서버 기동 시점이 이미 밤 시간대면 곧바로 시작
+  setInterval(checkNightlyAddressBatch, 15 * 60 * 1000);
 });

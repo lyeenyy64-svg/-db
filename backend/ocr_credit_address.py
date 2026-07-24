@@ -37,6 +37,10 @@ GENERAL_PHONE_RE = re.compile(r'0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}')
 QUERY_LABELS = ("조회일자", "조회일", "발급일자", "발급일", "출력일자", "출력일")
 
 HEADER_LABELS = {"정보갱신일", "주소", "휴대폰번호", "휴대폰"}
+# 등록된 주소엔 한자가 나올 일이 없다 — 세대원/명의자 이름을 한자와 함께 표기한 부분이
+# OCR 박스 분할 때문에 라벨 문자열로 안 걸러지고 주소 칸에 섞여 들어오는 경우가 있어
+# (ocr_resident.py에서 실제로 확인된 문제, 여기도 동일하게 방어) 한자 포함 단어는 제외한다.
+HANJA_RE = re.compile(r'[一-鿿]')
 
 
 def _clean(s):
@@ -219,6 +223,7 @@ def find_last_home_row(pages_words):
         addr_words = [
             text for idx, (x, text) in enumerate(items)
             if idx not in used and text not in HEADER_LABELS and not POSTAL_RE.fullmatch(text)
+            and not HANJA_RE.search(text)
         ]
         address_text = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
 
@@ -255,7 +260,17 @@ def ocr_pdf(pdf_path):
     phone = last_row["phone"] if last_row else None
 
     if not address:
-        return {"ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date}
+        # 임시 디버그 정보 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
+        return {
+            "ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date,
+            "debug": {
+                "pages_scanned": len(all_page_words),
+                "words_per_page": [len(w) for w in all_page_words],
+                "last_row_found": last_row is not None,
+                "last_row_raw": last_row,
+                "first_page_sample": first_page_text[:300],
+            },
+        }
 
     return {
         "ok": True,
