@@ -4409,6 +4409,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       const res = await fetch(`/api/debtor/${d.id}/credit-address/refresh`, { method: "POST" });
                       const data = await res.json();
                       setAutoAddresses(prev => ({ ...prev, [d.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
+                      // 재조회가 서버 DB의 latest_address/credit_phone/credit_queried_date를 이미
+                      // 새 값(또는 null)으로 갱신했으므로, 화면이 우선적으로 보는 d.latestAddress도
+                      // 같이 갱신해야 한다 — 안 그러면 d.latestAddress가 여전히 예전 값이라 위
+                      // autoAddresses 결과가 화면에 반영되지 않고 옛 값이 그대로 남아있는 것처럼 보인다.
+                      const patch = { latestAddress: data.ok ? data.address : null, creditPhone: data.ok ? data.phone : null, creditQueriedDate: data.queriedDate || null };
+                      setData(prev => ({ ...prev, debtors: prev.debtors.map(x => x.id === d.id ? { ...x, ...patch } : x) }));
+                      setSel(prev => (prev && prev.id === d.id) ? { ...prev, ...patch } : prev);
                       showToast(data.ok ? "CB보고서에서 다시 추출했습니다" : (data.error === "CB보고서에 자택정보이력 없음" ? "최신 CB보고서에 자택정보이력이 없습니다" : "재추출 실패 — CB 보기로 직접 확인해주세요"));
                     } catch { setAutoAddresses(prev => ({ ...prev, [d.id]: false })); showToast("재추출 실패"); }
                   }}
@@ -4438,6 +4445,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       const res = await fetch(`/api/debtor/${d.id}/resident-number/refresh`, { method: "POST" });
                       const data = await res.json();
                       setAutoResidentDetails(prev => ({ ...prev, [d.id]: data.ok ? { address: data.address, registeredDate: data.registeredDate, note: data.note, issuedDate: data.issuedDate } : false }));
+                      // credit-address 재조회와 같은 이유 — d.residentAddress가 화면에서 항상
+                      // 우선시되므로, 서버 DB가 이미 갱신된 값도 여기서 같이 갱신해야 반영된다.
+                      const patch = { residentAddress: data.ok ? data.address : null, residentRegisteredDate: data.ok ? data.registeredDate : null, residentNote: data.ok ? data.note : null, residentIssuedDate: data.ok ? data.issuedDate : null };
+                      setData(prev => ({ ...prev, debtors: prev.debtors.map(x => x.id === d.id ? { ...x, ...patch } : x) }));
+                      setSel(prev => (prev && prev.id === d.id) ? { ...prev, ...patch } : prev);
                       showToast(data.ok ? "초본에서 다시 추출했습니다" : "재추출 실패 — 초본 보기로 직접 확인해주세요");
                     } catch { setAutoResidentDetails(prev => ({ ...prev, [d.id]: false })); showToast("재추출 실패"); }
                   }}
