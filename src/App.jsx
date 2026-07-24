@@ -12,6 +12,27 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+// 채무자 목록 화면에서 같은 사람의 여러 채무 항목을 한 행으로 묶어 보여주는 것과 동일한
+// 기준(이름+브랜드 또는 유사 코드)으로 "몇 명"인지 센다 — "건수"(원장 행 개수)와는 다른 단위.
+const countDistinctPeople = (arr) => {
+  const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
+  const seen = new Set();
+  let n = 0;
+  for (const d of arr) {
+    if (seen.has(d.id)) continue;
+    const bc = baseCode(d.hubCode);
+    const siblings = arr.filter(x =>
+      x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && (
+        (x.name && d.name && x.name.trim() === d.name.trim()) ||
+        (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
+      )
+    );
+    seen.add(d.id);
+    siblings.forEach(s => seen.add(s.id));
+    n++;
+  }
+  return n;
+};
 // OCR 자동조회(초본/CB보고서)는 후보 파일이 여러 개면 순차로 최대 150초씩 걸릴 수 있고,
 // 서버가 바쁘면 대기까지 더 걸릴 수 있어 여유 있게 5분을 잡는다 — 그래도 무한정 기다리진
 // 않고, 정말 응답이 끊긴 경우엔 실패로 간주해 "조회 중..." 문구가 끝없이 남지 않게 한다.
@@ -51,7 +72,7 @@ const DEFAULT_CONFIG = {
   ],
   categories: ["장기채권", "추심의뢰", "회생/파산", "협의/소송", "분할상환", "캐쉬상환", "완료", "대손채권"],
   collStatuses: ["추심진행", "추심보류", "완료", "대손채권"],
-  assignees: ["준원", "덕진"],
+  assignees: ["준원", "덕진", "재선"],
   debtCauses: ["본사", "웰컴", "어뷰징", "물품대금"],
   hubNames: [
     "광진본점허브", "충남천안원콜성두7지점", "강서마곡허브", "동대문허브",
@@ -2609,7 +2630,11 @@ export default function App() {
     const byCat = {}; config.categories.forEach(c => { byCat[c] = d.filter(x => x.category === c).length; });
     const byGroup = {}; DASHBOARD_GROUPS.forEach(g => { byGroup[g.label] = d.filter(x => g.cats.includes(x.category)).length; });
     const byStatus = {}; config.collStatuses.forEach(s => { byStatus[s] = d.filter(x => x.collectionStatus === s).length; });
-    const byAssignee = {}; config.assignees.forEach(a => { byAssignee[a] = d.filter(x => x.assignee === a).length; });
+    const byAssignee = {}; const byAssigneePersons = {};
+    config.assignees.forEach(a => { const ad = d.filter(x => x.assignee === a); byAssignee[a] = ad.length; byAssigneePersons[a] = countDistinctPeople(ad); });
+    const unassignedDebtors = d.filter(x => !config.assignees.includes(x.assignee));
+    const unassignedCount = unassignedDebtors.length;
+    const unassignedPersons = countDistinctPeople(unassignedDebtors);
     const monthlyPayments = {};
     const monthlyByChannel = {};
     const _thisYear = new Date().getFullYear();
@@ -2639,7 +2664,7 @@ export default function App() {
     };
     const totalLegal = lc.length + ad.length + cmp.length + data.rehabilitations.length;
     const totalSeizures = lc.filter(c => c.type === "압류").length;
-    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
+    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, byAssigneePersons, unassignedCount, unassignedPersons, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
   }, [data, config]);
 
   // ─── 연체 에이징 분석 ──────────────────────────────────────
@@ -3075,17 +3100,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>담당자별 현황</div>
+            <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 8 }}>명 = 채무자 수(동일인 채무 항목 합산) / (건) = 채권 건수 — (건)을 모두 더하면 총 관리 채권 수와 같습니다</div>
             <div style={{ display: "flex", gap: 10 }}>
               {config.assignees.map(a => (
                 <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
                   style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
                   onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                   onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
-                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 4 }}>{stats.byAssignee[a] || 0}</div>
+                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 2 }}>{stats.byAssigneePersons[a] || 0}명</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.byAssignee[a] || 0}건)</div>
                   <div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div>
                 </div>
               ))}
+              {stats.unassignedCount > 0 && (
+                <div style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)" }}>
+                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--tm)", marginBottom: 2 }}>{stats.unassignedPersons}명</div>
+                  <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.unassignedCount}건)</div>
+                  <div style={{ fontSize: 12, fontWeight: 500, color: "var(--tm)" }}>미배정</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
