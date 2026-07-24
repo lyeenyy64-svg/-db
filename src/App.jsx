@@ -6304,11 +6304,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [caseNotes,         setCaseNotes]          = useState([]);   // 진행상황 메모
     const [noteDraft,         setNoteDraft]          = useState("");
     const [eventDateDraft,    setEventDateDraft]     = useState("");
-    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); setEventDateDraft(selCase ? (getCaseEventDate(selCase.id) || "") : ""); }, [selCase?.id]);
-    const handleEventDateChange = (val) => {
+    const [eventDateSaved,    setEventDateSaved]     = useState("");   // 실제 저장된 값 — draft와 다르면 "저장" 버튼 강조
+    useEffect(() => {
+      const ev = selCase ? (getCaseEventDate(selCase.id) || "") : "";
+      setCaseNotes(selCase ? getCaseNotes(selCase.id) : []);
+      setNoteDraft("");
+      setEventDateDraft(ev);
+      setEventDateSaved(ev);
+    }, [selCase?.id]);
+    // 입력칸 타이핑만으로는 저장하지 않는다 — 메모 추가 버튼과 붙어 있어서, 다른 메모를
+    // 적다가 이 칸에 실수로 다른 날짜를 남겨두면 대시보드가 보는 "다음 처리기한"이
+    // 조용히 덮어써지는 문제가 실제로 있었다(주소보정명령 말일 07-27 → 이후 메모 추가 시
+    // 07-21로 조용히 바뀜). "저장"을 눌러야만 실제 반영되게 해서 사고를 막는다.
+    const handleEventDateChange = (val) => { setEventDateDraft(val); };
+    const commitEventDate = () => {
       if (!selCase) return;
-      setEventDateDraft(val);
-      saveCaseEventDate(selCase.id, val || null);
+      saveCaseEventDate(selCase.id, eventDateDraft || null);
+      setEventDateSaved(eventDateDraft);
+      showToast("이벤트 날짜 저장됨");
     };
     useEffect(() => {
       if (!legalOpenCaseId) return;
@@ -7009,9 +7022,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               />
               <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
               <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 9, color: "var(--tm)" }}>이벤트 날짜</span>
-                <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
-                  style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+                <span style={{ fontSize: 9, color: "var(--tm)" }} title="이 사건의 다음 처리기한 — 대시보드 [CHECK 사항] 이벤트 집계 기준">이벤트 날짜</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
+                    style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+                  <button onClick={commitEventDate} disabled={eventDateDraft === eventDateSaved}
+                    style={{ padding: "0 8px", borderRadius: 7, border: "1px solid var(--brd)", fontSize: 10, fontWeight: 600, whiteSpace: "nowrap",
+                      background: eventDateDraft === eventDateSaved ? "var(--bg2)" : "var(--acc)",
+                      color: eventDateDraft === eventDateSaved ? "var(--tm)" : "#fff",
+                      cursor: eventDateDraft === eventDateSaved ? "default" : "pointer" }}>저장</button>
+                </div>
               </div>
             </div>
             {caseNotes.length === 0
@@ -8719,11 +8739,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [caseNotes,    setCaseNotes]    = useState([]);
     const [noteDraft,    setNoteDraft]    = useState("");
     const [eventDateDraft, setEventDateDraft] = useState("");
-    useEffect(() => { setCaseNotes(selCase ? getCaseNotes(selCase.id) : []); setNoteDraft(""); setEventDateDraft(selCase ? (getCaseEventDate(selCase.id) || "") : ""); }, [selCase?.id]);
-    const handleEventDateChange = (val) => {
+    const [eventDateSaved, setEventDateSaved] = useState(""); // 실제 저장된 값 — draft와 다르면 "저장" 버튼 강조
+    useEffect(() => {
+      const ev = selCase ? (getCaseEventDate(selCase.id) || "") : "";
+      setCaseNotes(selCase ? getCaseNotes(selCase.id) : []);
+      setNoteDraft("");
+      setEventDateDraft(ev);
+      setEventDateSaved(ev);
+    }, [selCase?.id]);
+    // 입력칸 타이핑만으로는 저장하지 않는다 — LegalView와 동일한 이유(메모 추가 버튼과
+    // 붙어 있어서 실수로 다른 날짜를 남겨두면 "다음 처리기한"이 조용히 덮어써지는 문제 방지).
+    const handleEventDateChange = (val) => { setEventDateDraft(val); };
+    const commitEventDate = () => {
       if (!selCase) return;
-      setEventDateDraft(val);
-      saveCaseEventDate(selCase.id, val || null);
+      saveCaseEventDate(selCase.id, eventDateDraft || null);
+      setEventDateSaved(eventDateDraft);
+      showToast("이벤트 날짜 저장됨");
     };
 
     const mc = data.minsaCases || [];
@@ -8969,9 +9000,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               />
               <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
               <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 9, color: "var(--tm)" }}>이벤트 날짜</span>
-                <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
-                  style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+                <span style={{ fontSize: 9, color: "var(--tm)" }} title="이 사건의 다음 처리기한 — 대시보드 [CHECK 사항] 이벤트 집계 기준">이벤트 날짜</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
+                    style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+                  <button onClick={commitEventDate} disabled={eventDateDraft === eventDateSaved}
+                    style={{ padding: "0 8px", borderRadius: 7, border: "1px solid var(--brd)", fontSize: 10, fontWeight: 600, whiteSpace: "nowrap",
+                      background: eventDateDraft === eventDateSaved ? "var(--bg2)" : "var(--acc)",
+                      color: eventDateDraft === eventDateSaved ? "var(--tm)" : "#fff",
+                      cursor: eventDateDraft === eventDateSaved ? "default" : "pointer" }}>저장</button>
+                </div>
               </div>
             </div>
             {caseNotes.length === 0
