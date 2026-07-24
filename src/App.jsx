@@ -2751,7 +2751,8 @@ export default function App() {
     if (brandFilter !== "전체") l = l.filter(d => d.brand === brandFilter);
     if (catFilter !== "전체") l = l.filter(d => d.category === catFilter);
     if (statusFilter !== "전체") l = l.filter(d => d.collectionStatus === statusFilter);
-    if (assigneeFilter !== "전체") l = l.filter(d => d.assignee === assigneeFilter);
+    if (assigneeFilter === "__unassigned__") l = l.filter(d => !config.assignees.includes(d.assignee));
+    else if (assigneeFilter !== "전체") l = l.filter(d => d.assignee === assigneeFilter);
 
     // 같은 이름+브랜드 or 유사 코드(1234 / 1234-1)인 채무자를 그룹핑
     // (정렬은 그룹 합산 이후에 해야 한다 — 화면에 보이는 값은 그룹 합계인데 그룹핑 전
@@ -2832,7 +2833,7 @@ export default function App() {
       });
     }
     return grouped;
-  }, [data, q, brandFilter, catFilter, statusFilter, assigneeFilter, sort]);
+  }, [data, q, brandFilter, catFilter, statusFilter, assigneeFilter, sort, config.assignees]);
 
   const tp = Math.ceil(filtered.length / PP);
   const paged = filtered.slice((page - 1) * PP, page * PP);
@@ -3100,8 +3101,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>담당자별 현황</div>
-            <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 8 }}>명 = 채무자 수(동일인 채무 항목 합산) / (건) = 채권 건수 — (건)을 모두 더하면 총 관리 채권 수와 같습니다</div>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
             <div style={{ display: "flex", gap: 10 }}>
               {config.assignees.map(a => (
                 <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
@@ -3114,7 +3114,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
               ))}
               {stats.unassignedCount > 0 && (
-                <div style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)" }}>
+                <div onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("__unassigned__"); setTab("debtors"); }}
+                  style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)", cursor: "pointer" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
                   <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--tm)", marginBottom: 2 }}>{stats.unassignedPersons}명</div>
                   <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.unassignedCount}건)</div>
                   <div style={{ fontSize: 12, fontWeight: 500, color: "var(--tm)" }}>미배정</div>
