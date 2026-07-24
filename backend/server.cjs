@@ -204,17 +204,25 @@ try { db.exec("ALTER TABLE alert_rules ADD COLUMN updated_at TEXT"); } catch (e)
 // 최초 실행 시에만 기존 프론트엔드 기본값(DEFAULT_ALERT_RULES)과 동일한 규칙을 시드
 if (db.prepare("SELECT COUNT(*) c FROM alert_rules").get().c === 0) {
   const seedRules = [
-    { id: "rule1", name: "분할상환 미납", enabled: 1, trigger_type: "installment_overdue", condition_text: "미납 1회 이상", target: "channel", channel: "#npl-알림", assignee: "" },
+    { id: "rule1", name: "분할상환 미납", enabled: 1, trigger_type: "installment_overdue", condition_text: "미납 1회 이상", target: "dm", channel: "", assignee: "준원", assignee_slack_id: "U05AGKJNVEY" },
     { id: "rule2", name: "회생 변제금 미납", enabled: 1, trigger_type: "rehab_overdue", condition_text: "미납 상태", target: "channel", channel: "#npl-알림", assignee: "" },
-    { id: "rule3", name: "고액 잔액", enabled: 1, trigger_type: "high_balance", condition_text: "잔액 1,000만원 초과", target: "dm", channel: "", assignee: "준원" },
+    { id: "rule3", name: "고액 잔액", enabled: 1, trigger_type: "high_balance", condition_text: "잔액 1,000만원 초과", target: "dm", channel: "", assignee: "준원", assignee_slack_id: "U05AGKJNVEY" },
     { id: "rule4", name: "신규 입금", enabled: 0, trigger_type: "new_payment", condition_text: "입금 등록 시", target: "channel", channel: "#npl-입금", assignee: "" },
     { id: "rule5", name: "장기 미연락", enabled: 0, trigger_type: "no_contact", condition_text: "30일 이상 활동 없음", target: "dm", channel: "", assignee: "" },
   ];
   const insSeed = db.prepare(`
-    INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee)
-    VALUES (@id, @name, @enabled, @trigger_type, @condition_text, @target, @channel, @assignee)
+    INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee, assignee_slack_id)
+    VALUES (@id, @name, @enabled, @trigger_type, @condition_text, @target, @channel, @assignee, @assignee_slack_id)
   `);
-  db.transaction(() => seedRules.forEach(r => insSeed.run(r)))();
+  db.transaction(() => seedRules.forEach(r => insSeed.run({ assignee_slack_id: null, ...r })))();
+}
+
+// 분할상환 미납/고액 잔액 알림이 수신인 미등록으로 채널에 대체 발송되던 문제 1회 수정
+// (rule1을 채널→DM으로, rule1/rule3에 준원 Slack ID를 채워 채널 대체발송 경로를 막는다)
+if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rules_dm_fix_v1'").get()) {
+  db.prepare("UPDATE alert_rules SET target='dm', channel='', assignee='준원', assignee_slack_id='U05AGKJNVEY' WHERE id='rule1'").run();
+  db.prepare("UPDATE alert_rules SET assignee='준원', assignee_slack_id='U05AGKJNVEY' WHERE id='rule3'").run();
+  db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rules_dm_fix_v1', '1')").run();
 }
 
 // 학습 매핑 테이블 (최초 실행 시 자동 생성)
