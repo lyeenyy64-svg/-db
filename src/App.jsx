@@ -1963,9 +1963,7 @@ export default function App() {
   const [legalOpenCaseId, setLegalOpenCaseId] = useState(null);
   const [rehabOpenCaseId, setRehabOpenCaseId] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
-  const [aiMessages, setAiMessages] = useState([
-    { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
-  ]);
+  const [aiMessages, setAiMessages] = useState([]);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSelDebtor, setAiSelDebtor] = useState(null);
@@ -10386,9 +10384,8 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
         <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
         <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
-        <span style={{ fontSize: 12, color: "var(--ts)", marginLeft: 4 }}>GPT-4o mini 기반</span>
-        {aiMessages.length > 1 && (
-          <button onClick={() => setAiMessages([aiMessages[0]])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+        {aiMessages.length > 0 && (
+          <button onClick={() => setAiMessages([])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
             대화 초기화
           </button>
         )}
@@ -10396,7 +10393,6 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
 
       {/* 채무자 선택 */}
       <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 선택 (선택 시 해당 데이터 기반 분석)</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             value={aiDebtorQ}
@@ -10428,8 +10424,36 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
         )}
       </div>
 
+      {/* 빠른 질문 */}
+      {aiSelDebtor && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 0 12px" }}>
+          {QUICK.map(q => (
+            <button key={q} onClick={() => setAiInput(q)}
+              style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 입력창 */}
+      <div style={{ display: "flex", gap: 8, paddingBottom: 12 }}>
+        <input
+          value={aiInput}
+          onChange={e => setAiInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+          placeholder={aiSelDebtor ? `${aiSelDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
+          disabled={aiLoading}
+          style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+        />
+        <button onClick={sendMessage} disabled={aiLoading || !aiInput.trim()}
+          style={{ padding: "10px 18px", borderRadius: 10, background: aiLoading || !aiInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: aiLoading || !aiInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
+          전송
+        </button>
+      </div>
+
       {/* 채팅 영역 */}
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8 }}>
+      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8, borderTop: "1px solid var(--brd)", paddingTop: 12 }}>
         {aiMessages.map((m, i) => (
           <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
             <div style={{
@@ -10449,34 +10473,6 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
           </div>
         )}
         <div ref={bottomRef} />
-      </div>
-
-      {/* 빠른 질문 */}
-      {aiSelDebtor && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "8px 0 6px" }}>
-          {QUICK.map(q => (
-            <button key={q} onClick={() => setAiInput(q)}
-              style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* 입력창 */}
-      <div style={{ display: "flex", gap: 8, padding: "8px 0 16px", borderTop: "1px solid var(--brd)" }}>
-        <input
-          value={aiInput}
-          onChange={e => setAiInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-          placeholder={aiSelDebtor ? `${aiSelDebtor.name}에 대해 질문하세요...` : "질문을 입력하세요..."}
-          disabled={aiLoading}
-          style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
-        />
-        <button onClick={sendMessage} disabled={aiLoading || !aiInput.trim()}
-          style={{ padding: "10px 18px", borderRadius: 10, background: aiLoading || !aiInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: aiLoading || !aiInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
-          전송
-        </button>
       </div>
     </div>
   );
