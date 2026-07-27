@@ -1954,6 +1954,7 @@ export default function App() {
   const [prevTab, setPrevTab] = useState(null);
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
+  const [agingModalReason, setAgingModalReason] = useState(null); // "noAnchor" | "noBalance"
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
@@ -2679,12 +2680,12 @@ export default function App() {
     });
     const nowMs = new Date(today() + "T00:00:00").getTime();
     const buckets = AGING_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
-    let noAnchorCount = 0, noBalanceCount = 0;
+    const noAnchorItems = [], noBalanceItems = [];
     data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category)).forEach(d => {
-      if ((d.finalBalanceLegal || 0) <= 0) { noBalanceCount++; return; }
+      if ((d.finalBalanceLegal || 0) <= 0) { noBalanceItems.push(d); return; }
       const anchor = lastPayByDebtor[d.id] || d.loanDate || null;
       const anchorMs = anchor ? new Date(anchor + "T00:00:00").getTime() : NaN;
-      if (!anchor || isNaN(anchorMs)) { noAnchorCount++; return; }
+      if (!anchor || isNaN(anchorMs)) { noAnchorItems.push(d); return; }
       const days = Math.max(0, Math.floor((nowMs - anchorMs) / 86400000));
       const bucket = buckets.find(b => days >= b.min && days < b.max) || buckets[buckets.length - 1];
       bucket.count++;
@@ -2692,12 +2693,15 @@ export default function App() {
       bucket.items.push({ ...d, agingDays: days, lastPaymentDate: lastPayByDebtor[d.id] || null });
     });
     buckets.forEach(b => b.items.sort((a, c) => c.finalBalanceLegal - a.finalBalanceLegal));
+    noBalanceItems.sort((a, c) => (a.finalBalanceLegal || 0) - (c.finalBalanceLegal || 0));
     return {
       buckets,
       totalCount: buckets.reduce((s, b) => s + b.count, 0),
       totalAmount: buckets.reduce((s, b) => s + b.amount, 0),
-      noAnchorCount,
-      noBalanceCount,
+      noAnchorCount: noAnchorItems.length,
+      noAnchorItems,
+      noBalanceCount: noBalanceItems.length,
+      noBalanceItems,
     };
   }, [data]);
 
@@ -3148,8 +3152,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             ))}
           </div>
-          {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "#000" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
-          {agingStats.noBalanceCount > 0 && <div style={{ marginTop: 4, fontSize: 11, color: "#000" }}>* 잔액이 0원 이하라 집계에서 제외된 채권 {agingStats.noBalanceCount}건</div>}
+          {agingStats.noAnchorCount > 0 && (
+            <div onClick={() => setAgingModalReason("noAnchor")} style={{ marginTop: 10, fontSize: 11, color: "#000", cursor: "pointer", textDecoration: "underline" }}>
+              * 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건
+            </div>
+          )}
+          {agingStats.noBalanceCount > 0 && (
+            <div onClick={() => setAgingModalReason("noBalance")} style={{ marginTop: 4, fontSize: 11, color: "#000", cursor: "pointer", textDecoration: "underline" }}>
+              * 잔액이 0원 이하라 집계에서 제외된 채권 {agingStats.noBalanceCount}건
+            </div>
+          )}
         </div>
         </>)}
         {agingModalBucket && (() => {
@@ -3172,6 +3184,37 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.agingDays}일</td>
                         <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{d.lastPaymentDate ? fmtDate(d.lastPaymentDate) : "-"}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
+        {agingModalReason && (() => {
+          const items = agingModalReason === "noAnchor" ? agingStats.noAnchorItems : agingStats.noBalanceItems;
+          const title = agingModalReason === "noAnchor"
+            ? `기준일 정보 없어 제외된 채권 (${items.length}건)`
+            : `잔액 0원 이하로 제외된 채권 (${items.length}건)`;
+          return (
+            <Overlay onClose={() => setAgingModalReason(null)} wide>
+              <ModalHeader title={title} onClose={() => setAgingModalReason(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "분류", "대여일", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setAgingModalReason(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{d.loanDate ? fmtDate(d.loanDate) : "-"}</td>
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
                       </tr>
                     ))}
