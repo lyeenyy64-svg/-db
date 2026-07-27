@@ -7318,9 +7318,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 회생 탭은 채무액/승인액/월상환액/현재회차까지 표시하고, 파산/면책 탭은 잔액(재무)만 추가로 표시한다
     // (같은 탭 안에서는 유형이 전부 동일해 "회생/파산" 구분 컬럼은 불필요)
     const isRehabTab = rehabTab === "회생";
+    // 컬럼 수가 탭마다 달라(회생 13개 / 파산·면책 9개) 남는 공간도 그만큼 달라지므로,
+    // 1fr 컬럼(성명/법원/사건번호)에 상한을 둬서 컬럼 수와 무관하게 항상 비슷한 비율로 보이게 한다
     const rehabGridCols = isRehabTab
-      ? "56px minmax(90px,1fr) 80px minmax(90px,1fr) minmax(110px,1.2fr) 96px 96px 96px 76px 76px 76px 100px 90px"
-      : "56px minmax(90px,1fr) 80px minmax(90px,1fr) minmax(110px,1.2fr) 76px 76px 100px 90px";
+      ? "56px minmax(90px,min(150px,1fr)) 84px minmax(90px,min(140px,1fr)) minmax(110px,min(190px,1fr)) 100px 100px 100px 84px 76px 76px 110px 90px"
+      : "56px minmax(90px,min(150px,1fr)) 84px minmax(90px,min(140px,1fr)) minmax(110px,min(190px,1fr)) 76px 76px 110px 90px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
