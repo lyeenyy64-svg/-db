@@ -3801,6 +3801,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           caseStatus: f.caseStatus, filingDate: f.filingDate, plaintiff: config.brands.find(b => b.code === f.brand)?.name || "",
           defendant: debtor?.name || f.defendant, hearingTime: "", hearingLocation: "",
           progressStatus: f.progressStatus, debtorId: f.debtorId || null,
+          thirdParties: f.type === "압류" ? [] : null,
         };
         addMR(MK.legalCases, rec);
         setData(prev => ({ ...prev, legalCases: [rec, ...prev.legalCases] }));
@@ -7064,11 +7065,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           )}
 
-          {/* 제3채무자 진술서 (압류인 경우) */}
-          {!isAD && selCase.thirdParties != null && (
+          {/* 제3채무자 진술서 (압류인 경우) — 예전에 등록된 압류 건은 thirdParties가 비어있을 수 있어 타입만으로 판단 */}
+          {!isAD && selCase.type === "압류" && (
             <ThirdsEditorSection
               key={selCase.id}
-              thirds={selCase.thirdParties}
+              thirds={selCase.thirdParties || []}
               caseId={selCase.id}
               onSave={cleaned => {
                 setSelCase(prev => ({ ...prev, thirdParties: cleaned }));
