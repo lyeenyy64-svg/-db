@@ -2680,7 +2680,7 @@ export default function App() {
     const nowMs = new Date(today() + "T00:00:00").getTime();
     const buckets = AGING_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
     let noAnchorCount = 0;
-    data.debtors.filter(d => d.collectionStatus === "추심진행" && (d.finalBalanceLegal || 0) > 0).forEach(d => {
+    data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category) && (d.finalBalanceLegal || 0) > 0).forEach(d => {
       const anchor = lastPayByDebtor[d.id] || d.loanDate || null;
       const anchorMs = anchor ? new Date(anchor + "T00:00:00").getTime() : NaN;
       if (!anchor || isNaN(anchorMs)) { noAnchorCount++; return; }
@@ -3132,7 +3132,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {!collapsedSections.has("aging") && (<>
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ fontSize: 12, color: "#000", marginBottom: 14 }}>
-            추심 진행중인 채권을 최근 입금일(입금 이력이 없으면 대여일) 기준 경과일수
+            완료·대손채권·회생/파산을 제외한 채권을 최근 입금일(입금 이력이 없으면 대여일) 기준 경과일수
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${agingStats.buckets.length}, 1fr)`, gap: 12 }}>
             {agingStats.buckets.map(b => (
