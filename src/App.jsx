@@ -777,7 +777,7 @@ function loadExcelData(cfg) {
     installmentPlans:     getMR(MK.installmentPlans),
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
-    rehabilitations:  applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]),
+    rehabilitations:  applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)])),
     legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
     minsaCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]),
     assetDisclosures:  applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]),
@@ -1961,6 +1961,7 @@ export default function App() {
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
   const [legalOpenCaseId, setLegalOpenCaseId] = useState(null);
+  const [rehabOpenCaseId, setRehabOpenCaseId] = useState(null);
   // AI 종합분석 — 탭 전환해도 대화 유지
   const [aiMessages, setAiMessages] = useState([
     { role: "assistant", content: "안녕하세요! 채권관리 AI 어시스턴트입니다.\n\n채무자 이름을 포함해 질문하시면 해당 채무자의 상세 정보를 분석해드립니다.\n\n예시:\n• \"홍길동 채무자 현황 알려줘\"\n• \"이번 달 입금 없는 채무자 있어?\"\n• \"압류 진행 가능한 채무자 추천해줘\"" },
@@ -2043,7 +2044,7 @@ export default function App() {
       });
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
-      const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]);
+      const rehabilitations = applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]));
       const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
       const minsaCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]);
       const assetDisclosures  = applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]);
@@ -2400,7 +2401,7 @@ export default function App() {
       });
       // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override/수동 추가 건 적용
       // (loadData와 동일하게 처리해야 입금 등록/삭제 후에도 연대보증인·히스토리·수동 회생파산건이 유지된다)
-      const rehabilitations = applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, debtors), ...getMR(MK.rehabilitations)]);
+      const rehabilitations = applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, debtors), ...getMR(MK.rehabilitations)]));
       setData(prev => ({ ...prev, debtors, payments: paymentsRes, rehabilitations }));
       setLastSaved(new Date());
       if (sel) {
@@ -7249,6 +7250,43 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [matchingRehab, setMatchingRehab] = useState(null); // 수동 매칭 중인 rehab
     const [matchQ, setMatchQ] = useState("");
     const [selRehab, setSelRehab] = useState(null);
+    useEffect(() => {
+      if (!rehabOpenCaseId) return;
+      const found = data.rehabilitations.find(c => c.id === rehabOpenCaseId);
+      if (found) { setSelRehab(found); setRehabSubTab(found.type); }
+      setRehabOpenCaseId(null);
+    }, [rehabOpenCaseId, data.rehabilitations]);
+    const [caseNotes, setCaseNotes] = useState([]);
+    const [noteDraft, setNoteDraft] = useState("");
+    const [eventDateDraft, setEventDateDraft] = useState("");
+    const [eventDateSaved, setEventDateSaved] = useState(""); // 실제 저장된 값 — draft와 다르면 "저장" 버튼 강조
+    useEffect(() => {
+      const ev = selRehab ? (getCaseEventDate(selRehab.id) || "") : "";
+      setCaseNotes(selRehab ? getCaseNotes(selRehab.id) : []);
+      setNoteDraft("");
+      setEventDateDraft(ev);
+      setEventDateSaved(ev);
+    }, [selRehab?.id]);
+    const handleEventDateChange = (val) => { setEventDateDraft(val); };
+    const commitEventDate = () => {
+      if (!selRehab) return;
+      saveCaseEventDate(selRehab.id, eventDateDraft || null);
+      setEventDateSaved(eventDateDraft);
+      showToast("이벤트 날짜 저장됨");
+    };
+    const handleAddNote = () => {
+      if (!selRehab || !noteDraft.trim()) return;
+      const arr = [{ id: uid("NOTE"), createdAt: new Date().toISOString(), content: noteDraft.trim(), createdBy: currentUser?.name || "알수없음", eventDate: eventDateDraft || null }, ...caseNotes];
+      saveCaseNotes(selRehab.id, arr);
+      setCaseNotes(arr);
+      setNoteDraft("");
+    };
+    const handleDeleteNote = (noteId) => {
+      if (!selRehab || !confirm("이 메모를 삭제하시겠습니까?")) return;
+      const arr = caseNotes.filter(n => n.id !== noteId);
+      saveCaseNotes(selRehab.id, arr);
+      setCaseNotes(arr);
+    };
     const [rSortField, setRSortField] = useState(null); // null | 컬럼 필드명
     const [rSortDir,   setRSortDir]   = useState(null); // null | "asc" | "desc"
     const toggleRSort = (field) => {
@@ -7315,12 +7353,36 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const debtor = r.debtorId ? data.debtors.find(d => d.id === r.debtorId) : null;
       const [docUrl, setDocUrl] = useState(() => getCaseUrl(r.id));
       const saveDocUrl = () => { saveCaseUrl(r.id, docUrl); showToast("문서 링크 저장됨"); };
+      const [isEditingCase, setIsEditingCase] = useState(false);
+      const buildCaseDraft = () => ({
+        court: r.court || "", caseNumber: r.caseNumber || "", creditorNumber: r.creditorNumber || "",
+        debtAmount: r.debtAmount || 0, approvedAmount: r.approvedAmount || 0, monthlyPayment: r.monthlyPayment || 0,
+        currentRound: r.currentRound || "", repaymentNote: r.repaymentNote || "",
+        overdueStatus: r.overdueStatus || "", planApproved: !!r.planApproved, dismissed: !!r.dismissed,
+      });
+      const [caseDraft, setCaseDraft] = useState(buildCaseDraft);
+      const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
+      const startEditCase = () => { setCaseDraft(buildCaseDraft()); setIsEditingCase(true); };
+      const saveEditCase = () => {
+        const fields = { ...caseDraft, debtAmount: Number(caseDraft.debtAmount) || 0, approvedAmount: Number(caseDraft.approvedAmount) || 0, monthlyPayment: Number(caseDraft.monthlyPayment) || 0 };
+        saveCaseFieldOv(r.id, fields);
+        setSelRehab(prev => ({ ...prev, ...fields }));
+        setData(prev => ({ ...prev, rehabilitations: prev.rehabilitations.map(x => x.id === r.id ? { ...x, ...fields } : x) }));
+        setIsEditingCase(false);
+        showToast("저장 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
           <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
         </div>
       ) : null;
+      const EF = ({ label, children }) => (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+          <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+          <div style={{ flex: 1 }}>{children}</div>
+        </div>
+      );
       return (
         <Overlay onClose={() => setSelRehab(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -7335,37 +7397,110 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <button onClick={() => setSelRehab(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
 
-          {/* 사건 정보 */}
+          {/* 사건 정보 (+ 연동 채무자 정보) */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>사건 정보</div>
-            <DL label="법원" val={r.court} />
-            <DL label="사건번호" val={r.caseNumber} />
-            <DL label="채권번호" val={r.creditorNumber} />
-            <DL label="채무액" val={r.debtAmount > 0 ? fmt(r.debtAmount) : null} />
-            <DL label="승인액" val={r.approvedAmount > 0 ? fmt(r.approvedAmount) : null} />
-            <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
-            <DL label="현재 회차" val={r.currentRound} />
-            <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
-            <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
-            <DL label="미납 현황" val={r.overdueStatus} />
-            <DL label="비고" val={r.repaymentNote} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>사건 정보</div>
+              <span style={{ flex: 1 }} />
+              {isEditingCase ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={saveEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                  <button onClick={() => setIsEditingCase(false)} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                </div>
+              ) : (
+                <button onClick={startEditCase} style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
+              )}
+            </div>
+            {isEditingCase ? (
+              <>
+                <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
+                <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="채권번호"><KoreanInput value={caseDraft.creditorNumber} onChange={e => setCF("creditorNumber", e.target.value)} style={inp} /></EF>
+                <EF label="채무액"><MoneyInput value={caseDraft.debtAmount} onChange={v => setCF("debtAmount", v)} style={inp} /></EF>
+                <EF label="승인액"><MoneyInput value={caseDraft.approvedAmount} onChange={v => setCF("approvedAmount", v)} style={inp} /></EF>
+                <EF label="월상환액"><MoneyInput value={caseDraft.monthlyPayment} onChange={v => setCF("monthlyPayment", v)} style={inp} /></EF>
+                <EF label="현재 회차"><KoreanInput value={caseDraft.currentRound} onChange={e => setCF("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></EF>
+                <EF label="변제 계획 인가">
+                  <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "인가" }, { v: false, l: "미인가" }].map(o => <button key={o.l} onClick={() => setCF("planApproved", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.planApproved === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.planApproved === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
+                </EF>
+                <EF label="폐지 여부">
+                  <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "폐지" }, { v: false, l: "정상" }].map(o => <button key={o.l} onClick={() => setCF("dismissed", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.dismissed === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.dismissed === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
+                </EF>
+                <EF label="미납 현황">
+                  <select value={caseDraft.overdueStatus} onChange={e => setCF("overdueStatus", e.target.value)} style={inp}>
+                    <option value="">정상</option>
+                    <option value="미납">미납</option>
+                  </select>
+                </EF>
+                <EF label="비고"><KoreanTextarea value={caseDraft.repaymentNote} onChange={e => setCF("repaymentNote", e.target.value)} style={{ ...inp, height: 64, resize: "vertical" }} /></EF>
+              </>
+            ) : (
+              <>
+                <DL label="법원" val={r.court} />
+                <DL label="사건번호" val={r.caseNumber} />
+                <DL label="채권번호" val={r.creditorNumber} />
+                <DL label="채무액" val={r.debtAmount > 0 ? fmt(r.debtAmount) : null} />
+                <DL label="승인액" val={r.approvedAmount > 0 ? fmt(r.approvedAmount) : null} />
+                <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
+                <DL label="현재 회차" val={r.currentRound} />
+                <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
+                <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
+                <DL label="미납 현황" val={r.overdueStatus} />
+                <DL label="비고" val={r.repaymentNote} />
+                {debtor && <DL label="담당자" val={debtor.assignee} />}
+                {debtor && <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />}
+                {debtor && <DL label="잔액(재무)" val={fmt(debtor.finalBalanceFinance)} />}
+                {!debtor && <div style={{ fontSize: 12, color: "var(--tm)", padding: "6px 0 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>}
+              </>
+            )}
           </div>
 
-          {/* 연동 채무자 */}
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>채무자 연동</div>
-            {debtor ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <DL label="이름" val={debtor.name} />
-                <DL label="브랜드" val={debtor.brandName || debtor.brand} />
-                <DL label="분류" val={debtor.category} />
-                <DL label="담당자" val={debtor.assignee} />
-                <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
-                <DL label="잔액(재무)" val={fmt(debtor.finalBalanceFinance)} />
+          {/* 진행상황 메모 */}
+          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)", marginBottom: 8 }}>진행상황 메모</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <KoreanTextarea
+                value={noteDraft} onChange={e => setNoteDraft(e.target.value)} rows={2}
+                placeholder="진행상황을 입력하세요... (날짜·작성자 자동 기재)"
+                style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box" }}
+              />
+              <button onClick={handleAddNote} disabled={!noteDraft.trim()} style={{ padding: "0 14px", borderRadius: 7, background: noteDraft.trim() ? "var(--acc)" : "var(--bg2)", color: noteDraft.trim() ? "#fff" : "var(--tm)", border: "none", fontSize: 12, fontWeight: 600, cursor: noteDraft.trim() ? "pointer" : "default", whiteSpace: "nowrap" }}>추가</button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: "var(--tm)" }} title="이 사건의 다음 처리기한 — 대시보드 [CHECK 사항] 이벤트 집계 기준">이벤트 날짜</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="date" value={eventDateDraft} onChange={e => handleEventDateChange(e.target.value)}
+                    style={{ padding: "5px 6px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 11 }} />
+                  <button onClick={commitEventDate} disabled={eventDateDraft === eventDateSaved}
+                    style={{ padding: "0 8px", borderRadius: 7, border: "1px solid var(--brd)", fontSize: 10, fontWeight: 600, whiteSpace: "nowrap",
+                      background: eventDateDraft === eventDateSaved ? "var(--bg2)" : "var(--acc)",
+                      color: eventDateDraft === eventDateSaved ? "var(--tm)" : "#fff",
+                      cursor: eventDateDraft === eventDateSaved ? "default" : "pointer" }}>저장</button>
+                </div>
               </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--tm)", padding: "6px 0" }}>채무자 관리 탭과 연결되지 않은 사건입니다.</div>
-            )}
+            </div>
+            {caseNotes.length === 0
+              ? <div style={{ fontSize: 12, color: "var(--tm)", padding: "4px 0" }}>등록된 메모가 없습니다.</div>
+              : <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 220, overflowY: "auto" }}>
+                  {caseNotes.map(n => (
+                    <div key={n.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "var(--card)", borderRadius: 8, border: n.eventDate ? "1px solid #ef4444" : "1px solid var(--brd)", padding: "8px 10px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
+                          <span className="mono" style={{ fontSize: 10, color: "var(--acc)", fontWeight: 600 }}>{fmtDateTime(n.createdAt)}</span>
+                          <span style={{ fontSize: 10, color: "var(--tm)" }}>{n.createdBy}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--tp)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{n.content}</div>
+                      </div>
+                      {n.eventDate && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
+                        </div>
+                      )}
+                      {canDeleteRecord(n) && <button onClick={() => handleDeleteNote(n.id)} title="삭제" style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef444410", color: "#ef4444", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="trash" size={11} /></button>}
+                    </div>
+                  ))}
+                </div>
+            }
           </div>
 
           {/* OneDrive 문서 */}
@@ -10060,6 +10195,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
               return diffDays >= 0 && diffDays <= 7;
             });
+            const rehabEventCases = (data.rehabilitations || []).filter(c => {
+              const ev = getCaseEventDate(c.id);
+              if (!ev) return false;
+              const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
+              return diffDays >= 0 && diffDays <= 7;
+            });
             const items = [
               { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
@@ -10067,6 +10208,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
               { l: "민사소송 이벤트", v: `${minsaEventCases.length}건`, onClick: () => { setTab("minsa"); if (minsaEventCases[0]) setMinsaOpenCaseId(minsaEventCases[0].id); } },
               { l: "법적절차 이벤트", v: `${legalEventCases.length}건`, onClick: () => { setTab("legal"); if (legalEventCases[0]) setLegalOpenCaseId(legalEventCases[0].id); } },
+              { l: "회생/파산 이벤트", v: `${rehabEventCases.length}건`, onClick: () => { setTab("rehabBankruptcy"); if (rehabEventCases[0]) setRehabOpenCaseId(rehabEventCases[0].id); } },
             ];
             return items.map((x, i) => (
               <div key={i} onClick={x.onClick}
