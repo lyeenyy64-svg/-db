@@ -7299,19 +7299,28 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {label}{rSortField === field ? (rSortDir === "asc" ? " ↑" : " ↓") : ""}
       </span>
     );
+    const getDebtor = (id) => data.debtors.find(d => d.id === id);
     const REHAB_SORT_GETTERS = {
       brand:     r => r.brand || "",
       name:      r => r.debtorName || "",
-      type:      r => r.type || "",
       creditorNumber: r => r.creditorNumber || "",
       court:     r => r.court || "",
       caseNumber: r => r.caseNumber || "",
+      debtAmount:     r => r.debtAmount || 0,
+      approvedAmount: r => r.approvedAmount || 0,
+      monthlyPayment: r => r.monthlyPayment || 0,
+      currentRound:   r => r.currentRound || "",
       overdue:   r => r.overdueStatus === "미납" ? 1 : 0,
       result:    r => r.dismissed ? "폐지" : r.planApproved ? "인가" : "진행중",
+      balance:   r => { const d = getDebtor(r.debtorId); return d ? (d.finalBalanceFinance || 0) : -Infinity; },
       matched:   r => r.debtorId ? 1 : 0,
     };
-    // 컬럼: 브랜드 / 성명 / 회생·파산 / 채권번호 / 법원 / 사건번호 / 납부여부 / 결과 / 매칭
-    const rehabGridCols = "56px minmax(90px,1fr) 88px 96px minmax(90px,1fr) minmax(110px,1.2fr) 84px 84px 100px";
+    // 회생 탭은 채무액/승인액/월상환액/현재회차까지 표시하고, 파산/면책 탭은 잔액(재무)만 추가로 표시한다
+    // (같은 탭 안에서는 유형이 전부 동일해 "회생/파산" 구분 컬럼은 불필요)
+    const isRehabTab = rehabTab === "회생";
+    const rehabGridCols = isRehabTab
+      ? "56px minmax(90px,1fr) 80px minmax(90px,1fr) minmax(110px,1.2fr) 96px 96px 96px 76px 76px 76px 100px 90px"
+      : "56px minmax(90px,1fr) 80px minmax(90px,1fr) minmax(110px,1.2fr) 76px 76px 100px 90px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
@@ -7559,16 +7568,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <button onClick={() => exportLegal([], filtered, [])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
         </div>
-        {/* 리스트 헤더 */}
+        {/* 리스트 헤더 — 같은 탭 안에서는 유형이 동일해 "회생/파산" 구분 컬럼은 생략, 대신
+            회생 탭은 채무액/승인액/월상환액/현재회차까지, 파산/면책 탭은 잔액(재무)만 보여준다 */}
         <div style={{ display: "grid", gridTemplateColumns: rehabGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
           <RehabSortTh field="brand" label="브랜드" />
           <RehabSortTh field="name" label="성명" />
-          <RehabSortTh field="type" label="회생/파산" />
           <RehabSortTh field="creditorNumber" label="채권번호" />
           <RehabSortTh field="court" label="법원" />
           <RehabSortTh field="caseNumber" label="사건번호" />
+          {isRehabTab && <RehabSortTh field="debtAmount" label="채무액" />}
+          {isRehabTab && <RehabSortTh field="approvedAmount" label="승인액" />}
+          {isRehabTab && <RehabSortTh field="monthlyPayment" label="월상환액" />}
+          {isRehabTab && <RehabSortTh field="currentRound" label="현재회차" />}
           <RehabSortTh field="overdue" label="납부여부" />
           <RehabSortTh field="result" label="결과" />
+          <RehabSortTh field="balance" label="잔액(재무)" />
           <RehabSortTh field="matched" label="매칭" />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -7576,6 +7590,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>조건에 맞는 회생/파산 사건이 없습니다.</div>
             : filtered.map(r => {
                 const result = r.dismissed ? "폐지" : r.planApproved ? "인가" : "진행중";
+                const debtor = getDebtor(r.debtorId);
                 return (
                   <div key={r.id}
                     style={{ background: "var(--card)", borderRadius: 10, border: `1px solid ${r.overdueStatus === "미납" ? "#ef444430" : "var(--brd)"}`, cursor: "pointer", transition: "background 0.1s", padding: "13px 16px", display: "grid", gridTemplateColumns: rehabGridCols, alignItems: "center", gap: 10, textAlign: "center" }}
@@ -7585,10 +7600,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   >
                     <span>{r.brand ? <BrandBadge code={r.brand} brands={config.brands} /> : "-"}</span>
                     <span style={{ fontSize: 14, fontWeight: 600, color: r.debtorId ? "var(--tp)" : "#c0c4cc" }}>{r.debtorName}</span>
-                    <span><Badge status={r.type} small /></span>
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{r.creditorNumber || "-"}</span>
                     <span style={{ fontSize: 13, color: "var(--ts)" }}>{r.court || "-"}</span>
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{r.caseNumber}</span>
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{r.debtAmount > 0 ? fmt(r.debtAmount) : "-"}</span>}
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--ok)" }}>{r.approvedAmount > 0 ? fmt(r.approvedAmount) : "-"}</span>}
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)" }}>{r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : "-"}</span>}
+                    {isRehabTab && <span style={{ fontSize: 13, color: "var(--ts)" }}>{r.currentRound || "-"}</span>}
                     <span>{r.overdueStatus === "미납"
                       ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>
                       : <span style={{ fontSize: 12, color: "var(--ts)" }}>정상</span>}</span>
@@ -7597,6 +7615,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       : result === "인가"
                         ? <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>
                         : <span style={{ fontSize: 12, color: "var(--ts)" }}>진행중</span>}</span>
+                    <span className="mono" style={{ fontSize: 13, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceFinance) : "-"}</span>
                     <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {getCaseUrl(r.id) && <a href={getCaseUrl(r.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
                       <button onClick={e => { e.stopPropagation(); setMatchingRehab(r); setMatchQ(""); }} style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 5, border: r.debtorId ? "1px solid var(--brd)" : "1px solid #3b82f660", background: r.debtorId ? "var(--bg2)" : "#eff6ff", color: r.debtorId ? "var(--tm)" : "#1d4ed8", cursor: "pointer" }}>{r.debtorId ? "재매칭" : "연결"}</button>
