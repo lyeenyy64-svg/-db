@@ -3310,16 +3310,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
-                        <input type="text" inputMode="numeric" value={a.target ? a.target.toLocaleString("ko-KR") : ""}
-                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "monthlyTarget", isNaN(n) ? 0 : n); }}
-                          placeholder="목표 미설정"
-                          style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                        {currentUser?.name === "김준원" ? (
+                          <input type="text" inputMode="numeric" value={a.target ? a.target.toLocaleString("ko-KR") : ""}
+                            onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "monthlyTarget", isNaN(n) ? 0 : n); }}
+                            placeholder="목표 미설정"
+                            style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                        ) : (
+                          <span className="mono" style={{ color: a.target ? "var(--tp)" : "var(--tm)" }}>{a.target ? a.target.toLocaleString("ko-KR") : "목표 미설정"}</span>
+                        )}
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
-                        <input type="text" inputMode="numeric" value={a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : ""}
-                          onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "annualTarget", isNaN(n) ? 0 : n); }}
-                          placeholder="목표 미설정"
-                          style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                        {currentUser?.name === "김준원" ? (
+                          <input type="text" inputMode="numeric" value={a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : ""}
+                            onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "annualTarget", isNaN(n) ? 0 : n); }}
+                            placeholder="목표 미설정"
+                            style={{ width: 110, textAlign: "right", padding: "5px 8px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", fontSize: 12, color: "var(--tp)" }} />
+                        ) : (
+                          <span className="mono" style={{ color: a.annualTarget ? "var(--tp)" : "var(--tm)" }}>{a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : "목표 미설정"}</span>
+                        )}
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
                         {a.achieveRate == null ? <span style={{ color: "var(--tm)", fontSize: 12 }}>-</span> : (
