@@ -1809,6 +1809,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
               <td style={strike({ width: colWidths[3] })}>
                 <select value={r.status || "진행중"} onChange={e => updateKeyIssue("todoList", r.id, { status: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="진행중">진행중</option>
+                  <option value="지속">지속</option>
                   <option value="보류">보류</option>
                   <option value="완료">완료</option>
                 </select>
