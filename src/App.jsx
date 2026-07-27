@@ -2679,8 +2679,9 @@ export default function App() {
     });
     const nowMs = new Date(today() + "T00:00:00").getTime();
     const buckets = AGING_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
-    let noAnchorCount = 0;
-    data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category) && (d.finalBalanceLegal || 0) > 0).forEach(d => {
+    let noAnchorCount = 0, noBalanceCount = 0;
+    data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category)).forEach(d => {
+      if ((d.finalBalanceLegal || 0) <= 0) { noBalanceCount++; return; }
       const anchor = lastPayByDebtor[d.id] || d.loanDate || null;
       const anchorMs = anchor ? new Date(anchor + "T00:00:00").getTime() : NaN;
       if (!anchor || isNaN(anchorMs)) { noAnchorCount++; return; }
@@ -2696,6 +2697,7 @@ export default function App() {
       totalCount: buckets.reduce((s, b) => s + b.count, 0),
       totalAmount: buckets.reduce((s, b) => s + b.amount, 0),
       noAnchorCount,
+      noBalanceCount,
     };
   }, [data]);
 
@@ -3147,6 +3149,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             ))}
           </div>
           {agingStats.noAnchorCount > 0 && <div style={{ marginTop: 10, fontSize: 11, color: "#000" }}>* 기준일(대여일·입금이력) 정보가 없어 집계에서 제외된 채권 {agingStats.noAnchorCount}건</div>}
+          {agingStats.noBalanceCount > 0 && <div style={{ marginTop: 4, fontSize: 11, color: "#000" }}>* 잔액이 0원 이하라 집계에서 제외된 채권 {agingStats.noBalanceCount}건</div>}
         </div>
         </>)}
         {agingModalBucket && (() => {
