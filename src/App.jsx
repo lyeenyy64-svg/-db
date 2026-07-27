@@ -322,6 +322,25 @@ const getDebtorHistoryText = (d) => {
   const manualTexts = getHistM(d.id).map(h => h.content || "");
   return [...excelTexts, ...manualTexts].join(" ");
 };
+// AI 분석용: 히스토리 탭에 보이는 것과 동일한 항목(엑셀 원본+수정/삭제 반영 + 수동 추가)을
+// 날짜/구분을 살려 최신순으로 정렬해 돌려준다 — 이 데이터는 서버 DB(activities 테이블)가
+// 아니라 프론트에 함께 실린 엑셀 원본 + localStorage/kv_store 수동기록에만 있어, AI가 이걸
+// 보게 하려면 요청 시 직접 실어 보내야 한다.
+const getDebtorHistoryEntries = (d) => {
+  const deletedSet = new Set(getHistD(d.id));
+  const edits = getHistE(d.id);
+  const excelEntries = (d.history || [])
+    .map((h, i) => {
+      if (deletedSet.has(i)) return null;
+      const ed = edits[`e_${i}`];
+      return { date: ed?.date ?? h.date, type: ed?.type ?? h.type, content: ed?.content ?? h.content };
+    })
+    .filter(Boolean);
+  const manualEntries = getHistM(d.id).map(h => ({ date: h.date, type: h.type, content: h.content }));
+  return [...excelEntries, ...manualEntries]
+    .filter(e => (e.content || "").trim())
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+};
 const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
 const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 
@@ -10356,10 +10375,15 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
     setAiMessages(prev => [...prev, userMsg]);
     setAiLoading(true);
     try {
+      // 히스토리 탭에 보이는 실제 기록(엑셀 원본+수정/삭제 반영 + 수동 추가)은 서버 DB가 아니라
+      // 프론트에만 있어 서버가 직접 조회할 수 없다 — AI가 이를 근거로 분석하도록 직접 실어 보낸다.
+      const history = aiSelDebtor
+        ? getDebtorHistoryEntries(aiSelDebtor).slice(0, 40).map(h => ({ date: h.date || "", type: h.type || "", content: h.content }))
+        : [];
       const res = await fetch("/api/ai-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null }),
+        body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null, history }),
       });
       const d2 = await res.json();
       setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
@@ -10374,6 +10398,12 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
     "최근 입금 패턴을 분석해줘",
     "다음 법적 조치를 추천해줘",
     "압류 가능성 있어?",
+    "히스토리에서 협상·약속 이력 정리해줘",
+    "연락이 끊긴 시점과 이유가 뭐야?",
+    "완납 가능성이 얼마나 돼?",
+    "소멸시효 임박했어?",
+    "연대보증인한테 조치할 방법 있어?",
+    "지금까지 시도한 추심 방법 요약해줘",
   ];
 
   const fmtBal = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
@@ -10424,20 +10454,8 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
         )}
       </div>
 
-      {/* 빠른 질문 */}
-      {aiSelDebtor && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 0 12px" }}>
-          {QUICK.map(q => (
-            <button key={q} onClick={() => setAiInput(q)}
-              style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
-              {q}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* 입력창 */}
-      <div style={{ display: "flex", gap: 8, paddingBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, paddingBottom: 10 }}>
         <input
           value={aiInput}
           onChange={e => setAiInput(e.target.value)}
@@ -10451,6 +10469,18 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
           전송
         </button>
       </div>
+
+      {/* 빠른 질문 예시 */}
+      {aiMessages.length === 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 0 12px" }}>
+          {QUICK.map(q => (
+            <button key={q} onClick={() => setAiInput(q)}
+              style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+              {q}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 채팅 영역 */}
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8, borderTop: "1px solid var(--brd)", paddingTop: 12 }}>

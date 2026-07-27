@@ -3390,7 +3390,7 @@ function getOpenAIClient() {
 app.post("/api/ai-chat", async (req, res) => {
   const openaiClient = getOpenAIClient();
   if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
-  const { query, debtorId } = req.body;
+  const { query, debtorId, history } = req.body;
   if (!query) return res.status(400).json({ error: "query 필요" });
 
   try {
@@ -3399,40 +3399,85 @@ app.post("/api/ai-chat", async (req, res) => {
     if (debtorId) {
       const d = db.prepare("SELECT * FROM debtors WHERE id=?").get(debtorId);
       if (d) {
-        const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 20").all(debtorId);
-        const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 10").all(debtorId);
+        const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 30").all(debtorId);
         const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(debtorId);
+        const seizureTargets = seizures.length
+          ? db.prepare(`SELECT * FROM seizure_targets WHERE seizure_case_id IN (${seizures.map(() => "?").join(",")}) ORDER BY seizure_case_id, seq`).all(...seizures.map(s => s.id))
+          : [];
         const rehabs = db.prepare("SELECT * FROM rehabilitations WHERE debtor_id=? ORDER BY id DESC LIMIT 3").all(debtorId);
         const installs = db.prepare("SELECT * FROM installment_plans WHERE debtor_id=? ORDER BY id DESC LIMIT 1").all(debtorId);
+        const instLogs = installs.length
+          ? db.prepare("SELECT * FROM installment_logs WHERE plan_id=? ORDER BY id DESC LIMIT 12").all(installs[0].id)
+          : [];
         const complaints = db.prepare("SELECT * FROM complaints WHERE debtor_id=? ORDER BY complaint_date DESC LIMIT 3").all(debtorId);
+        const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id=?").all(debtorId).map(g => g.name);
+
+        // "히스토리" 탭에 실제로 보이는 기록(엑셀 원본+수정/삭제 반영 + 수동 추가)은 서버 DB의
+        // activities 테이블이 아니라 프론트(엑셀 원본 + localStorage/kv_store)에만 있어서, 여기선
+        // 클라이언트가 함께 보낸 history를 우선 사용한다 — activities 테이블은 이 화면 밖에서
+        // 쓰이는 경우를 위한 보조 폴백일 뿐 히스토리 탭 내용과는 별개다.
+        const clientHistory = Array.isArray(history) ? history.filter(h => h && h.content) : [];
+        const histLines = clientHistory.length > 0
+          ? clientHistory.slice(0, 40).map((h, i) => `${i + 1}. ${h.date || "날짜미상"} [${h.type || "메모"}] ${h.content}`).join("\n")
+          : (() => {
+              const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(debtorId);
+              return acts.length === 0 ? "없음" : acts.map((a, i) => `${i + 1}. ${a.activity_date} [${a.activity_type}] ${a.content || ""}`).join("\n");
+            })();
 
         const fmt = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
         const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
         const lastPay = pays[0];
+        const finalFinance = (d.principal_balance || 0) - (d.collected_amount || 0);
+        const finalLegal = (d.principal_balance || 0) + (d.adjustment || 0) - (d.collected_amount || 0);
+        const daysSinceLastPay = lastPay ? Math.floor((Date.now() - new Date(lastPay.payment_date).getTime()) / 86400000) : null;
+        // 최근 3건 vs 그 이전 3건 입금액 비교로 입금 추세(증가/감소/정지) 파악
+        const recent3 = pays.slice(0, 3).reduce((s, p) => s + (p.total_amount || 0), 0);
+        const prev3 = pays.slice(3, 6).reduce((s, p) => s + (p.total_amount || 0), 0);
+        const paymentTrend = pays.length === 0 ? "입금 이력 없음"
+          : pays.length < 4 ? "판단하기엔 입금 건수 부족"
+          : recent3 > prev3 * 1.1 ? "증가세"
+          : recent3 < prev3 * 0.9 ? "감소세"
+          : "유지";
+
+        const targetsByCase = {};
+        for (const t of seizureTargets) (targetsByCase[t.seizure_case_id] ||= []).push(t);
+
         contextText = `
 [채무자 기본정보]
 이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 허브: ${d.hub_name || "-"}
-원금: ${fmt(d.principal_balance)}원 | 수금상태: ${d.collection_status || "-"}
+원금: ${fmt(d.principal_balance)}원 | 조정액: ${fmt(d.adjustment)}원 | 회수액: ${fmt(d.collected_amount)}원
+잔액(재무기준): ${fmt(finalFinance)}원 | 잔액(법무기준, 법무비용 포함): ${fmt(finalLegal)}원
+수금상태: ${d.collection_status || "-"}
 담당자: ${d.assignee || "-"} | 메모: ${d.key_notes || "-"}
 전화: ${d.phone || "-"} | 채무원인: ${d.debt_cause || "-"}
 집행권원: ${d.exec_title || "-"}
+연대보증인: ${guarantors.length ? guarantors.join(", ") : "없음"}
 
 [입금 현황]
-총 입금액: ${fmt(totalPaid)}원 (${pays.length}건)
-최근 입금: ${lastPay ? `${lastPay.payment_date} ${fmt(lastPay.total_amount)}원` : "없음"}
-${pays.length > 0 ? pays.slice(0, 10).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원 (${p.payer_name || "-"})`).join("\n") : ""}
+총 입금액(전체): ${fmt(d.collected_amount)}원 | 최근 조회된 입금: ${fmt(totalPaid)}원 (${pays.length}건, 최근 30건 기준)
+전체 청구액 대비 회수율: ${(finalLegal + (d.collected_amount || 0)) > 0 ? (((d.collected_amount || 0) / (finalLegal + (d.collected_amount || 0))) * 100).toFixed(1) : "0"}%
+최근 입금: ${lastPay ? `${lastPay.payment_date} ${fmt(lastPay.total_amount)}원 (오늘까지 ${daysSinceLastPay}일 경과)` : "없음"}
+최근 입금 추세(최근 3건 합 vs 그 이전 3건 합 비교): ${paymentTrend}
+${pays.length > 0 ? pays.slice(0, 15).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원 (${p.payer_name || "-"})`).join("\n") : ""}
 
-[활동 이력 (최대 10건)]
-${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity_type}] ${a.content || ""}`).join("\n")}
+[히스토리 — 담당자가 실제 기록한 추심활동 전체 흐름, 시간순 최신이 위 (최대 40건)]
+${histLines}
 
-[압류/법적절차 (최대 5건)]
-${seizures.length === 0 ? "없음" : seizures.map(s => `법원: ${s.court || "-"} | 사건번호: ${s.case_number || "-"} | 상태: ${s.status || "-"}`).join("\n")}
+[압류/강제집행 결과 (최대 5건, 제3채무자별 실제 회수 내역 포함)]
+${seizures.length === 0 ? "없음" : seizures.map(s => {
+  const targets = targetsByCase[s.id] || [];
+  const head = `법원: ${s.court || "-"} | 사건번호: ${s.case_number || "-"} | 상태: ${s.status || "-"}`;
+  if (targets.length === 0) return `${head}\n  제3채무자 진술 내역 없음`;
+  const lines = targets.map(t => `  - ${t.third_party_name || "-"} | 청구액 ${fmt(t.claim_amount)}원 | 잔액 ${fmt(t.balance)}원 | 회수액 ${fmt(t.collected)}원 | 회신일 ${t.response_date || "-"} | ${t.completed ? "완료" : "진행중"}${t.note ? ` | ${t.note}` : ""}`);
+  return `${head}\n${lines.join("\n")}`;
+}).join("\n")}
 
 [회생/파산]
 ${rehabs.length === 0 ? "없음" : rehabs.map(r => `${r.type || "-"} | 사건번호: ${r.case_number || "-"} | 법원: ${r.court || "-"}`).join("\n")}
 
-[분납약정]
+[분납약정 및 실제 이행 현황 — 이행 로그는 채무자의 상환 의지/능력을 보여주는 핵심 근거]
 ${installs.length === 0 ? "없음" : installs.map(i => `월 ${fmt(i.monthly_amount)}원 | 총채권: ${fmt(i.total_claim)}원 | 상태: ${i.status}`).join("\n")}
+${instLogs.length > 0 ? instLogs.map(l => `  ${l.target_month} [${l.status}] ${fmt(l.paid_amount)}원${l.memo ? ` (${l.memo})` : ""}`).join("\n") : (installs.length > 0 ? "  월별 이행 로그 없음" : "")}
 
 [형사고소]
 ${complaints.length === 0 ? "없음" : complaints.map(c => `${c.complaint_date} | ${c.police_station || "-"} | ${c.status_note || "-"}`).join("\n")}
@@ -3456,11 +3501,43 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
     }
 
     const systemPrompt = `당신은 NPL 채권관리 전문 AI 어시스턴트입니다.
-바로고 채권관리 시스템의 실제 데이터를 바탕으로 담당자에게 실무적인 분석과 조언을 제공합니다.
+바로고 채권관리 시스템의 실제 데이터를 바탕으로 담당자에게 이 채무자 개인에게 맞춘 실무 분석과
+조언을 제공합니다. "협상을 시도해보세요", "압류를 고려해보세요", "지속적으로 연락하세요" 같은
+누구에게나 적용되는 뭉뚱그린 답변은 절대 금지입니다. 반드시 아래 데이터를 종합해 이 채무자만의
+근거를 인용하며 답하세요.
+
+- [히스토리]는 담당자가 그동안 실제로 남긴 추심활동 기록(통화·문자·방문·협상·주소변경 등)으로,
+  가장 구체적이고 신뢰도 높은 근거입니다. 연락 시도 빈도/최근성, 채무자의 반응이나 약속과 그
+  이행 여부, 협상·분납 논의 경과, 연락처·주소 변경 이력, 반복되는 패턴(예: 특정 시기마다 연락
+  끊김)을 파악하고 "N월 N일 기록에 따르면"처럼 구체적인 날짜를 인용해 근거를 제시하세요.
+  히스토리·데이터에 없는 내용은 추측해서 답하지 마세요.
+
+- **성향 판단(필수)**: 히스토리의 연락 반응 패턴, [분납약정 및 실제 이행 현황]의 완납/미납/지연
+  비율, [입금 현황]의 입금 추세·경과일을 종합해 이 채무자를 다음과 같은 유형 중 가장 근접한 것으로
+  명시적으로 분류하고 그 근거를 제시하세요: 협조적 상환형(약속을 대체로 지킴) / 상환 의지는 있으나
+  능력 부족형(약속하지만 반복적으로 미납·지연) / 회피·잠적형(연락 두절·주소·연락처 변경 반복) /
+  의도적 비협조형(연락은 되지만 상환 의사 없음) / 판단 근거 부족(데이터 부족). 유형은 참고용
+  명칭이며 데이터와 다르면 다르게 표현해도 됩니다.
+
+- **강제집행 결과 반영(필수)**: [압류/강제집행 결과]에 제3채무자별 청구액·잔액·회수액·완료여부가
+  있으면 회수율과 효과를 평가하고("OO은행 압류에서 청구액 대비 OO% 회수" 등), 압류가 없거나
+  실효성이 낮았다면 왜 그런지(재산 없음/제3채무자 무응답 등)와 추가 압류 대상 발굴 필요성을
+  판단하세요.
+
+- **채무액·회수율 반영(필수)**: [채무자 기본정보]의 잔액(재무/법무기준)과 [입금 현황]의 전체
+  청구액 대비 회수율을 근거로, 잔액 규모와 회수 속도 대비 완전 회수까지 걸릴 기간이나 현실적
+  회수 가능성을 구체적으로 판단하세요.
+
+- **현실적 대안 제시(필수)**: 위 성향·강제집행 결과·채무액·회수율 분석을 종합해서, 이 채무자에게
+  실제로 실행 가능한 대안을 우선순위(1, 2, 3...) 순으로 제시하세요. 각 항목은 "무엇을/누구에게/
+  어떻게/왜 이 채무자에게 이 방법이 적합한지(데이터 근거)"를 포함해야 하며, 일반론이 아니라 이
+  채무자의 구체적 상황(성향, 남은 잔액, 연대보증인 유무와 그쪽 상태, 압류 실효성, 회생·분납 이력)에
+  근거해야 합니다. 예를 들어 회피·잠적형이면 연락 재개보다 재산조사·압류가 우선이고, 능력 부족형
+  이면 분납 재조정이나 연대보증인 활용이 우선일 수 있습니다 — 데이터가 실제로 그렇게 보일 때만
+  그렇게 판단하세요.
+
 - 금액은 항상 원화(원) 단위로 표시하고 천단위 콤마를 사용하세요.
-- 입금 패턴, 법적 조치 이력을 분석해 구체적인 다음 조치를 추천하세요.
-- 압류, 분납약정, 법적 조치 가능성을 실무적 관점에서 판단하세요.
-- 답변은 간결하되 핵심 정보를 빠짐없이 포함하세요.
+- 답변은 간결하되 핵심 정보와 근거(날짜·건수·금액·비율 등)를 빠짐없이 포함하세요.
 - 한국어로 답변하세요.`;
 
     const userMessage = contextText
@@ -3473,7 +3550,7 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
-      max_tokens: 1000,
+      max_tokens: 1500,
       temperature: 0.3,
     });
 
