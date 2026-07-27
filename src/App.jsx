@@ -130,6 +130,17 @@ const AGING_BUCKETS = [
   { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#991b1b" },
 ];
 
+// ─── 채권 소멸시효 구간 (대여일로부터 집행권원 있으면 10년, 없으면 5년) ───
+// min/max는 "남은 일수" 기준 — 작을수록(0에 가까울수록) 시효 완성이 임박해 더 시급하다.
+const STATUTE_BUCKETS = [
+  { key: "expired", label: "소멸시효 완성", min: -Infinity, max: 0,    color: "#4b5563" },
+  { key: "m3",       label: "3개월 이내",    min: 0,   max: 90,        color: "#991b1b" },
+  { key: "m6",       label: "6개월 이내",    min: 90,  max: 180,       color: "#ef4444" },
+  { key: "y1",       label: "1년 이내",      min: 180, max: 365,       color: "#f97316" },
+  { key: "y5",       label: "5년 이내",      min: 365, max: 365 * 5,   color: "#f59e0b" },
+  { key: "y10",      label: "10년 이내",     min: 365 * 5, max: 365 * 10, color: "#10b981" },
+];
+
 const ASSIGNEE_COLORS = ["#3b82f6", "#f97316", "#10b981", "#8b5cf6", "#ef4444", "#06b6d4", "#eab308", "#ec4899"];
 
 // ─── Data Generation ──────────────────────────────────────
@@ -1974,6 +1985,8 @@ export default function App() {
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [agingModalReason, setAgingModalReason] = useState(null); // "noAnchor" | "noBalance"
+  const [statuteModalBucket, setStatuteModalBucket] = useState(null);
+  const [statuteModalReason, setStatuteModalReason] = useState(null); // "noAnchor"
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
@@ -2723,6 +2736,36 @@ export default function App() {
     };
   }, [data]);
 
+  // ─── 채권 소멸시효 현황 ─────────────────────────────────────
+  // 대여일자(=대여금 지급시기)를 기준으로 집행권원이 있으면 +10년, 없으면 +5년 뒤가 소멸시효
+  // 완성일이다. 완성일까지 남은 일수가 짧을수록 시급하게 시효 연장(소송·압류 등) 조치가 필요하다.
+  const statuteStats = useMemo(() => {
+    const nowMs = new Date(today() + "T00:00:00").getTime();
+    const buckets = STATUTE_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
+    const noAnchorItems = [];
+    data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category)).forEach(d => {
+      const loanMs = d.loanDate ? new Date(d.loanDate + "T00:00:00").getTime() : NaN;
+      if (!d.loanDate || isNaN(loanMs)) { noAnchorItems.push(d); return; }
+      const years = d.execTitle ? 10 : 5;
+      const expiry = new Date(loanMs);
+      expiry.setFullYear(expiry.getFullYear() + years);
+      const daysLeft = Math.floor((expiry.getTime() - nowMs) / 86400000);
+      const bucket = buckets.find(b => daysLeft >= b.min && daysLeft < b.max) || buckets[buckets.length - 1];
+      bucket.count++;
+      bucket.amount += (d.finalBalanceLegal || 0);
+      bucket.items.push({ ...d, daysLeft, statuteYears: years, expiryDate: expiry.toISOString().split("T")[0] });
+    });
+    buckets.forEach(b => b.items.sort((a, c) => a.daysLeft - c.daysLeft));
+    noAnchorItems.sort((a, c) => (c.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0));
+    return {
+      buckets,
+      totalCount: buckets.reduce((s, b) => s + b.count, 0),
+      totalAmount: buckets.reduce((s, b) => s + b.amount, 0),
+      noAnchorCount: noAnchorItems.length,
+      noAnchorItems,
+    };
+  }, [data]);
+
   // ─── 담당자별 성과 리더보드 (이번달 vs 지난달, 목표 대비 달성률) ─
   const assigneeStats = useMemo(() => {
     const debtorAssignee = {};
@@ -3151,6 +3194,91 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         </>)}
+        {/* ── 채권 소멸시효 현황 ── */}
+        <SectionHeader sectionId="statute">채권 소멸시효 현황</SectionHeader>
+        {!collapsedSections.has("statute") && (<>
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
+            대여일자(대여금 지급시기) 기준, 집행권원이 있으면 +10년 / 없으면 +5년 뒤 소멸시효 완성 — 완성까지 남은 기간 기준
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${statuteStats.buckets.length}, 1fr)`, gap: 12 }}>
+            {statuteStats.buckets.map(b => (
+              <div key={b.key} onClick={() => b.count > 0 && setStatuteModalBucket(b.key)}
+                style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", cursor: b.count > 0 ? "pointer" : "default", border: `1px solid ${b.color}30` }}
+                onMouseEnter={e => { if (b.count > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>{b.label}</div>
+                <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: b.color, marginBottom: 4 }}>{b.count}건</div>
+                <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(b.amount)}</div>
+              </div>
+            ))}
+          </div>
+          {statuteStats.noAnchorCount > 0 && (
+            <div onClick={() => setStatuteModalReason("noAnchor")} style={{ marginTop: 10, fontSize: 11, color: "var(--tm)", cursor: "pointer", textDecoration: "underline" }}>
+              * 대여일자 정보가 없어 집계에서 제외된 채권 {statuteStats.noAnchorCount}건
+            </div>
+          )}
+        </div>
+        </>)}
+        {statuteModalBucket && (() => {
+          const bucket = statuteStats.buckets.find(b => b.key === statuteModalBucket);
+          if (!bucket) return null;
+          return (
+            <Overlay onClose={() => setStatuteModalBucket(null)} wide>
+              <ModalHeader title={`${bucket.label} 채권 (${bucket.count}건, ${fmt(bucket.amount)})`} onClose={() => setStatuteModalBucket(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "집행권원", "대여일", "시효완성일", "남은기간", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {bucket.items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setStatuteModalBucket(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.execTitle ? `O (${d.statuteYears}년)` : `X (${d.statuteYears}년)`}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.loanDate)}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.expiryDate)}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.daysLeft < 0 ? `${-d.daysLeft}일 경과` : `${d.daysLeft}일 남음`}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
+        {statuteModalReason && (() => {
+          const items = statuteStats.noAnchorItems;
+          return (
+            <Overlay onClose={() => setStatuteModalReason(null)} wide>
+              <ModalHeader title={`대여일자 정보 없어 제외된 채권 (${items.length}건)`} onClose={() => setStatuteModalReason(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "분류", "집행권원", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setStatuteModalReason(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.execTitle ? "O" : "X"}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
         {/* ── 연체 에이징 분석 ── */}
         <SectionHeader sectionId="aging">연체 에이징 분석</SectionHeader>
         {!collapsedSections.has("aging") && (<>
