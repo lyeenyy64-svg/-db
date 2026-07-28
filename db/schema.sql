@@ -116,6 +116,18 @@ CREATE TABLE debtor_phone_history (
 );
 CREATE INDEX idx_phone_history_debtor ON debtor_phone_history(debtor_id);
 
+-- 담당자 변경 이력 (변경일 기준 point-in-time 조회용) — 담당자별 실적은 결제일 시점에
+-- 유효했던 담당자로 귀속돼야 하므로, 현재값(debtors.assignee)만으로는 부족하다.
+CREATE TABLE assignee_history (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  debtor_id      TEXT NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
+  assignee       TEXT NOT NULL,
+  effective_date TEXT NOT NULL,                   -- 'YYYY-MM-DD' — 이 날짜부터 유효
+  created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+  UNIQUE(debtor_id, effective_date)
+);
+CREATE INDEX idx_assignee_history_debtor ON assignee_history(debtor_id, effective_date);
+
 
 -- ============================================================
 -- 4. 입금 트랜잭션 (payments)

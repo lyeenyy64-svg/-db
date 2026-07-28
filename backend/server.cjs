@@ -253,6 +253,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_edit_log_changed ON debtor_edit_log(changed_at);
 `);
 
+// 담당자 변경 이력 (변경일 기준 실적 귀속용)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assignee_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id      TEXT NOT NULL,
+    assignee       TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(debtor_id, effective_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_assignee_history_debtor ON assignee_history(debtor_id, effective_date);
+`);
+// 기존 채무자는 이력이 없으므로, 등록일부터 현재 담당자였던 것으로 1회 백필
+if (!db.prepare("SELECT value FROM kv_store WHERE key='assignee_history_backfilled'").get()) {
+  db.prepare(`
+    INSERT OR IGNORE INTO assignee_history (debtor_id, assignee, effective_date)
+    SELECT id, assignee, date(created_at) FROM debtors WHERE assignee IS NOT NULL AND assignee != ''
+  `).run();
+  db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('assignee_history_backfilled', '1')").run();
+}
+
 // 어드민 통계용 사용자 활동 로그 (접속 하트비트 / API 쓰기 요청 데이터량)
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_activity_log (
@@ -595,7 +616,13 @@ app.get("/api/payments", (req, res) => {
   if (to) { where.push("p.payment_date <= @to"); params.to = to; }
   const sql = `
     SELECT p.id, p.debtor_id AS debtorId, d.name AS debtorName, d.brand_code AS brand,
-           d.assignee, d.hub_name AS hubName, d.hub_code AS hubCode,
+           COALESCE(
+             (SELECT ah.assignee FROM assignee_history ah
+               WHERE ah.debtor_id = d.id AND ah.effective_date <= p.payment_date
+               ORDER BY ah.effective_date DESC, ah.id DESC LIMIT 1),
+             d.assignee
+           ) AS assignee,
+           d.hub_name AS hubName, d.hub_code AS hubCode,
            p.payment_date AS paymentDate, p.payer_name AS payerName,
            p.total_amount AS totalAmount, p.company_account AS companyAccount,
            p.cash_charge AS cashCharge, p.welcome_direct AS welcomeDirect, p.note
@@ -1813,6 +1840,10 @@ app.post("/api/debtors", (req, res) => {
       const insG = db.prepare("INSERT INTO debtor_guarantors (debtor_id, name) VALUES (?, ?)");
       for (const g of b.guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
+    if (b.assignee) {
+      db.prepare("INSERT OR IGNORE INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, date('now','localtime'))")
+        .run(id, b.assignee);
+    }
     fireEventAlert("new_debtor", { debtorName: b.name || "", brand: b.brand || "" }).catch(() => {});
     res.json({ ok: true, id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -1828,6 +1859,7 @@ app.delete("/api/debtors/:id", (req, res) => {
     db.prepare("DELETE FROM installment_plans WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM complaint_history WHERE complaint_id IN (SELECT id FROM complaints WHERE debtor_id = ?)").run(id);
     db.prepare("DELETE FROM complaints WHERE debtor_id = ?").run(id);
+    db.prepare("DELETE FROM assignee_history WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM debtors WHERE id = ?").run(id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -1912,6 +1944,19 @@ app.patch("/api/debtors/:id", (req, res) => {
       fields.push("updated_at = datetime('now','localtime')");
       vals.push(id);
       db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+    }
+
+    // 담당자가 바뀌면 변경일(effective date) 기준 이력을 남긴다 — 담당자별 실적은
+    // 이 이력을 기준으로 결제일 시점 담당자에게 귀속되므로, 오늘이 아니라 과거/미래
+    // 특정일부터 적용하고 싶을 때 프론트에서 assigneeEffectiveDate로 지정할 수 있다.
+    if (changedJsKeys.includes('assignee') && oldRow && String(oldRow.assignee ?? '') !== String(coercedVals.assignee ?? '')) {
+      const effDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body.assigneeEffectiveDate || '')
+        ? req.body.assigneeEffectiveDate
+        : new Date().toISOString().slice(0, 10);
+      db.prepare(`
+        INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
+        ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
+      `).run(id, coercedVals.assignee, effDate);
     }
 
     // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)

@@ -2902,19 +2902,20 @@ export default function App() {
 
   // ─── 담당자별 성과 리더보드 (이번달 vs 지난달, 목표 대비 달성률) ─
   const assigneeStats = useMemo(() => {
-    const debtorAssignee = {};
-    data.debtors.forEach(d => { debtorAssignee[d.id] = d.assignee; });
+    // p.assignee는 백엔드에서 결제일(payment_date) 시점에 유효했던 담당자로 이미
+    // 귀속돼서 내려온다(assignee_history 기준) — 채무자의 "현재" 담당자가 아니라
+    // 담당자가 바뀌기 전에 발생한 입금은 바뀌기 전 담당자 실적으로 그대로 남는다.
     const targetMap = {};
     (data.assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t; });
     const now = new Date();
     const y = now.getFullYear(), m = now.getMonth() + 1;
     const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
     const sumFor = (a, year, month) => data.payments
-      .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+      .filter(p => p.assignee === a && p.paymentDate)
       .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
       .reduce((s, p) => s + (p.totalAmount || 0), 0);
     const sumForYear = (a, year) => data.payments
-      .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+      .filter(p => p.assignee === a && p.paymentDate)
       .filter(p => new Date(p.paymentDate).getFullYear() === year)
       .reduce((s, p) => s + (p.totalAmount || 0), 0);
     const rows = config.assignees.map(a => {
@@ -3100,6 +3101,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       salesRep: "", residentNumber: "",
       keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
       ...modal.data, // "+항목"으로 넘어온 brand/name/category/assignee/hubName 기본값 적용
+      assigneeEffectiveDate: today(),
     });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const [phoneItems, setPhoneItems] = useState(() => {
@@ -3138,7 +3140,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
           <Field label="브랜드"><select value={f.brand} onChange={e => set("brand", e.target.value)} style={inp}>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select></Field>
           <Field label="분류"><select value={f.category} onChange={e => set("category", e.target.value)} style={inp}>{config.categories.map(c => <option key={c}>{c}</option>)}</select></Field>
-          <Field label="담당"><select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{!config.assignees.includes(f.assignee) && <option value={f.assignee || ""}>{f.assignee || "(미지정)"}</option>}{config.assignees.map(a => <option key={a}>{a}</option>)}</select></Field>
+          <Field label="담당">
+            <select value={f.assignee} onChange={e => set("assignee", e.target.value)} style={inp}>{!config.assignees.includes(f.assignee) && <option value={f.assignee || ""}>{f.assignee || "(미지정)"}</option>}{config.assignees.map(a => <option key={a}>{a}</option>)}</select>
+            {isEdit && f.assignee !== modal.data.assignee && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--tm)", whiteSpace: "nowrap" }}>변경일:</span>
+                <input type="date" value={f.assigneeEffectiveDate} onChange={e => set("assigneeEffectiveDate", e.target.value)} style={{ ...inp, fontSize: 12, padding: "5px 8px" }} />
+              </div>
+            )}
+          </Field>
           <Field label="채무자명"><KoreanInput value={f.name} onChange={e => set("name", e.target.value)} style={inp} placeholder="채무자명 입력" /></Field>
           <Field label="연대보증인" span={2}><KoreanInput value={(f.guarantors || []).join(", ")} onChange={e => set("guarantors", e.target.value.split(/\s*,\s*/).map(s => s.trim()).filter(Boolean))} style={inp} placeholder="예: 홍길동, 김철수" /></Field>
           <Field label="연락처" span={3}>
