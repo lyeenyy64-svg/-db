@@ -2145,6 +2145,59 @@ app.delete("/api/complaint-history/:id", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ─── 재무실 대여금 회수 스케쥴 엑셀 대사 ────────────────
+// 프론트에서 xlsx 파일을 직접 파싱해 해당 월에 회수 표시된 채무자 목록을 보내오면,
+// CMS 입금 기록에 이미 반영돼 있는지 확인하고 없으면 미매칭 관리(pending_payments)에 등록한다.
+// body: { year, month, items: [{ debtorName, hubName, hubCode, companyName, amount }] }
+app.post("/api/payments/verify-excel", (req, res) => {
+  const { year, month, items } = req.body || {};
+  if (!year || !month || !Array.isArray(items)) {
+    return res.status(400).json({ ok: false, error: "year, month, items가 필요합니다" });
+  }
+  const from = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  const all = db.prepare("SELECT id, brand_code, name, hub_code FROM debtors").all();
+  const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
+  const idx = matcher.buildIndex(all, guarantors);
+
+  let checked = 0, alreadyRecorded = 0, newlyFlagged = 0, duplicateSkipped = 0;
+  for (const item of items) {
+    const name = (item.debtorName || "").toString().trim();
+    const amount = parseInt(item.amount, 10) || 0;
+    if (!name || amount <= 0) continue;
+    checked++;
+
+    const m = matcher.matchDebtor(idx, { hubCode: item.hubCode, debtorName: name });
+    if (m) {
+      const existing = db.prepare(
+        "SELECT id FROM payments WHERE debtor_id = ? AND payment_date BETWEEN ? AND ?"
+      ).get(m.debtorId, from, to);
+      if (existing) { alreadyRecorded++; continue; }
+    }
+
+    const sourceRef = `verify:${year}-${String(month).padStart(2, "0")}:${item.hubCode || ""}:${name}`;
+    const dup = db.prepare("SELECT id FROM pending_payments WHERE source_ref = ?").get(sourceRef);
+    if (dup) { duplicateSkipped++; continue; }
+
+    db.prepare(`
+      INSERT INTO pending_payments (payment_date, excel_hub_name, excel_hub_code, excel_debtor_name,
+                                    payer_name, total_amount, company_account, cash_charge,
+                                    welcome_direct, note, source, source_ref, reason)
+      VALUES (@payment_date, @hub_name, @hub_code, @debtor_name, @payer_name, @total, 0, @total, 0,
+              @note, 'excel', @source_ref, '대여금 회수 스케쥴 대사 — CMS 입금 미확인')
+    `).run({
+      payment_date: to, hub_name: item.hubName || null, hub_code: item.hubCode || null,
+      debtor_name: name, payer_name: name, total: amount,
+      note: item.companyName ? `거래처: ${item.companyName}` : null, source_ref: sourceRef,
+    });
+    newlyFlagged++;
+  }
+
+  res.json({ ok: true, checked, alreadyRecorded, newlyFlagged, duplicateSkipped });
+});
+
 // ─── 매칭 실패 대기열 조회 ──────────────────────
 app.get("/api/pending-payments", (req, res) => {
   const rows = db.prepare(`

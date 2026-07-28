@@ -1093,6 +1093,139 @@ const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showT
   );
 };
 
+// ─── VerifyExcelModal (재무실 대여금 회수 스케쥴 대사) ──────
+const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const fileRef = useRef(null);
+  const YEARS = Array.from({ length: 8 }, (_, i) => now.getFullYear() - 6 + i);
+
+  const parseFile = async () => {
+    const buf = await file.arrayBuffer();
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheetName = `대여금 회수 실적_${year}년`;
+    const ws = wb.Sheets[sheetName];
+    if (!ws) throw new Error(`시트를 찾을 수 없습니다: "${sheetName}"`);
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+
+    // 연도 블록의 시작 컬럼을 헤더에서 찾는다 ("2026년" 같은 라벨 셀 위치) — 해가 바뀌어 새 블록이
+    // 추가돼도 하드코딩 없이 항상 정확한 위치를 찾도록 한다.
+    let yearCol = null;
+    for (let r = 0; r < Math.min(8, rows.length) && yearCol === null; r++) {
+      const cols = {};
+      let matches = 0;
+      (rows[r] || []).forEach((cell, c) => {
+        const m = (cell ?? "").toString().trim().match(/^(\d{4})년$/);
+        if (m) { cols[m[1]] = c; matches++; }
+      });
+      if (matches >= 2 && cols[String(year)] != null) yearCol = cols[String(year)];
+    }
+    if (yearCol === null) throw new Error(`"${year}년" 블록을 찾지 못했습니다`);
+    const monthCol = yearCol + (month - 1);
+
+    let headerRow = -1, colDebtor = -1, colHub = -1, colHubCode = -1, colCompany = -1;
+    for (let r = 0; r < Math.min(8, rows.length); r++) {
+      const row = rows[r] || [];
+      const idx = row.findIndex(c => (c ?? "").toString().trim() === "채무자");
+      if (idx >= 0) {
+        headerRow = r; colDebtor = idx;
+        colHub = row.findIndex(c => (c ?? "").toString().trim() === "허브명");
+        colHubCode = row.findIndex(c => (c ?? "").toString().trim() === "허브코드");
+        colCompany = row.findIndex(c => (c ?? "").toString().trim() === "거래처");
+        break;
+      }
+    }
+    if (headerRow < 0) throw new Error('"채무자" 컬럼을 찾지 못했습니다 — 파일 형식을 확인해주세요');
+
+    const items = [];
+    for (let r = headerRow + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const name = (row[colDebtor] ?? "").toString().trim();
+      if (!name) continue;
+      const amount = typeof row[monthCol] === "number" ? row[monthCol] : 0;
+      if (amount > 0) {
+        items.push({
+          debtorName: name,
+          hubName: colHub >= 0 ? (row[colHub] ?? "").toString().trim() : "",
+          hubCode: colHubCode >= 0 ? (row[colHubCode] ?? "").toString().trim() : "",
+          companyName: colCompany >= 0 ? (row[colCompany] ?? "").toString().trim() : "",
+          amount,
+        });
+      }
+    }
+    return items;
+  };
+
+  const run = async () => {
+    if (!file) { showToast("엑셀 파일을 선택하세요"); return; }
+    setBusy(true); setResult(null);
+    try {
+      const items = await parseFile();
+      if (items.length === 0) { showToast(`"${year}년 ${month}월"에 회수 표시된 채무자가 없습니다`); setBusy(false); return; }
+      const r = await fetch("/api/payments/verify-excel", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ year, month, items }),
+      });
+      const resData = await r.json();
+      if (!resData.ok) throw new Error(resData.error || "검증 실패");
+      setResult(resData);
+      if (resData.newlyFlagged > 0) await onReload();
+    } catch (e) {
+      showToast(e.message || "검증 중 오류가 발생했습니다");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title="재무실 대여금 회수 스케쥴 대사" onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 12, color: "var(--tm)" }}>
+          재무실이 매월 보내주는 "대여금 회수 스케쥴" 엑셀에서 해당 월에 회수 표시된 채무자를 CMS 입금 기록과 비교합니다.
+          CMS에 없으면 미매칭 관리에 등록됩니다 (채널: 캐쉬충전).
+        </div>
+        <Field label="대상 월">
+          <div style={{ display: "flex", gap: 8 }}>
+            <select value={year} onChange={e => { setYear(Number(e.target.value)); setResult(null); }} style={inp}>
+              {YEARS.map(y => <option key={y} value={y}>{y}년</option>)}
+            </select>
+            <select value={month} onChange={e => { setMonth(Number(e.target.value)); setResult(null); }} style={inp}>
+              {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}월</option>)}
+            </select>
+          </div>
+        </Field>
+        <Field label="대여금 회수 스케쥴 엑셀 파일">
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+            onChange={e => { setFile(e.target.files?.[0] || null); setResult(null); }} />
+          <button onClick={() => fileRef.current?.click()} style={{ padding: "8px 12px", borderRadius: 8, background: "var(--bg2)", border: "1px solid var(--brd)", fontSize: 13, width: "100%", textAlign: "left", color: file ? "var(--tp)" : "var(--tm)" }}>
+            {file ? file.name : "파일 선택..."}
+          </button>
+        </Field>
+        {result && (
+          <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+            <div>확인 <b>{result.checked}</b>건 · 이미 반영됨 <b>{result.alreadyRecorded}</b>건 · 이전 검증과 중복 <b>{result.duplicateSkipped}</b>건</div>
+            <div style={{ marginTop: 4, color: result.newlyFlagged > 0 ? "#f59e0b" : "var(--tm)", fontWeight: 700 }}>
+              미매칭 관리에 신규 등록 {result.newlyFlagged}건
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+        <button onClick={onClose} style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "var(--bg2)", color: "var(--ts)" }}>닫기</button>
+        {result && result.newlyFlagged > 0
+          ? <button onClick={onGoToPending} style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "var(--acc)", color: "#fff", fontWeight: 600 }}>미매칭 관리로 이동</button>
+          : <button onClick={run} disabled={busy || !file} style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "var(--acc)", color: "#fff", fontWeight: 600, opacity: (busy || !file) ? .6 : 1 }}>{busy ? "검증 중…" : "검증 시작"}</button>}
+      </div>
+    </Overlay>
+  );
+};
+
 // ─── RolloverModal ────────────────────────────────────────
 const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
   const [newDate, setNewDate] = useState("");
@@ -5165,6 +5298,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <select value={pBrand} onChange={e => { setPBrand(e.target.value); setPPage(1); }} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
             <button onClick={() => setModal({ type: "payment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />입금 등록</button>
             <button onClick={() => exportPayments(pFiltered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
+            {canEdit && <button onClick={() => setModal({ type: "verifyExcel" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#8b5cf618", color: "#8b5cf6", fontSize: 12, fontWeight: 600, border: "1px solid #8b5cf640" }}><I name="shield" size={14} />검증</button>}
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: "1px dashed var(--brd)", paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 600, marginRight: 4 }}>입금일 :</span>
@@ -10462,6 +10596,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {modal?.type === "debtor"          && <DebtorFormModal />}
       {modal?.type === "payment"         && <PaymentFormModal />}
       {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
+      {modal?.type === "verifyExcel"     && <VerifyExcelModal onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} onGoToPending={() => { setModal(null); setPaymentsSubTab("미매칭"); setPendingRefreshKey(k => k + 1); }} />}
       {modal?.type === "activity"        && <ActivityFormModal />}
       {modal?.type === "addInstallment"  && <InstallmentAddModal />}
       {modal?.type === "rollover"        && <RolloverModal sched={modal.sched} onClose={() => setModal(null)} onReload={reloadInstallments} showToast={showToast} />}
