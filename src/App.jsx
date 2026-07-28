@@ -10835,6 +10835,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             docFileName={docFileName} setDocFileName={setDocFileName}
             docPages={docPages} setDocPages={setDocPages}
             showToast={showToast}
+            reloadFromBackend={loadData}
           />}
           {tab === "admin" && adminView}
         </div>
@@ -10902,6 +10903,7 @@ function AiAnalysisView({
   aiSubTab, setAiSubTab,
   docMessages, setDocMessages, docInput, setDocInput, docLoading, setDocLoading, docExtracting, setDocExtracting,
   docText, setDocText, docFileName, setDocFileName, docPages, setDocPages, showToast,
+  reloadFromBackend,
 }) {
   // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
   const bottomRef = useRef(null);
@@ -10934,6 +10936,10 @@ function AiAnalysisView({
       });
       const d2 = await res.json();
       setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
+      if (d2.activityLogged) {
+        showToast?.("히스토리에 활동이 기록되었습니다");
+        reloadFromBackend?.();
+      }
     } catch {
       setAiMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
     }

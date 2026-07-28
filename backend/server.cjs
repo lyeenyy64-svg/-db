@@ -3545,6 +3545,38 @@ function getOpenAIClient() {
   return openaiClient;
 }
 
+// AI 챗봇이 "활동 로그에 남겨줘" 요청을 실제로 처리할 수 있도록 하는 function-calling 도구.
+// 히스토리 탭이 실제로 읽는 저장소는 activities 테이블이 아니라 kv_store의 hist_m_{debtorId}
+// 배열이므로(위 주석 참고), 여기서도 반드시 같은 키/형태로 써야 화면에 보인다.
+const AI_ACTIVITY_TYPES = ["전화", "문자", "입금확인", "법적조치", "방문", "카카오톡", "내용증명", "기타"];
+const AI_ACTIVITY_LOG_TOOLS = [{
+  type: "function",
+  function: {
+    name: "log_activity",
+    description: "이 채무자의 히스토리(활동 로그)에 새 활동 기록을 실제로 추가한다. 사용자가 방금 한 통화/문자/방문 등의 내용을 \"기록해줘\", \"남겨줘\", \"적어줘\" 라고 명시적으로 요청할 때만 호출한다. 단순 질문이나 분석 요청에는 호출하지 않는다.",
+    parameters: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "기록할 활동 내용 (구체적으로 요약)" },
+        type: { type: "string", enum: AI_ACTIVITY_TYPES, description: "활동 유형, 알 수 없으면 기타" },
+        date: { type: "string", description: "활동 날짜 YYYY.MM.DD 형식, 명시하지 않으면 오늘 날짜 사용" },
+      },
+      required: ["content"],
+    },
+  },
+}];
+function appendDebtorHistory(debtorId, entry) {
+  const key = `hist_m_${debtorId}`;
+  const row = db.prepare("SELECT value FROM kv_store WHERE key=?").get(key);
+  let arr = [];
+  if (row) { try { const parsed = JSON.parse(row.value); if (Array.isArray(parsed)) arr = parsed; } catch {} }
+  arr = [entry, ...arr];
+  db.prepare(`
+    INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, JSON.stringify(arr));
+}
+
 app.post("/api/ai-chat", async (req, res) => {
   const openaiClient = getOpenAIClient();
   if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
@@ -3702,17 +3734,62 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
       ? `[채무자 데이터]\n${contextText}\n\n[질문]\n${query}`
       : query;
 
+    const fullSystemPrompt = debtorId
+      ? `${systemPrompt}\n\n- 사용자가 방금 한 통화·문자·방문 등의 활동 내용을 히스토리에 기록해달라고 요청하면 log_activity 기능을 호출해 실제로 기록하고, 기록 완료 여부를 답변에 알려주세요.`
+      : systemPrompt;
+
+    const baseMessages = [
+      { role: "system", content: fullSystemPrompt },
+      { role: "user", content: userMessage },
+    ];
+
     const completion = await openaiClient.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
+      messages: baseMessages,
       max_tokens: 1500,
       temperature: 0.3,
+      ...(debtorId ? { tools: AI_ACTIVITY_LOG_TOOLS, tool_choice: "auto" } : {}),
     });
 
-    res.json({ answer: completion.choices[0].message.content });
+    const assistantMsg = completion.choices[0].message;
+    const toolCalls = assistantMsg.tool_calls || [];
+
+    if (debtorId && toolCalls.length > 0) {
+      const userName = extractUserName(req);
+      const todayDot = db.prepare("SELECT date('now','localtime') AS d").get().d.replace(/-/g, ".");
+      let loggedAny = false;
+      const toolResultMessages = toolCalls.map(tc => {
+        if (tc.function?.name !== "log_activity") {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "알 수 없는 기능" }) };
+        }
+        let args = {};
+        try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+        const content = typeof args.content === "string" ? args.content.trim() : "";
+        if (!content) {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "기록할 내용이 없습니다" }) };
+        }
+        const type = AI_ACTIVITY_TYPES.includes(args.type) ? args.type : "기타";
+        const date = typeof args.date === "string" && /^\d{4}\.\d{2}\.\d{2}$/.test(args.date) ? args.date : todayDot;
+        const entry = {
+          id: `HIST${Date.now()}${Math.floor(100 + Math.random() * 900)}`,
+          date, content, type,
+          createdBy: userName && userName !== "알수없음" ? `${userName} (AI)` : "AI 챗봇",
+        };
+        appendDebtorHistory(debtorId, entry);
+        loggedAny = true;
+        return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: true, ...entry }) };
+      });
+
+      const follow = await openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [...baseMessages, assistantMsg, ...toolResultMessages],
+        max_tokens: 500,
+        temperature: 0.3,
+      });
+      return res.json({ answer: follow.choices[0].message.content, activityLogged: loggedAny });
+    }
+
+    res.json({ answer: assistantMsg.content });
   } catch (err) {
     console.error("AI chat error:", err.message);
     res.status(500).json({ error: err.message });
