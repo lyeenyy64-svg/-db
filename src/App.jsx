@@ -6322,21 +6322,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             </div>
 
-            {/* KPI 요약 — 숫자를 누르면 아래 목록이 해당 상태로 필터링됨 */}
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
-                  <button key={x.l} onClick={() => setStFilter(x.l)}
-                    style={{ padding: "6px 14px", background: stFilter === x.l ? x.c + "18" : "var(--card)", borderRadius: 8, border: stFilter === x.l ? `1px solid ${x.c}60` : "1px solid var(--brd)", textAlign: "center", cursor: "pointer" }}>
-                    <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
-                    <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
-                  </button>
-                ))}
-              </div>
-              <div style={{ marginLeft: "auto", flexShrink: 0, padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
-                <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
-                <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
-              </div>
+            {/* 예정/완납 합계 */}
+            <div style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "inline-flex", flexDirection: "column", justifyContent: "center", gap: 2, alignSelf: "flex-start" }}>
+              <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
+              <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
             </div>
 
             {/* 달력 + 카드 분할 */}
@@ -6429,8 +6418,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 )}
               </div>
 
-              {/* 오른쪽: 카드 목록 (위 KPI 숫자로 필터링, 스크롤 없이 전체 표시) */}
+              {/* 오른쪽: 카드 목록 — 숫자를 누르면 아래 목록이 해당 상태로 필터링됨, 스크롤 없이 전체 표시 */}
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
+                    <button key={x.l} onClick={() => setStFilter(x.l)}
+                      style={{ padding: "6px 14px", background: stFilter === x.l ? x.c + "18" : "var(--card)", borderRadius: 8, border: stFilter === x.l ? `1px solid ${x.c}60` : "1px solid var(--brd)", textAlign: "center", cursor: "pointer" }}>
+                      <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
+                      <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
+                    </button>
+                  ))}
+                </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
                   {datedScheds.length === 0 && undatedScheds.length === 0 && (
                     <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>{stFilter !== "전체" ? "해당 상태의 일정 없음" : "이번달 예정 없음"}</div>
