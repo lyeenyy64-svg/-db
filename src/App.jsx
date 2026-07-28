@@ -6470,18 +6470,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           draggable={canEdit}
                           onDragStart={e => { setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
                           onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
-                          style={{ background: "var(--card)", borderRadius: 10, border: "1px dashed #f59e0b60", padding: "10px 12px", marginBottom: 6, cursor: canEdit ? "grab" : "default", opacity: dragSchedId === s.id ? 0.4 : 1 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <BrandBadge code={s.brand} brands={config.brands} />
-                              <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)" }}>{s.debtorName}</span>
-                              {canEdit && <span style={{ fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>⠿ 달력에 드래그</span>}
-                            </div>
-                            <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--ts)", marginBottom: 7 }}>
-                            <span className="mono" style={{ color: "#f59e0b" }}>{s.dueMonth} (미정)</span>
-                            <span className="mono" style={{ fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</span>
+                          style={{ background: "var(--card)", borderRadius: 10, border: "1px dashed #f59e0b60", padding: "8px 12px", marginBottom: 6, cursor: canEdit ? "grab" : "default", opacity: dragSchedId === s.id ? 0.4 : 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: canEdit ? 6 : 0 }}>
+                            <BrandBadge code={s.brand} brands={config.brands} />
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)", flexShrink: 0 }}>{s.debtorName}</span>
+                            <span className="mono" style={{ fontSize: 11, color: "#f59e0b", flexShrink: 0 }}>{s.dueMonth} (미정)</span>
+                            <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", flexShrink: 0 }}>{fmt(s.scheduledAmount)}</span>
+                            <span style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}`, flexShrink: 0 }}>{s.status}</span>
+                            {canEdit && <span style={{ fontSize: 10, color: "var(--tm)", opacity: 0.6, flexShrink: 0 }}>⠿</span>}
                           </div>
                           {canEdit && (
                             <div style={{ display: "flex", gap: 4 }}>
