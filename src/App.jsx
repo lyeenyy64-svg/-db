@@ -6202,7 +6202,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           ✏ 날짜/금액 수정
                         </button>
                       )}
-                      <span style={{ padding: "2px 10px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status || "예정"}</span>
                     </div>
                   </div>
                   {/* 금액 */}
@@ -6267,7 +6266,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         placeholder="특이사항 메모 (Enter로 저장)…"
                         style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)", fontSize: 12, padding: "5px 8px" }} />
                       <button onClick={() => saveMemo(s.id)} disabled={savingMemoId === s.id}
-                        style={{ padding: "5px 12px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, opacity: savingMemoId === s.id ? 0.6 : 1 }}>
+                        style={{ padding: "5px 12px", borderRadius: 6, background: "#000", color: "#fff", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, opacity: savingMemoId === s.id ? 0.6 : 1 }}>
                         {savingMemoId === s.id ? "…" : "저장"}
                       </button>
                     </div>
@@ -6278,19 +6277,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       {!isRolledOver && (
                         <>
                           <button onClick={() => patchStatus(s.id, "완납")} disabled={patchingId === s.id}
-                            style={{ padding: "5px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #10b98140", background: s.status === "완납" ? "#10b981" : "#10b98118", color: s.status === "완납" ? "#fff" : "#047857" }}>
+                            style={{ padding: "5px 14px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "완납" ? "1px solid #10b98140" : "1px solid #e5e7eb", background: s.status === "완납" ? "#10b981" : "#e5e7eb", color: s.status === "완납" ? "#fff" : "#111827" }}>
                             완납
                           </button>
                           <button onClick={() => patchStatus(s.id, "일부납")} disabled={patchingId === s.id}
-                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #fb923c40", background: s.status === "일부납" ? "#fb923c" : "#fb923c18", color: s.status === "일부납" ? "#fff" : "#c2410c" }}>
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "일부납" ? "1px solid #fb923c40" : "1px solid #e5e7eb", background: s.status === "일부납" ? "#fb923c" : "#e5e7eb", color: s.status === "일부납" ? "#fff" : "#111827" }}>
                             일부납
                           </button>
                           <button onClick={() => patchStatus(s.id, "미납")} disabled={patchingId === s.id}
-                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #ef444440", background: s.status === "미납" ? "#ef4444" : "#ef444418", color: s.status === "미납" ? "#fff" : "#b91c1c" }}>
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "미납" ? "1px solid #ef444440" : "1px solid #e5e7eb", background: s.status === "미납" ? "#ef4444" : "#e5e7eb", color: s.status === "미납" ? "#fff" : "#111827" }}>
                             미납
                           </button>
                           <button onClick={() => { onClose(); setModal({ type: "rollover", sched: { ...s } }); }}
-                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: "1px solid #8b5cf640", background: "#8b5cf618", color: "#6d28d9" }}>
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "이월" ? "1px solid #8b5cf640" : "1px solid #e5e7eb", background: s.status === "이월" ? "#8b5cf6" : "#e5e7eb", color: s.status === "이월" ? "#fff" : "#111827" }}>
                             이월
                           </button>
                         </>
