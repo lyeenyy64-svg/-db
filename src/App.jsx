@@ -6470,33 +6470,27 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           draggable={canEdit}
                           onDragStart={e => { setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
                           onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
-                          style={{ background: "var(--card)", borderRadius: 10, border: "1px dashed #f59e0b60", padding: "8px 12px", marginBottom: 6, cursor: canEdit ? "grab" : "default", opacity: dragSchedId === s.id ? 0.4 : 1 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: canEdit ? 6 : 0 }}>
-                            <BrandBadge code={s.brand} brands={config.brands} />
-                            <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)", flexShrink: 0 }}>{s.debtorName}</span>
-                            <span className="mono" style={{ fontSize: 11, color: "#f59e0b", flexShrink: 0 }}>{s.dueMonth} (미정)</span>
-                            <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", flexShrink: 0 }}>{fmt(s.scheduledAmount)}</span>
-                            <span style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}`, flexShrink: 0 }}>{s.status}</span>
-                            {canEdit && <span style={{ fontSize: 10, color: "var(--tm)", opacity: 0.6, flexShrink: 0 }}>⠿</span>}
-                          </div>
+                          style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: "var(--card)", borderRadius: 10, border: "1px dashed #f59e0b60", padding: "8px 12px", marginBottom: 6, cursor: canEdit ? "grab" : "default", opacity: dragSchedId === s.id ? 0.4 : 1 }}>
+                          <BrandBadge code={s.brand} brands={config.brands} />
+                          <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)", flexShrink: 0 }}>{s.debtorName}</span>
+                          <span className="mono" style={{ fontSize: 11, color: "#f59e0b", flexShrink: 0 }}>{s.dueMonth} (미정)</span>
+                          <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", flexShrink: 0 }}>{fmt(s.scheduledAmount)}</span>
                           {canEdit && (
-                            <div style={{ display: "flex", gap: 4 }}>
-                              {isEditingDate ? (
-                                <>
-                                  <input type="date" value={editDateVal} onChange={e => setEditDateVal(e.target.value)} style={{ ...inp, padding: "3px 6px", fontSize: 11, width: 120 }} />
-                                  <button onClick={() => saveDate(s.id)} style={{ padding: "2px 8px", background: "var(--acc)", color: "#fff", borderRadius: 5, fontSize: 11, border: "none", cursor: "pointer" }}>확인</button>
-                                  <button onClick={() => setEditDateId(null)} style={{ padding: "2px 6px", background: "var(--bg2)", color: "var(--tm)", borderRadius: 5, fontSize: 11, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
-                                </>
-                              ) : (
-                                <>
-                                  {s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ padding: "3px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>날짜지정</button>}
-                                  {s.status !== "완납" && <button onClick={() => markComplete(s.id)} style={{ padding: "3px 10px", borderRadius: 6, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>}
-                                  {s.status === "완납" && <button onClick={() => markUnpaid(s.id)} style={{ padding: "3px 10px", borderRadius: 6, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444430", fontSize: 11, cursor: "pointer" }}>완납취소</button>}
-                                  <button onClick={() => deleteSchedule(s.id)} style={{ padding: "3px 7px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 11, cursor: "pointer" }}><I name="trash" size={11} /></button>
-                                </>
-                              )}
-                            </div>
+                            isEditingDate ? (
+                              <>
+                                <input type="date" value={editDateVal} onChange={e => setEditDateVal(e.target.value)} style={{ ...inp, padding: "3px 6px", fontSize: 11, width: 120 }} />
+                                <button onClick={() => saveDate(s.id)} style={{ padding: "2px 8px", background: "var(--acc)", color: "#fff", borderRadius: 5, fontSize: 11, border: "none", cursor: "pointer" }}>확인</button>
+                                <button onClick={() => setEditDateId(null)} style={{ padding: "2px 6px", background: "var(--bg2)", color: "var(--tm)", borderRadius: 5, fontSize: 11, border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                              </>
+                            ) : (
+                              <>
+                                {s.status !== "완납" && <button onClick={() => { setEditDateId(s.id); setEditDateVal(""); }} style={{ padding: "3px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>날짜지정</button>}
+                                <button onClick={() => markComplete(s.id)} style={{ padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11, cursor: "pointer", flexShrink: 0, border: s.status === "완납" ? "1px solid #10b98140" : "1px solid #e5e7eb", background: s.status === "완납" ? "#10b981" : "#e5e7eb", color: s.status === "완납" ? "#fff" : "#111827" }}>완납</button>
+                                <button onClick={() => markUnpaid(s.id)} style={{ padding: "3px 10px", borderRadius: 6, fontWeight: 600, fontSize: 11, cursor: "pointer", flexShrink: 0, border: s.status === "미납" ? "1px solid #ef444440" : "1px solid #e5e7eb", background: s.status === "미납" ? "#ef4444" : "#e5e7eb", color: s.status === "미납" ? "#fff" : "#111827" }}>미납</button>
+                              </>
+                            )
                           )}
+                          {canEdit && <button onClick={() => deleteSchedule(s.id)} style={{ marginLeft: "auto", padding: "3px 7px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 11, cursor: "pointer", flexShrink: 0 }}><I name="trash" size={11} /></button>}
                         </div>
                       );
                     })}
