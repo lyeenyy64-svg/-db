@@ -6441,27 +6441,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         onClick={() => s.dueDate && setDayPopup(s.dueDate)}
                         style={{
                           background: s.status === "완납" ? "#10b98108" : s.status === "지연" ? "#f59e0b08" : "var(--card)",
-                          borderRadius: 10, border: `1px solid ${c.b}`, padding: "10px 12px", flexShrink: 0,
+                          borderRadius: 10, border: `1px solid ${c.b}`, padding: "8px 12px", flexShrink: 0,
                           cursor: canEdit ? "grab" : "pointer",
                           opacity: dragSchedId === s.id ? 0.4 : 1,
+                          display: "flex", alignItems: "center", gap: 8,
                         }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 5 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <BrandBadge code={s.brand} brands={config.brands} />
-                            <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)" }}>{s.debtorName}</span>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                            <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--ts)", flexWrap: "wrap" }}>
-                          <span className="mono">{fmtDate(s.dueDate)}</span>
-                          <span className="mono" style={{ fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</span>
-                          {s.debtSource && <span>{s.debtSource}</span>}
-                          {s.institution && <span style={{ color: "var(--tm)" }}>{s.institution}</span>}
-                          {s.assignee && <span style={{ marginLeft: "auto", color: "var(--tm)" }}>{s.assignee}</span>}
-                          {canEdit && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>⠿ 드래그</span>}
-                        </div>
+                        <BrandBadge code={s.brand} brands={config.brands} />
+                        <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)", flexShrink: 0 }}>{s.debtorName}</span>
+                        {s.assignee && <span style={{ fontSize: 11, color: "var(--tm)", flexShrink: 0 }}>{s.assignee}</span>}
+                        <span className="mono" style={{ fontSize: 11, color: "var(--ts)", flexShrink: 0 }}>{fmtDate(s.dueDate)}</span>
+                        <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", flexShrink: 0 }}>{fmt(s.scheduledAmount)}</span>
+                        {s.debtSource && <span style={{ fontSize: 11, flexShrink: 0 }}>{s.debtSource}</span>}
+                        {s.institution && <span style={{ fontSize: 11, color: "var(--tm)", flexShrink: 0 }}>{s.institution}</span>}
+                        <span style={{ marginLeft: "auto", padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}`, flexShrink: 0 }}>{s.status}</span>
+                        {canEdit && <span style={{ fontSize: 10, color: "var(--tm)", opacity: 0.6, flexShrink: 0 }}>⠿</span>}
                       </div>
                     );
                   })}
