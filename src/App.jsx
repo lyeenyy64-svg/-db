@@ -5521,7 +5521,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [editDateVal, setEditDateVal] = useState("");
     const [dragSchedId, setDragSchedId] = useState(null);
     const [dragOverDate, setDragOverDate] = useState(null);
-    const [cardSearch, setCardSearch] = useState("");
     const [planSearch, setPlanSearch] = useState("");
     const [addSchedModal, setAddSchedModal] = useState(null); // null | { date: "YYYY-MM-DD", planId?: string }
     const [planPopup, setPlanPopup] = useState(null); // null | plan object
@@ -5655,24 +5654,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, [thisMonthScheds]);
 
     const undatedScheds = useMemo(() => {
-      const cq = cardSearch.toLowerCase();
-      let list = thisMonthScheds.filter(s => !s.dueDate);
-      if (cardSearch) list = list.filter(s => (s.debtorName || "").toLowerCase().includes(cq));
-      return list;
-    }, [thisMonthScheds, cardSearch]);
+      return thisMonthScheds.filter(s => !s.dueDate);
+    }, [thisMonthScheds]);
     const datedScheds = useMemo(() => {
-      const cq = cardSearch.toLowerCase();
-      let list = thisMonthScheds.filter(s => s.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-      if (cardSearch) list = list.filter(s => (s.debtorName || "").toLowerCase().includes(cq));
-      return list;
-    }, [thisMonthScheds, cardSearch]);
+      return thisMonthScheds.filter(s => s.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+    }, [thisMonthScheds]);
 
     const todayStr = now.toISOString().slice(0, 10);
     const cellDate = (day) => `${viewMonth}-${String(day).padStart(2, "0")}`;
-    const calRows = calCells.length / 7;
-    const calBodyH = calRows * 82;
-    const undatedSectionH = undatedScheds.length > 0 ? 66 : 0;
-    const calPanelH = 37 + calBodyH + undatedSectionH;
 
     // ── 일정 추가 모달 (달력 + 버튼) ──────────────────────────
     const AddSchedModal = useStableComponent(() => {
@@ -6172,13 +6161,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {(() => {
               const unpaid = scheds.filter(s => s.status !== "완납");
               const paid   = scheds.filter(s => s.status === "완납");
-              const mkDivider = (label, color, bg, brd) => (
-                <div style={{ display:"flex", alignItems:"center", gap:8, margin:"4px 0 6px" }}>
-                  <div style={{ flex:1, height:1, background:"var(--brd)" }} />
-                  <span style={{ fontSize:11, fontWeight:700, color, whiteSpace:"nowrap", padding:"2px 10px", background:bg, borderRadius:10, border:"1px solid "+brd }}>{label}</span>
-                  <div style={{ flex:1, height:1, background:"var(--brd)" }} />
-                </div>
-              );
               const renderCard = (s) => {
               const c = scColor(s.status);
               const isRolledOver = s.status === "이월";
@@ -6305,9 +6287,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               );
               };
               return (<>
-                {unpaid.length > 0 && mkDivider("미납 · "+unpaid.length+"건", "#b91c1c", "#ef444414", "#ef444430")}
                 {unpaid.map(s => renderCard(s))}
-                {paid.length > 0 && mkDivider("완납 · "+paid.length+"건", "#047857", "#10b98114", "#10b98130")}
                 {paid.map(s => renderCard(s))}
               </>);
             })()}
@@ -6336,24 +6316,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="arrowDown" size={14} /></button>
                 {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
               </div>
-              <select value={stFilter} onChange={e => setStFilter(e.target.value)} style={{ ...inp, padding: "5px 8px", fontSize: 12 }}>
-                {["전체", "예정", "미납", "일부납", "완납", "지연", "이월"].map(s => <option key={s}>{s}</option>)}
-              </select>
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={13} />플랜 추가</button>}
                 {canEdit && <button onClick={async () => { const r = await (await fetch("/api/installments/auto-sync", { method: "POST" })).json(); showToast(`입금 동기화: ${r.updated}건 업데이트`); await reloadInstallments(); }} style={{ padding: "6px 10px", borderRadius: 8, background: "#10b98118", color: "#047857", border: "1px solid #10b98140", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>입금동기화</button>}
               </div>
             </div>
 
-            {/* KPI 요약 */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
-                <div key={x.l} style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", textAlign: "center" }}>
-                  <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
-                  <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
-                </div>
-              ))}
-              <div style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
+            {/* KPI 요약 — 숫자를 누르면 아래 목록이 해당 상태로 필터링됨 */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
+                  <button key={x.l} onClick={() => setStFilter(x.l)}
+                    style={{ padding: "6px 14px", background: stFilter === x.l ? x.c + "18" : "var(--card)", borderRadius: 8, border: stFilter === x.l ? `1px solid ${x.c}60` : "1px solid var(--brd)", textAlign: "center", cursor: "pointer" }}>
+                    <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
+                    <div style={{ fontSize: 10, color: "var(--tm)" }}>{x.l}</div>
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginLeft: "auto", flexShrink: 0, padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
                 <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
                 <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
               </div>
@@ -6449,12 +6429,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 )}
               </div>
 
-              {/* 오른쪽: 검색 + 스크롤 카드 */}
+              {/* 오른쪽: 카드 목록 (위 KPI 숫자로 필터링, 스크롤 없이 전체 표시) */}
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
-                <KoreanInput value={cardSearch} onChange={e => setCardSearch(e.target.value)} placeholder="이름 검색…" style={{ ...inp, padding: "5px 9px", fontSize: 12, border: "1px solid var(--brd)", borderRadius: 7, background: "var(--bg)", color: "var(--tp)", flexShrink: 0 }} />
-                <div style={{ overflowY: "auto", height: calPanelH - 38, display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingRight: 2 }}>
                   {datedScheds.length === 0 && undatedScheds.length === 0 && (
-                    <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>{cardSearch ? "검색 결과 없음" : "이번달 예정 없음"}</div>
+                    <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>{stFilter !== "전체" ? "해당 상태의 일정 없음" : "이번달 예정 없음"}</div>
                   )}
                   {datedScheds.map(s => {
                     const c = scColor(s.status);
