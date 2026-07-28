@@ -10,6 +10,7 @@ const cors = require("cors");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const path = require("path");
+const os = require("os");
 let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = null; }
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
@@ -2792,6 +2793,7 @@ const OCR_SCRIPT = path.join(__dirname, "ocr_resident.py");
 const OCR_CREDIT_SCRIPT = path.join(__dirname, "ocr_credit_score.py");
 const OCR_SUBROGATION_SCRIPT = path.join(__dirname, "ocr_subrogation_date.py");
 const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
+const OCR_DOCUMENT_SCRIPT = path.join(__dirname, "ocr_document_text.py");
 
 // pythonw.exe = GUI subsystem, never opens a console window.
 // 절대경로로 고정하지 않고 PATH에서 찾는다 — 서버 PC의 사용자 계정/파이썬 설치 위치가
@@ -2850,6 +2852,11 @@ function ocrPdfForCreditScore(pdfPath, priority) {
 function ocrPdfForCreditAddress(pdfPath, priority) {
   // 자택정보이력표(보통 3페이지)까지 스캔. Windows OCR(winrt) 기준이라 여유를 둔다.
   return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
+}
+
+function ocrPdfForDocument(pdfPath, priority) {
+  // 문건 분석: 스캔본(이미지) PDF의 전체 텍스트 추출. 최대 30페이지라 다른 OCR보다 오래 걸릴 수 있어 여유를 크게 둔다.
+  return withOcrSlot(() => spawnOcr(OCR_DOCUMENT_SCRIPT, pdfPath, 240000), priority);
 }
 
 function korName3(name) {
@@ -3721,10 +3728,31 @@ app.post("/api/ai/extract-pdf-text", express.raw({ type: "application/pdf", limi
     }
     const data = await pdfParse(req.body);
     const text = (data.text || "").trim();
-    if (!text) {
-      return res.json({ text: "", pages: data.numpages || 0, warning: "텍스트를 추출할 수 없습니다 — 스캔본(이미지) PDF는 이 기능으로 분석할 수 없습니다." });
+    if (text) {
+      return res.json({ text, pages: data.numpages || 0 });
     }
-    res.json({ text, pages: data.numpages || 0 });
+
+    // 텍스트가 없으면 스캔본(이미지) PDF일 가능성이 높다 — 기존 초본/CB 서류에 쓰던
+    // Windows OCR 파이프라인을 그대로 재사용해 이미지에서 전체 텍스트를 뽑아본다.
+    const tmpPath = path.join(os.tmpdir(), `docanalysis_${Date.now()}_${Math.round(Math.random() * 1e6)}.pdf`);
+    fs.writeFileSync(tmpPath, req.body);
+    try {
+      const ocrResult = await ocrPdfForDocument(tmpPath, "high");
+      if (ocrResult.ok && ocrResult.text && ocrResult.text.trim()) {
+        return res.json({
+          text: ocrResult.text,
+          pages: ocrResult.pages || data.numpages || 0,
+          ocr: true,
+          warning: ocrResult.truncated ? `문서가 길어 앞 ${ocrResult.pages}페이지만 OCR로 인식했습니다.` : undefined,
+        });
+      }
+      return res.json({
+        text: "", pages: data.numpages || 0,
+        warning: "텍스트를 추출할 수 없습니다 — OCR로도 인식하지 못했습니다" + (ocrResult.error ? ` (${ocrResult.error})` : ""),
+      });
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch (e) {}
+    }
   } catch (err) {
     res.status(500).json({ error: "PDF 처리 실패: " + err.message });
   }

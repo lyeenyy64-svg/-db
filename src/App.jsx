@@ -10897,6 +10897,7 @@ function AiAnalysisView({
       const d2 = await res.json();
       if (d2.error) { showToast(d2.error); setDocExtracting(false); return; }
       if (!d2.text) { showToast(d2.warning || "텍스트를 추출할 수 없습니다"); setDocExtracting(false); return; }
+      if (d2.warning) showToast(d2.warning);
       setDocText(d2.text);
       setDocFileName(file.name);
       setDocPages(d2.pages || 0);
@@ -11064,9 +11065,9 @@ function AiAnalysisView({
             onChange={e => handleDocFile(e.target.files?.[0] || null)} />
           <button onClick={() => docFileRef.current?.click()} disabled={docExtracting}
             style={{ padding: "10px 20px", borderRadius: 10, background: "var(--acc)", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: docExtracting ? "default" : "pointer", opacity: docExtracting ? 0.6 : 1 }}>
-            {docExtracting ? "문서 인식 중…" : "문서 선택 (PDF)"}
+            {docExtracting ? "문서 인식 중… (스캔본은 최대 2~3분 걸릴 수 있어요)" : "문서 선택 (PDF)"}
           </button>
-          <div style={{ fontSize: 11, color: "var(--tm)" }}>스캔본(이미지) PDF는 텍스트 추출이 안 돼 분석할 수 없습니다.</div>
+          <div style={{ fontSize: 11, color: "var(--tm)" }}>스캔본(이미지) PDF는 OCR로 자동 인식을 시도합니다 — 페이지가 많으면 시간이 걸릴 수 있어요.</div>
         </div>
       ) : <>
         <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
