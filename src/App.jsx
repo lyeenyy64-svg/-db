@@ -6314,18 +6314,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <button onClick={() => setViewMonth(prevMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="back" size={14} /></button>
                 <span style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{monthLabel(viewMonth)}</span>
                 <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 30, height: 30, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="arrowDown" size={14} /></button>
+                <div style={{ padding: "5px 12px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
+                  <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
+                  <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
+                </div>
                 {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
               </div>
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={13} />플랜 추가</button>}
                 {canEdit && <button onClick={async () => { const r = await (await fetch("/api/installments/auto-sync", { method: "POST" })).json(); showToast(`입금 동기화: ${r.updated}건 업데이트`); await reloadInstallments(); }} style={{ padding: "6px 10px", borderRadius: 8, background: "#10b98118", color: "#047857", border: "1px solid #10b98140", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>입금동기화</button>}
               </div>
-            </div>
-
-            {/* 예정/완납 합계 */}
-            <div style={{ padding: "6px 14px", background: "var(--card)", borderRadius: 8, border: "1px solid var(--brd)", display: "inline-flex", flexDirection: "column", justifyContent: "center", gap: 2, alignSelf: "flex-start" }}>
-              <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
-              <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
             </div>
 
             {/* 달력 + 카드 분할 */}
