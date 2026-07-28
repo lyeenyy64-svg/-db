@@ -3553,11 +3553,14 @@ const AI_ACTIVITY_LOG_TOOLS = [{
   type: "function",
   function: {
     name: "log_activity",
-    description: "이 채무자의 히스토리(활동 로그)에 새 활동 기록을 실제로 추가한다. 사용자가 방금 한 통화/문자/방문 등의 내용을 \"기록해줘\", \"남겨줘\", \"적어줘\" 라고 명시적으로 요청할 때만 호출한다. 단순 질문이나 분석 요청에는 호출하지 않는다.",
+    description: "이 채무자의 히스토리(활동 로그)에 새 활동 기록을 실제로 추가한다. 사용자가 방금 한 통화/문자/방문 등의 내용을 \"기록해줘\", \"남겨줘\", \"적어줘\" 라고 명시적으로 요청할 때만 호출한다. 단순 질문이나 분석 요청에는 호출하지 않는다. 이 함수는 대화당 한 번만 호출한다.",
     parameters: {
       type: "object",
       properties: {
-        content: { type: "string", description: "기록할 활동 내용 (구체적으로 요약)" },
+        content: {
+          type: "string",
+          description: "히스토리에 실제로 저장될 본문. \"분석 기록함\", \"조언 기록\" 같은 메타 설명이 아니라, 직전 assistant 답변에 담긴 실질적 내용(성향 판단, 회수율 평가, 강제집행 결과, 제시한 대안 등 핵심 근거와 결론)을 담당자가 나중에 읽어도 이해할 수 있도록 구체적으로 요약해서 담는다. 사용자가 통화/방문 내용을 직접 불러준 경우엔 그 내용을 그대로 요약한다.",
+        },
         type: { type: "string", enum: AI_ACTIVITY_TYPES, description: "활동 유형, 알 수 없으면 기타" },
         date: { type: "string", description: "활동 날짜 YYYY.MM.DD 형식, 명시하지 않으면 오늘 날짜 사용" },
       },
@@ -3580,7 +3583,7 @@ function appendDebtorHistory(debtorId, entry) {
 app.post("/api/ai-chat", async (req, res) => {
   const openaiClient = getOpenAIClient();
   if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
-  const { query, debtorId, history } = req.body;
+  const { query, debtorId, history, chatHistory } = req.body;
   if (!query) return res.status(400).json({ error: "query 필요" });
 
   try {
@@ -3702,6 +3705,10 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
   끊김)을 파악하고 "N월 N일 기록에 따르면"처럼 구체적인 날짜를 인용해 근거를 제시하세요.
   히스토리·데이터에 없는 내용은 추측해서 답하지 마세요.
 
+- 아래 성향 판단/강제집행 결과 반영/채무액·회수율 반영/현실적 대안 제시는 사용자가 분석이나
+  조언을 요청했을 때만 적용하세요. "히스토리에 남겨줘"처럼 기록만 요청하는 경우엔 이 형식을
+  반복하지 말고 무엇을 기록했는지만 간단히 답하세요.
+
 - **성향 판단(필수)**: 히스토리의 연락 반응 패턴, [분납약정 및 실제 이행 현황]의 완납/미납/지연
   비율, [입금 현황]의 입금 추세·경과일을 종합해 이 채무자를 다음과 같은 유형 중 가장 근접한 것으로
   명시적으로 분류하고 그 근거를 제시하세요: 협조적 상환형(약속을 대체로 지킴) / 상환 의지는 있으나
@@ -3738,8 +3745,15 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
       ? `${systemPrompt}\n\n- 사용자가 방금 한 통화·문자·방문 등의 활동 내용을 히스토리에 기록해달라고 요청하면 log_activity 기능을 호출해 실제로 기록하고, 기록 완료 여부를 답변에 알려주세요.`
       : systemPrompt;
 
+    // "히스토리에 남겨줘"는 보통 방금 나눈 대화(직전 분석 답변)를 가리키므로, 그 내용을 알아야
+    // log_activity의 content에 실제 분석 내용을 담을 수 있다 — 프론트가 최근 대화 turn을 함께 보낸다.
+    const priorTurns = Array.isArray(chatHistory)
+      ? chatHistory.filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").slice(-8)
+      : [];
+
     const baseMessages = [
       { role: "system", content: fullSystemPrompt },
+      ...priorTurns,
       { role: "user", content: userMessage },
     ];
 
@@ -3758,6 +3772,7 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
       const userName = extractUserName(req);
       const todayDot = db.prepare("SELECT date('now','localtime') AS d").get().d.replace(/-/g, ".");
       let loggedAny = false;
+      const seenContents = new Set();
       const toolResultMessages = toolCalls.map(tc => {
         if (tc.function?.name !== "log_activity") {
           return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "알 수 없는 기능" }) };
@@ -3768,6 +3783,11 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
         if (!content) {
           return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "기록할 내용이 없습니다" }) };
         }
+        // 모델이 같은 요청에 log_activity를 여러 번 호출하는 경우(동일 내용) 중복 기록 방지
+        if (seenContents.has(content)) {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: true, skipped: true, reason: "이미 기록됨(중복)" }) };
+        }
+        seenContents.add(content);
         const type = AI_ACTIVITY_TYPES.includes(args.type) ? args.type : "기타";
         const date = typeof args.date === "string" && /^\d{4}\.\d{2}\.\d{2}$/.test(args.date) ? args.date : todayDot;
         const entry = {

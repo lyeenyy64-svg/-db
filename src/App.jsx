@@ -10919,6 +10919,9 @@ function AiAnalysisView({
   const sendMessage = async () => {
     const q = aiInput.trim();
     if (!q || aiLoading) return;
+    // "히스토리에 남겨줘" 같은 요청은 직전 답변(방금 한 분석)을 가리키는 경우가 많아,
+    // 이전 대화 turn을 함께 보내야 AI가 실제로 무슨 내용을 기록해야 하는지 알 수 있다.
+    const priorTurns = aiMessages.slice(-8);
     setAiInput("");
     const userMsg = { role: "user", content: aiSelDebtor ? `[${aiSelDebtor.name}] ${q}` : q };
     setAiMessages(prev => [...prev, userMsg]);
@@ -10932,7 +10935,7 @@ function AiAnalysisView({
       const res = await fetch("/api/ai-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null, history }),
+        body: JSON.stringify({ query: q, debtorId: aiSelDebtor?.id || null, history, chatHistory: priorTurns }),
       });
       const d2 = await res.json();
       setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
