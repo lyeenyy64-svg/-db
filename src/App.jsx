@@ -2123,6 +2123,7 @@ export default function App() {
   const [statuteModalReason, setStatuteModalReason] = useState(null); // "noAnchor"
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
+  const [assigneeDrill, setAssigneeDrill] = useState(null); // {assignee, label, year, month(null=연간)} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
@@ -3639,9 +3640,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <tr key={a.assignee} style={{ borderBottom: "1px solid var(--brd)" }}>
                       <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)" }}>{i + 1}</td>
                       <td style={{ padding: "10px", fontWeight: 600 }}>{a.assignee}</td>
-                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisMonth)}</td>
-                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisYear)}</td>
-                      <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)" }}>{fmt(a.lastMonth)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: "var(--acc)", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                        onClick={() => { const n = new Date(); setAssigneeDrill({ assignee: a.assignee, label: `${a.assignee} · ${n.getFullYear()}년 ${n.getMonth() + 1}월 회수내역`, year: n.getFullYear(), month: n.getMonth() + 1 }); }}>{fmt(a.thisMonth)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: "var(--acc)", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                        onClick={() => { const n = new Date(); setAssigneeDrill({ assignee: a.assignee, label: `${a.assignee} · ${n.getFullYear()}년 회수내역`, year: n.getFullYear(), month: null }); }}>{fmt(a.thisYear)}</td>
+                      <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)", cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+                        onClick={() => { const n = new Date(); const py = n.getMonth() === 0 ? n.getFullYear() - 1 : n.getFullYear(); const pm = n.getMonth() === 0 ? 12 : n.getMonth(); setAssigneeDrill({ assignee: a.assignee, label: `${a.assignee} · ${py}년 ${pm}월 회수내역`, year: py, month: pm }); }}>{fmt(a.lastMonth)}</td>
                       <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)" }}>
                         {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
                       </td>
@@ -3694,11 +3698,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         )}
         {assigneeMonthlyModal && (() => {
           const { year, month } = assigneeMonthlyModal;
-          const debtorAssignee = {};
-          data.debtors.forEach(d => { debtorAssignee[d.id] = d.assignee; });
           const rows = config.assignees.map((a, i) => {
             const amount = data.payments
-              .filter(p => p.debtorId && debtorAssignee[p.debtorId] === a && p.paymentDate)
+              .filter(p => p.assignee === a && p.paymentDate)
               .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
               .reduce((s, p) => s + (p.totalAmount || 0), 0);
             return { assignee: a, amount, color: ASSIGNEE_COLORS[i % ASSIGNEE_COLORS.length] };
@@ -3736,6 +3738,44 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                   ))}
                 </div>
+              </div>
+            </Overlay>
+          );
+        })()}
+        {assigneeDrill && (() => {
+          const { assignee, label, year, month } = assigneeDrill;
+          const rows = data.payments
+            .filter(p => p.assignee === assignee && p.paymentDate)
+            .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && (month == null || pd.getMonth() + 1 === month); })
+            .sort((x, y2) => y2.paymentDate.localeCompare(x.paymentDate));
+          const total = rows.reduce((s, p) => s + (p.totalAmount || 0), 0);
+          return (
+            <Overlay onClose={() => setAssigneeDrill(null)} wide>
+              <ModalHeader title={`${label} (${rows.length}건, ${fmt(total)})`} onClose={() => setAssigneeDrill(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["입금일", "채무자", "브랜드", "입금자", "채널", "금액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>해당 기간 회수 내역이 없습니다.</td></tr>}
+                    {rows.map(p => {
+                      const d = data.debtors.find(x => x.id === p.debtorId);
+                      const channel = p.companyAccount > 0 ? "본사계좌" : p.cashCharge > 0 ? "캐쉬충전" : p.welcomeDirect > 0 ? "웰컴직접" : "-";
+                      return (
+                        <tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: d ? "pointer" : "default" }}
+                          onClick={() => { if (d) { navigateToDebtor(d, "입금내역"); setAssigneeDrill(null); } }}
+                          onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td>
+                          <td style={{ padding: "8px 10px", fontWeight: 500 }}>{p.debtorName}</td>
+                          <td style={{ padding: "8px 10px" }}><BrandBadge code={p.brand} brands={config.brands} /></td>
+                          <td style={{ padding: "8px 10px" }}>{p.payerName || "-"}</td>
+                          <td style={{ padding: "8px 10px", color: "var(--ts)" }}>{channel}</td>
+                          <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </Overlay>
           );
