@@ -1226,6 +1226,41 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
   );
 };
 
+// ─── BulkEditModal (채무자 목록 대량 작업 — 담당자/추심상태 일괄 변경) ──
+const BulkEditModal = ({ type, count, options, onConfirm, onClose }) => {
+  const isAssignee = type === "assignee";
+  const [value, setValue] = useState(options[0] || "");
+  const [effDate, setEffDate] = useState(today());
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    if (!value) return;
+    setBusy(true);
+    await onConfirm(isAssignee ? { assignee: value, assigneeEffectiveDate: effDate } : { collectionStatus: value });
+    setBusy(false);
+  };
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title={`${isAssignee ? "담당자" : "추심상태"} 일괄 변경 (${count}건)`} onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <Field label={isAssignee ? "새 담당자" : "새 추심상태"}>
+          <select value={value} onChange={e => setValue(e.target.value)} style={inp}>
+            {options.map(o => <option key={o}>{o}</option>)}
+          </select>
+        </Field>
+        {isAssignee && (
+          <Field label="변경일 (이 날짜부터 새 담당자 실적으로 귀속)">
+            <input type="date" value={effDate} onChange={e => setEffDate(e.target.value)} style={inp} />
+          </Field>
+        )}
+        <div style={{ background: "#f59e0b12", border: "1px solid #f59e0b40", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#b45309" }}>
+          선택된 {count}건 전체에 적용되며, 되돌리려면 다시 하나씩 수정해야 합니다.
+        </div>
+      </div>
+      <ModalFooter onCancel={onClose} onSave={run} saveLabel={busy ? "처리중…" : "일괄 변경"} />
+    </Overlay>
+  );
+};
+
 // ─── RolloverModal ────────────────────────────────────────
 const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
   const [newDate, setNewDate] = useState("");
@@ -2062,6 +2097,8 @@ export default function App() {
   const [assigneeFilter, setAssigneeFilter] = useState("전체");
   const [sort, setSort] = useState({ f: null, d: "desc" }); // f=null: 기본 정렬(히스토리>입금>연체에이징>채권액) 사용
   const [page, setPage] = useState(1);
+  const [checkedDebtorIds, setCheckedDebtorIds] = useState(new Set()); // 채무자 목록 대량 작업(일괄 담당/상태 변경)용 다중 선택
+  const [bulkModal, setBulkModal] = useState(null); // {type:"assignee"|"status"} | null
   // 좌측 "채무자 관리" 또는 상단 제목 클릭 시, 검색/필터/상세선택을 모두 지우고
   // 전체 채무자 목록으로 되돌아가기 위한 헬퍼
   const goToDebtorList = () => {
@@ -2500,6 +2537,27 @@ export default function App() {
     } catch (e) {
       showToast("서버 연결 실패 — 변경사항이 저장되지 않았습니다. 새로고침 후 다시 시도해주세요.");
       await reloadFromBackend();
+    }
+  };
+  // 채무자 목록 체크박스 다중 선택 → 담당자/추심상태 일괄 변경
+  const runBulkUpdate = async (payload) => {
+    const ids = [...checkedDebtorIds];
+    if (ids.length === 0) return;
+    try {
+      const res = await fetch("/api/debtors/bulk", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, ...payload, userName: currentUser?.name || "관리자" }),
+      });
+      const result = await res.json();
+      if (!result.ok) { showToast(`일괄 변경 실패: ${result.error || "서버 오류"}`); return; }
+      const what = payload.assignee ? `담당자 → ${payload.assignee}` : `추심상태 → ${payload.collectionStatus}`;
+      addLog("수정", "채권", `${result.updated}건 일괄 변경 (${what})`);
+      showToast(`${result.updated}건 일괄 변경 완료`);
+      setCheckedDebtorIds(new Set());
+      setBulkModal(null);
+      await reloadFromBackend();
+    } catch (e) {
+      showToast("일괄 변경 실패: " + (e.message || "네트워크 오류"));
     }
   };
   const addDebtor = async (debtor) => {
@@ -3040,6 +3098,9 @@ export default function App() {
 
   const tp = Math.ceil(filtered.length / PP);
   const paged = filtered.slice((page - 1) * PP, page * PP);
+  const flatIds = (d) => (d.subRows && d.subRows.length > 1 ? d.subRows.map(s => s.id) : [d.id]);
+  const pagedFlatIds = paged.flatMap(flatIds);
+  const filteredFlatIds = filtered.flatMap(flatIds);
   useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter, assigneeFilter]);
   const doSort = (f) => {
     if (sort.f === f) {
@@ -4320,10 +4381,34 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
         <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
       </div>
+      {canEdit && checkedDebtorIds.size > 0 && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--acc)10", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--acc)40" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>{checkedDebtorIds.size}건 선택됨</span>
+          {checkedDebtorIds.size < filteredFlatIds.length && (
+            <button onClick={() => setCheckedDebtorIds(new Set(filteredFlatIds))} style={{ fontSize: 11, color: "var(--acc)", textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>필터링된 전체 {filteredFlatIds.length}건 선택</button>
+          )}
+          <button onClick={() => setBulkModal({ type: "assignee" })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>담당자 일괄변경</button>
+          <button onClick={() => setBulkModal({ type: "status" })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>상태 일괄변경</button>
+          <button onClick={() => setCheckedDebtorIds(new Set())} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--bg2)", color: "var(--ts)", fontSize: 12, border: "none", cursor: "pointer" }}>선택 해제</button>
+        </div>
+      )}
       <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr style={{ background: "var(--bg2)" }}>
+              {canEdit && (
+                <th style={{ padding: "10px 6px", width: 32, textAlign: "center", borderBottom: "1px solid var(--brd)" }}>
+                  <input type="checkbox"
+                    checked={pagedFlatIds.length > 0 && pagedFlatIds.every(id => checkedDebtorIds.has(id))}
+                    ref={el => { if (el) el.indeterminate = pagedFlatIds.some(id => checkedDebtorIds.has(id)) && !pagedFlatIds.every(id => checkedDebtorIds.has(id)); }}
+                    onChange={e => setCheckedDebtorIds(prev => {
+                      const next = new Set(prev);
+                      if (e.target.checked) pagedFlatIds.forEach(id => next.add(id));
+                      else pagedFlatIds.forEach(id => next.delete(id));
+                      return next;
+                    })} />
+                </th>
+              )}
               {[
                 { k: "brand", l: "브랜드", w: 60 },
                 { k: "category", l: "분류", w: 110 },
@@ -4353,6 +4438,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <tr key={d.id} onClick={() => { setSel(d); setDetailTab("히스토리"); }} style={{ cursor: "pointer", borderBottom: "1px solid var(--brd)" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    {canEdit && (
+                      <td style={{ padding: "10px 6px", textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={checkedDebtorIds.has(d.id)}
+                          onChange={e => setCheckedDebtorIds(prev => { const next = new Set(prev); e.target.checked ? next.add(d.id) : next.delete(d.id); return next; })} />
+                      </td>
+                    )}
                     <td style={{ padding: "10px 10px", textAlign: "center" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
                     <td style={{ padding: "10px 10px", whiteSpace: "nowrap", textAlign: "center" }}><Badge status={d.category} small /></td>
                     <td style={{ padding: "10px 10px", fontSize: 12, textAlign: "center" }}>{d.assignee}</td>
@@ -4380,6 +4471,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     onClick={() => { setSel(sub); setDetailTab("히스토리"); }}>
+                    {canEdit && (
+                      <td style={{ padding: "10px 6px", textAlign: "center", borderBottom: "1px solid var(--brd)" }} onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={checkedDebtorIds.has(sub.id)}
+                          onChange={e => setCheckedDebtorIds(prev => { const next = new Set(prev); e.target.checked ? next.add(sub.id) : next.delete(sub.id); return next; })} />
+                      </td>
+                    )}
                     {isFirst && (
                       <td rowSpan={span} style={{ padding: "10px 10px", borderBottom: "1px solid var(--brd)", textAlign: "center", ...sharedBg }}>
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
@@ -10647,6 +10744,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {modal?.type === "payment"         && <PaymentFormModal />}
       {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
       {modal?.type === "verifyExcel"     && <VerifyExcelModal onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} onGoToPending={() => { setModal(null); setPaymentsSubTab("미매칭"); setPendingRefreshKey(k => k + 1); }} />}
+      {bulkModal && <BulkEditModal type={bulkModal.type} count={checkedDebtorIds.size} options={bulkModal.type === "assignee" ? config.assignees : config.collStatuses} onConfirm={runBulkUpdate} onClose={() => setBulkModal(null)} />}
       {modal?.type === "activity"        && <ActivityFormModal />}
       {modal?.type === "addInstallment"  && <InstallmentAddModal />}
       {modal?.type === "rollover"        && <RolloverModal sched={modal.sched} onClose={() => setModal(null)} onReload={reloadInstallments} showToast={showToast} />}

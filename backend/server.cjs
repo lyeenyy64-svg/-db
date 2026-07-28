@@ -1871,6 +1871,59 @@ app.delete("/api/debtors/:id", (req, res) => {
 // 조회하려다 전체 PATCH가 실패해서 아무 필드도 저장되지 않는 문제를 방지한다.
 const DEBTOR_TABLE_COLS = new Set(db.prepare("PRAGMA table_info(debtors)").all().map(c => c.name));
 
+// ─── 채무자 대량 작업 (담당자/추심상태 일괄 변경) ─────────
+// /api/debtors/:id 보다 먼저 등록해야 한다 — 안 그러면 Express가 "bulk"을 :id로 매칭해버린다.
+app.patch("/api/debtors/bulk", (req, res) => {
+  try {
+    const { ids, assignee, collectionStatus, assigneeEffectiveDate, userName } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: "ids가 필요합니다" });
+    if (!assignee && !collectionStatus) return res.status(400).json({ ok: false, error: "변경할 담당자 또는 추심상태가 없습니다" });
+    const _userName = userName || "관리자";
+    const effDate = /^\d{4}-\d{2}-\d{2}$/.test(assigneeEffectiveDate || "")
+      ? assigneeEffectiveDate
+      : new Date().toISOString().slice(0, 10);
+
+    const getOld = db.prepare("SELECT id, name, assignee, collection_status AS collectionStatus FROM debtors WHERE id = ?");
+    const updBoth = db.prepare("UPDATE debtors SET assignee = ?, collection_status = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const updAssignee = db.prepare("UPDATE debtors SET assignee = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const updStatus = db.prepare("UPDATE debtors SET collection_status = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const insHist = db.prepare(`
+      INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
+      ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
+    `);
+    const insLog = db.prepare(
+      "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    let updated = 0;
+    const statusChanges = [];
+    const tx = db.transaction(() => {
+      for (const id of ids) {
+        const old = getOld.get(id);
+        if (!old) continue;
+        if (assignee && collectionStatus) updBoth.run(assignee, collectionStatus, id);
+        else if (assignee) updAssignee.run(assignee, id);
+        else updStatus.run(collectionStatus, id);
+
+        if (assignee && String(old.assignee ?? "") !== String(assignee)) {
+          insHist.run(id, assignee, effDate);
+          insLog.run(id, old.name, _userName, "assignee", "담당자", old.assignee ?? "", assignee);
+        }
+        if (collectionStatus && String(old.collectionStatus ?? "") !== String(collectionStatus)) {
+          insLog.run(id, old.name, _userName, "collectionStatus", "추심상태", old.collectionStatus ?? "", collectionStatus);
+          statusChanges.push({ debtorName: old.name, oldStatus: old.collectionStatus, newStatus: collectionStatus });
+        }
+        updated++;
+      }
+    });
+    tx();
+
+    statusChanges.forEach(c => { fireEventAlert("status_change", c).catch(() => {}); });
+
+    res.json({ ok: true, updated });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
