@@ -1094,8 +1094,26 @@ const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showT
 };
 
 // ─── VerifyExcelModal (재무실 대여금 회수 스케쥴 대사) ──────
+// 브랜드마다 재무팀이 보내는 파일의 시트명/컬럼 구성이 다르므로 소스별로 분리해뒀다.
+// 새 브랜드(예: 딜버) 파일이 추가되면 이 배열에 항목만 하나 더 추가하면 된다.
+const VERIFY_SOURCES = [
+  {
+    key: "barogo", label: "바로고", brand: "B",
+    sheetName: (y) => `대여금 회수 실적_${y}년`,
+    monthBase: 0, // 연도 라벨 셀 자체가 1월 컬럼 위치 → monthCol = yearCol + (month-1)
+    hubNameKeys: ["허브명"], hubCodeKeys: ["허브코드"], companyKeys: ["거래처"],
+  },
+  {
+    key: "moaline", label: "모아라인 (바다코리아)", brand: "M",
+    sheetName: (y) => `${y}대여금현황(월별)`,
+    monthBase: 1, // 연도 라벨 셀 다음(재무팀 조정 칸 다음)이 1월 → monthCol = yearCol + month
+    hubNameKeys: ["출금명", "허브명"], hubCodeKeys: ["거래처코드", "허브코드"], companyKeys: ["모아콜코드", "거래처"],
+  },
+];
+
 const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
   const now = new Date();
+  const [sourceKey, setSourceKey] = useState(VERIFY_SOURCES[0].key);
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [file, setFile] = useState(null);
@@ -1103,14 +1121,17 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
   const [result, setResult] = useState(null);
   const fileRef = useRef(null);
   const YEARS = Array.from({ length: 8 }, (_, i) => now.getFullYear() - 6 + i);
+  const source = VERIFY_SOURCES.find(s => s.key === sourceKey);
+
+  const findCol = (row, keys) => row.findIndex(c => keys.includes((c ?? "").toString().trim()));
 
   const parseFile = async () => {
     const buf = await file.arrayBuffer();
     const XLSX = await import("xlsx");
     const wb = XLSX.read(buf, { type: "array" });
-    const sheetName = `대여금 회수 실적_${year}년`;
+    const sheetName = source.sheetName(year);
     const ws = wb.Sheets[sheetName];
-    if (!ws) throw new Error(`시트를 찾을 수 없습니다: "${sheetName}"`);
+    if (!ws) throw new Error(`시트를 찾을 수 없습니다: "${sheetName}" — 이 파일이 "${source.label}" 형식이 맞는지 확인해주세요`);
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
 
     // 연도 블록의 시작 컬럼을 헤더에서 찾는다 ("2026년" 같은 라벨 셀 위치) — 해가 바뀌어 새 블록이
@@ -1126,7 +1147,7 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
       if (matches >= 2 && cols[String(year)] != null) yearCol = cols[String(year)];
     }
     if (yearCol === null) throw new Error(`"${year}년" 블록을 찾지 못했습니다`);
-    const monthCol = yearCol + (month - 1);
+    const monthCol = yearCol + source.monthBase + (month - 1);
 
     let headerRow = -1, colDebtor = -1, colHub = -1, colHubCode = -1, colCompany = -1;
     for (let r = 0; r < Math.min(8, rows.length); r++) {
@@ -1134,9 +1155,9 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
       const idx = row.findIndex(c => (c ?? "").toString().trim() === "채무자");
       if (idx >= 0) {
         headerRow = r; colDebtor = idx;
-        colHub = row.findIndex(c => (c ?? "").toString().trim() === "허브명");
-        colHubCode = row.findIndex(c => (c ?? "").toString().trim() === "허브코드");
-        colCompany = row.findIndex(c => (c ?? "").toString().trim() === "거래처");
+        colHub = findCol(row, source.hubNameKeys);
+        colHubCode = findCol(row, source.hubCodeKeys);
+        colCompany = findCol(row, source.companyKeys);
         break;
       }
     }
@@ -1169,7 +1190,7 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
       if (items.length === 0) { showToast(`"${year}년 ${month}월"에 회수 표시된 채무자가 없습니다`); setBusy(false); return; }
       const r = await fetch("/api/payments/verify-excel", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year, month, items }),
+        body: JSON.stringify({ year, month, items, brand: source.brand }),
       });
       const resData = await r.json();
       if (!resData.ok) throw new Error(resData.error || "검증 실패");
@@ -1190,6 +1211,11 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
           재무실이 매월 보내주는 "대여금 회수 스케쥴" 엑셀에서 해당 월에 회수 표시된 채무자를 CMS 입금 기록과 비교합니다.
           CMS에 없으면 미매칭 관리에 등록됩니다 (채널: 캐쉬충전).
         </div>
+        <Field label="출처(브랜드)">
+          <select value={sourceKey} onChange={e => { setSourceKey(e.target.value); setResult(null); }} style={inp}>
+            {VERIFY_SOURCES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+        </Field>
         <Field label="대상 월">
           <div style={{ display: "flex", gap: 8 }}>
             <select value={year} onChange={e => { setYear(Number(e.target.value)); setResult(null); }} style={inp}>
