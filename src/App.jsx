@@ -6613,6 +6613,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [geocodeProgress, setGeocodeProgress] = useState(null);
     const [refreshingAddr, setRefreshingAddr] = useState(false);
     const [refreshAddrProgress, setRefreshAddrProgress] = useState(null);
+    const [geocodeResult, setGeocodeResult] = useState(null); // {success, fail, byReason:[{reason,count}]} | null
+    const [refreshResult, setRefreshResult] = useState(null);
     const [missingAddr, setMissingAddr] = useState(null); // null=조회중, [] 이상=주소 미확보 채무자 목록
     const [extractingAddr, setExtractingAddr] = useState(false);
     const [extractAddrProgress, setExtractAddrProgress] = useState(null);
@@ -6730,13 +6732,27 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const runBulkGeocode = async () => {
       if (geocoding || noCoords.length === 0) return;
       setGeocoding(true);
+      setGeocodeResult(null);
       setGeocodeProgress({ done: 0, total: noCoords.length });
+      const failReasons = {};
+      let success = 0;
       for (let i = 0; i < noCoords.length; i++) {
-        try { await fetch(`/api/debtor/${noCoords[i].id}/geocode`, { method: "POST" }); } catch {}
+        try {
+          const r = await fetch(`/api/debtor/${noCoords[i].id}/geocode`, { method: "POST" }).then(res => res.json());
+          if (r.ok) success++;
+          else { const reason = r.error || "알 수 없는 오류"; failReasons[reason] = (failReasons[reason] || 0) + 1; }
+        } catch {
+          failReasons["서버 연결 오류"] = (failReasons["서버 연결 오류"] || 0) + 1;
+        }
         setGeocodeProgress({ done: i + 1, total: noCoords.length });
       }
       setGeocoding(false);
       loadLocations();
+      const fail = noCoords.length - success;
+      setGeocodeResult({
+        success, fail,
+        byReason: Object.entries(failReasons).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+      });
     };
 
     // 좌표 변환에 계속 실패하는 항목은 대부분 예전(수정 전) OCR 로직이 잘못 저장해둔
@@ -6744,17 +6760,31 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const runBulkAddressRefresh = async () => {
       if (refreshingAddr || noCoords.length === 0) return;
       setRefreshingAddr(true);
+      setRefreshResult(null);
       setRefreshAddrProgress({ done: 0, total: noCoords.length });
+      const failReasons = {};
+      let success = 0;
       for (let i = 0; i < noCoords.length; i++) {
         const item = noCoords[i];
         const endpoint = item.addressSource === "resident"
           ? `/api/debtor/${item.id}/resident-number/refresh`
           : `/api/debtor/${item.id}/credit-address/refresh`;
-        try { await fetch(endpoint, { method: "POST" }); } catch {}
+        try {
+          const r = await fetch(endpoint, { method: "POST" }).then(res => res.json());
+          if (r.ok) success++;
+          else { const reason = r.error || "알 수 없는 오류"; failReasons[reason] = (failReasons[reason] || 0) + 1; }
+        } catch {
+          failReasons["서버 연결 오류"] = (failReasons["서버 연결 오류"] || 0) + 1;
+        }
         setRefreshAddrProgress({ done: i + 1, total: noCoords.length });
       }
       setRefreshingAddr(false);
       loadLocations();
+      const fail = noCoords.length - success;
+      setRefreshResult({
+        success, fail,
+        byReason: Object.entries(failReasons).map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
+      });
       showToast("주소 재조회 완료 — '주소→좌표 변환'을 다시 눌러주세요");
     };
 
@@ -6808,6 +6838,33 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {mapAppKey === null && (
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "#f59e0b18", border: "1px solid #f59e0b40", color: "#b45309", fontSize: 12 }}>
             카카오맵 API 키가 설정되지 않았습니다. <code>backend/.env</code>에 <code>KAKAO_MAP_APP_KEY</code>/<code>KAKAO_REST_API_KEY</code>를 추가한 뒤 서버를 재시작해주세요.
+          </div>
+        )}
+
+        {geocodeResult && !geocoding && (
+          <div style={{ padding: "10px 16px", borderRadius: 10, background: geocodeResult.fail > 0 ? "#f59e0b12" : "#10b98112", border: `1px solid ${geocodeResult.fail > 0 ? "#f59e0b40" : "#10b98140"}`, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <b style={{ color: "var(--tp)" }}>주소→좌표 변환 결과: 성공 {geocodeResult.success}건 · 실패 {geocodeResult.fail}건</b>
+              <button onClick={() => setGeocodeResult(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--tm)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
+            </div>
+            {geocodeResult.byReason.length > 0 && (
+              <div style={{ color: "var(--ts)" }}>
+                {geocodeResult.byReason.map(r => <div key={r.reason}>· {r.reason}: {r.count}건</div>)}
+              </div>
+            )}
+          </div>
+        )}
+        {refreshResult && !refreshingAddr && (
+          <div style={{ padding: "10px 16px", borderRadius: 10, background: refreshResult.fail > 0 ? "#f59e0b12" : "#10b98112", border: `1px solid ${refreshResult.fail > 0 ? "#f59e0b40" : "#10b98140"}`, fontSize: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <b style={{ color: "var(--tp)" }}>주소 재조회 결과: 성공 {refreshResult.success}건 · 실패 {refreshResult.fail}건</b>
+              <button onClick={() => setRefreshResult(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--tm)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
+            </div>
+            {refreshResult.byReason.length > 0 && (
+              <div style={{ color: "var(--ts)" }}>
+                {refreshResult.byReason.map(r => <div key={r.reason}>· {r.reason}: {r.count}건</div>)}
+              </div>
+            )}
           </div>
         )}
 
