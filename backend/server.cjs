@@ -3712,6 +3712,70 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
   }
 });
 
+// ─── 문건 분석: PDF 텍스트 추출 + 채팅 ────────────────
+app.post("/api/ai/extract-pdf-text", express.raw({ type: "application/pdf", limit: "20mb" }), async (req, res) => {
+  try {
+    if (!pdfParse) return res.status(503).json({ error: "PDF 처리 모듈(pdf-parse)이 설치되어 있지 않습니다" });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: "PDF 파일이 비어 있습니다" });
+    }
+    const data = await pdfParse(req.body);
+    const text = (data.text || "").trim();
+    if (!text) {
+      return res.json({ text: "", pages: data.numpages || 0, warning: "텍스트를 추출할 수 없습니다 — 스캔본(이미지) PDF는 이 기능으로 분석할 수 없습니다." });
+    }
+    res.json({ text, pages: data.numpages || 0 });
+  } catch (err) {
+    res.status(500).json({ error: "PDF 처리 실패: " + err.message });
+  }
+});
+
+app.post("/api/ai/doc-chat", async (req, res) => {
+  const openaiClient = getOpenAIClient();
+  if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
+  const { query, docText, docFileName, history } = req.body || {};
+  if (!query) return res.status(400).json({ error: "query 필요" });
+  if (!docText) return res.status(400).json({ error: "docText 필요 — 먼저 문서를 업로드하세요" });
+
+  try {
+    const MAX_CHARS = 60000; // 대략 30페이지 분량 — gpt-4o-mini 컨텍스트 내에서 충분히 여유있게 통째로 넘김
+    const truncated = docText.length > MAX_CHARS;
+    const docContext = docText.slice(0, MAX_CHARS);
+
+    const systemPrompt = `당신은 법률/채권 문서 분석 전문가입니다. 담당자가 업로드한 문서(판결문, 결정문,
+답변서, 화의안 등)의 내용을 바탕으로 질문에 답합니다.
+- 문서에 실제로 있는 내용만 근거로 답하고, 문서에 없는 내용은 추측하지 마세요.
+- 판결문/결정문이면 요지·핵심 쟁점·결과(주문)를 명확히 구분해서, 법률 지식이 없어도 이해할 수 있게
+  쉬운 말로 설명하세요.
+- 금액이 나오면 원화(원) 단위, 천단위 콤마로 표시하세요.
+- 날짜·금액·당사자명 등 문서 안의 구체적인 근거를 인용하세요.
+- 한국어로 답변하세요.`;
+
+    const clientHistory = Array.isArray(history)
+      ? history.filter(h => h && h.role && h.content).slice(-10).map(h => ({ role: h.role, content: h.content }))
+      : [];
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `[문서: ${docFileName || "업로드된 문서"}]${truncated ? " (문서가 길어 앞부분만 발췌되었습니다)" : ""}\n${docContext}` },
+      ...clientHistory,
+      { role: "user", content: query },
+    ];
+
+    const completion = await openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      max_tokens: 1500,
+      temperature: 0.3,
+    });
+
+    res.json({ answer: completion.choices[0].message.content });
+  } catch (err) {
+    console.error("AI doc-chat error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";
 
 // 채무자+연대보증인 종합분석 텍스트 생성 (OpenAI 호출만, DB 저장은 호출부 책임).

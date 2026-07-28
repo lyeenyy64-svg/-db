@@ -2198,6 +2198,14 @@ export default function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSelDebtor, setAiSelDebtor] = useState(null);
   const [aiDebtorQ, setAiDebtorQ] = useState("");
+  const [aiSubTab, setAiSubTab] = useState("debtor"); // "debtor" | "document"
+  const [docMessages, setDocMessages] = useState([]);
+  const [docInput, setDocInput] = useState("");
+  const [docLoading, setDocLoading] = useState(false);
+  const [docExtracting, setDocExtracting] = useState(false);
+  const [docText, setDocText] = useState("");
+  const [docFileName, setDocFileName] = useState("");
+  const [docPages, setDocPages] = useState(0);
   const [collectionChannels, setCollectionChannels] = useState({});
   const [collectionChannelsLoading, setCollectionChannelsLoading] = useState(false);
   const PP = 50;
@@ -10761,6 +10769,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             aiLoading={aiLoading} setAiLoading={setAiLoading}
             aiSelDebtor={aiSelDebtor} setAiSelDebtor={setAiSelDebtor}
             aiDebtorQ={aiDebtorQ} setAiDebtorQ={setAiDebtorQ}
+            aiSubTab={aiSubTab} setAiSubTab={setAiSubTab}
+            docMessages={docMessages} setDocMessages={setDocMessages}
+            docInput={docInput} setDocInput={setDocInput}
+            docLoading={docLoading} setDocLoading={setDocLoading}
+            docExtracting={docExtracting} setDocExtracting={setDocExtracting}
+            docText={docText} setDocText={setDocText}
+            docFileName={docFileName} setDocFileName={setDocFileName}
+            docPages={docPages} setDocPages={setDocPages}
+            showToast={showToast}
           />}
           {tab === "admin" && adminView}
         </div>
@@ -10810,9 +10827,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   );
 }
 
-function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, aiLoading, setAiLoading, aiSelDebtor, setAiSelDebtor, aiDebtorQ, setAiDebtorQ }) {
+const DOC_QUICK = [
+  "이 문서의 요지를 한 문단으로 요약해줘",
+  "핵심 쟁점이 뭐야?",
+  "결과(주문/결정사항)가 뭐야?",
+  "우리한테 유리한 내용이야, 불리한 내용이야?",
+  "다음에 우리가 취해야 할 조치가 뭐야?",
+  "항소·이의 가능성이 있어?",
+  "기한이나 마감일이 있어?",
+  "인정된 금액이 얼마야?",
+  "상대방 주장 중 인정되지 않은 부분이 뭐야?",
+  "채권 회수에 참고할 점이 뭐야?",
+];
+
+function AiAnalysisView({
+  data, aiMessages, setAiMessages, aiInput, setAiInput, aiLoading, setAiLoading, aiSelDebtor, setAiSelDebtor, aiDebtorQ, setAiDebtorQ,
+  aiSubTab, setAiSubTab,
+  docMessages, setDocMessages, docInput, setDocInput, docLoading, setDocLoading, docExtracting, setDocExtracting,
+  docText, setDocText, docFileName, setDocFileName, docPages, setDocPages, showToast,
+}) {
   // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
   const bottomRef = useRef(null);
+  const docBottomRef = useRef(null);
+  const docFileRef = useRef(null);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiMessages]);
 
@@ -10846,6 +10883,52 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
     setAiLoading(false);
   };
 
+  useEffect(() => { docBottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [docMessages]);
+
+  const handleDocFile = async (file) => {
+    if (!file) return;
+    setDocExtracting(true);
+    try {
+      const res = await fetch("/api/ai/extract-pdf-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/pdf" },
+        body: file,
+      });
+      const d2 = await res.json();
+      if (d2.error) { showToast(d2.error); setDocExtracting(false); return; }
+      if (!d2.text) { showToast(d2.warning || "텍스트를 추출할 수 없습니다"); setDocExtracting(false); return; }
+      setDocText(d2.text);
+      setDocFileName(file.name);
+      setDocPages(d2.pages || 0);
+      setDocMessages([]);
+    } catch (e) {
+      showToast("문서 처리 실패: " + (e.message || "네트워크 오류"));
+    }
+    setDocExtracting(false);
+  };
+
+  const resetDoc = () => { setDocText(""); setDocFileName(""); setDocPages(0); setDocMessages([]); setDocInput(""); };
+
+  const sendDocMessage = async () => {
+    const q = docInput.trim();
+    if (!q || docLoading || !docText) return;
+    setDocInput("");
+    setDocMessages(prev => [...prev, { role: "user", content: q }]);
+    setDocLoading(true);
+    try {
+      const res = await fetch("/api/ai/doc-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q, docText, docFileName, history: docMessages }),
+      });
+      const d2 = await res.json();
+      setDocMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
+    } catch {
+      setDocMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
+    }
+    setDocLoading(false);
+  };
+
   const QUICK = [
     "이 채무자 현황을 종합적으로 분석해줘",
     "최근 입금 패턴을 분석해줘",
@@ -10867,13 +10950,26 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
         <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
         <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
-        {aiMessages.length > 0 && (
+        {aiSubTab === "debtor" && aiMessages.length > 0 && (
           <button onClick={() => setAiMessages([])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
             대화 초기화
           </button>
         )}
+        {aiSubTab === "document" && (docMessages.length > 0 || docText) && (
+          <button onClick={resetDoc} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+            초기화
+          </button>
+        )}
       </div>
 
+      {/* 서브탭 */}
+      <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)", marginBottom: 12 }}>
+        {[{ k: "debtor", l: "채무자 분석" }, { k: "document", l: "문건 분석" }].map(t => (
+          <button key={t.k} onClick={() => setAiSubTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: aiSubTab === t.k ? "var(--bg)" : "transparent", color: aiSubTab === t.k ? "var(--acc)" : "var(--tm)", border: "none", cursor: "pointer" }}>{t.l}</button>
+        ))}
+      </div>
+
+      {aiSubTab === "debtor" && <>
       {/* 채무자 선택 */}
       <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -10957,6 +11053,81 @@ function AiAnalysisView({ data, aiMessages, setAiMessages, aiInput, setAiInput, 
         )}
         <div ref={bottomRef} />
       </div>
+      </>}
+
+      {aiSubTab === "document" && <>
+      {!docText ? (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, flex: 1, border: "1px dashed var(--brd)", borderRadius: 12, padding: 40 }}>
+          <I name="fileText" size={36} style={{ color: "var(--tm)" }} />
+          <div style={{ fontSize: 13, color: "var(--tm)", textAlign: "center" }}>판결문·결정문 등 PDF 문서를 등록하면<br />요지·핵심·결과를 알기 쉽게 분석해드립니다.</div>
+          <input ref={docFileRef} type="file" accept=".pdf" style={{ display: "none" }}
+            onChange={e => handleDocFile(e.target.files?.[0] || null)} />
+          <button onClick={() => docFileRef.current?.click()} disabled={docExtracting}
+            style={{ padding: "10px 20px", borderRadius: 10, background: "var(--acc)", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: docExtracting ? "default" : "pointer", opacity: docExtracting ? 0.6 : 1 }}>
+            {docExtracting ? "문서 인식 중…" : "문서 선택 (PDF)"}
+          </button>
+          <div style={{ fontSize: 11, color: "var(--tm)" }}>스캔본(이미지) PDF는 텍스트 추출이 안 돼 분석할 수 없습니다.</div>
+        </div>
+      ) : <>
+        <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "10px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <I name="fileText" size={16} style={{ color: "var(--acc)" }} />
+          <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{docFileName}</span>
+          <span style={{ fontSize: 11, color: "var(--tm)" }}>{docPages}페이지</span>
+          <button onClick={resetDoc} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>다른 문서 선택</button>
+        </div>
+
+        {/* 입력창 */}
+        <div style={{ display: "flex", gap: 8, paddingBottom: 10 }}>
+          <input
+            value={docInput}
+            onChange={e => setDocInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDocMessage(); } }}
+            placeholder="이 문서에 대해 질문하세요..."
+            disabled={docLoading}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
+          />
+          <button onClick={sendDocMessage} disabled={docLoading || !docInput.trim()}
+            style={{ padding: "10px 18px", borderRadius: 10, background: docLoading || !docInput.trim() ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", cursor: docLoading || !docInput.trim() ? "default" : "pointer", fontSize: 13, fontWeight: 600, transition: "background 0.15s" }}>
+            전송
+          </button>
+        </div>
+
+        {/* 빠른 질문 예시 */}
+        {docMessages.length === 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", padding: "0 0 12px" }}>
+            {DOC_QUICK.map(q => (
+              <button key={q} onClick={() => setDocInput(q)}
+                style={{ padding: "5px 10px", borderRadius: 20, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 채팅 영역 */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingBottom: 8, borderTop: "1px solid var(--brd)", paddingTop: 12 }}>
+          {docMessages.map((m, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+              <div style={{
+                maxWidth: "80%", padding: "10px 14px", borderRadius: m.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+                background: m.role === "user" ? "var(--acc)" : "var(--card)",
+                color: m.role === "user" ? "#fff" : "var(--tp)",
+                border: m.role === "user" ? "none" : "1px solid var(--brd)",
+                fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap",
+              }}>{m.content}</div>
+            </div>
+          ))}
+          {docLoading && (
+            <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              <div style={{ padding: "10px 16px", borderRadius: "14px 14px 14px 4px", background: "var(--card)", border: "1px solid var(--brd)", color: "var(--ts)", fontSize: 13 }}>
+                분석 중...
+              </div>
+            </div>
+          )}
+          <div ref={docBottomRef} />
+        </div>
+      </>}
+      </>}
     </div>
   );
 }
