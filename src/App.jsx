@@ -9048,19 +9048,32 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [dlLoading,  setDlLoading]  = useState(false);
     const [dlError,    setDlError]    = useState("");
 
+    // 이름/허브코드가 채무자 본인과 안 맞아도 연대보증인 이름으로도 찾을 수 있어야 한다 —
+    // "압류 및 추심할 채권의 표시" 같은 문건은 연대보증인을 상대로도 만들 필요가 있기 때문.
     const debtorResults = useMemo(() => {
       if (!debtorQ.trim()) return [];
       const q = debtorQ.trim().toLowerCase();
-      return data.debtors
-        .filter(d => d.name.toLowerCase().includes(q) || (d.hubCode || "").includes(q))
-        .slice(0, 8);
+      const results = [];
+      for (const d of data.debtors) {
+        if (d.name.toLowerCase().includes(q) || (d.hubCode || "").includes(q)) {
+          results.push({ ...d, _asGuarantor: null });
+        }
+        for (const g of d.guarantors || []) {
+          if (g && String(g).toLowerCase().includes(q)) results.push({ ...d, _asGuarantor: g });
+        }
+      }
+      return results.slice(0, 8);
     }, [debtorQ, data.debtors]);
 
     const handleSelectDebtor = (d) => {
       setSelDebtor(d);
-      setDebtorQ(d.name);
+      setDebtorQ(d._asGuarantor || d.name);
       setRemaining(String(d.principalBalance || d.principal_balance || ""));
     };
+
+    // 연대보증인을 선택했으면 문건에는 채무자 본인이 아니라 그 연대보증인 이름이 들어가야 함.
+    // 채권 원금/잔액은 같은 채무에 대한 것이므로 그대로 selDebtor(연결된 채무자)의 값을 쓴다.
+    const docPersonName = selDebtor?._asGuarantor || selDebtor?.name || "";
 
     const togglePreset = (preset) => {
       const exists = items.find(it => it.name === preset.fullName);
@@ -9107,7 +9120,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const buildDocData = () => ({
-      debtorName:         selDebtor?.name || "",
+      debtorName:         docPersonName,
       residentId:         residentId || "000000-0000000",
       totalAmount,
       executionTitleText: buildExecTitleText(),
@@ -9116,7 +9129,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     });
 
     const generateDocHtml = () => {
-      const dName = selDebtor?.name || "(채무자 미선택)";
+      const dName = docPersonName || "(채무자 미선택)";
       const rid   = residentId || "000000-0000000";
       const execText = buildExecTitleText();
       const allItems = [...bankItems, ...platformItems];
@@ -9201,7 +9214,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement("a");
         a.href = url;
-        a.download = `압류채권표시_${selDebtor.name}.hwpx`;
+        a.download = `압류채권표시_${docPersonName}.hwpx`;
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(url);
       } catch (e) {
@@ -9266,12 +9279,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {debtorResults.length > 0 && !selDebtor && (
                 <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
                   border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
-                  {debtorResults.map(d => (
-                    <div key={d.id} onClick={() => handleSelectDebtor(d)}
+                  {debtorResults.map((d, i) => (
+                    <div key={`${d.id}-${d._asGuarantor || "main"}-${i}`} onClick={() => handleSelectDebtor(d)}
                       style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
                       onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <span style={{ fontWeight: 600 }}>{d.name}</span>
+                      <span style={{ fontWeight: 600 }}>{d._asGuarantor || d.name}</span>
+                      {d._asGuarantor && <span style={{ fontSize: 10, color: "var(--acc)", marginLeft: 6 }}>연대보증인 · {d.name}</span>}
                       <span style={{ color: "var(--tm)", marginLeft: 8 }}>{d.brandName || d.brand_code} / {d.hubCode || d.hub_code}</span>
                     </div>
                   ))}
@@ -9281,7 +9295,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {selDebtor && (
               <div style={{ background: "var(--bg2)", borderRadius: 6, padding: "6px 10px", fontSize: 11,
                 color: "var(--ts)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span>선택됨: <strong>{selDebtor.name}</strong> ({selDebtor.brandName || selDebtor.brand_code})</span>
+                <span>선택됨: <strong>{docPersonName}</strong>{selDebtor._asGuarantor && <span style={{ color: "var(--acc)" }}> — {selDebtor.name}의 연대보증인</span>} ({selDebtor.brandName || selDebtor.brand_code})</span>
                 <button onClick={() => { setSelDebtor(null); setDebtorQ(""); }}
                   style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 10 }}>×</button>
               </div>
