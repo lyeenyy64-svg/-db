@@ -2314,7 +2314,7 @@ app.get("/api/pending-payments", (req, res) => {
 // ─── 보류 항목 채무자 수동 연결 ─────────────────
 app.post("/api/pending-payments/:id/resolve", (req, res) => {
   const pendingId = parseInt(req.params.id, 10);
-  const { debtorId, createdByName } = req.body || {};
+  const { debtorId, createdByName, force } = req.body || {};
   if (!debtorId) return res.status(400).json({ ok: false, error: "debtorId가 필요합니다" });
 
   const pending = db.prepare("SELECT * FROM pending_payments WHERE id = ? AND resolved = 0").get(pendingId);
@@ -2332,6 +2332,7 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
     source: pending.source,
     sourceRef: pending.source_ref,
     createdByName: createdByName || "수동연결",
+    force: !!force,
   });
 
   if (result.ok) {

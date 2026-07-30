@@ -8692,16 +8692,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         .slice(0, 8);
     };
 
-    const doResolve = async (item) => {
+    const doResolve = async (item, forceOverride = false) => {
       const dId = selectedDebtor[item.id];
       if (!dId) { showToast("채무자를 선택하세요"); return; }
       const d = data.debtors.find(x => x.id === dId);
-      if (!confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
+      if (!forceOverride && !confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
       setResolving(item.id);
       try {
         const res = await fetch(`/api/pending-payments/${item.id}/resolve`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ debtorId: dId, createdByName: currentUser?.name }),
+          body: JSON.stringify({ debtorId: dId, createdByName: currentUser?.name, force: forceOverride }),
         });
         const result = await res.json();
         if (result.ok) {
@@ -8713,8 +8713,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           // 학습 매핑 갱신
           setLearnedMap(prev => ({ ...prev, [item.payer_name]: { payer_name: item.payer_name, debtor_id: dId, debtor_name: d?.name, resolved_count: (prev[item.payer_name]?.resolved_count || 0) + 1 } }));
           await reloadFromBackend();
+        } else if (result.isDuplicate) {
+          // 예전엔 이 경우 result.error가 없어서 "오류: undefined"만 뜨고 왜 막혔는지 안 보였음.
+          // addPayment의 중복 처리와 동일하게, 실제 이유를 보여주고 원하면 강제 연결할 수 있게 함.
+          setResolving(null);
+          if (confirm(`이미 ${result.debtorName || d?.name}에게 ${result.paymentDate} ${fmt(result.total)} 입금 내역이 있습니다.\n그래도 중복으로 연결하시겠습니까?`)) {
+            await doResolve(item, true);
+          }
+          return;
         } else {
-          showToast(`오류: ${result.error}`);
+          showToast(`오류: ${result.error || result.reason || "알 수 없는 오류"}`);
         }
       } catch (e) { showToast(e.message); }
       setResolving(null);
