@@ -2312,9 +2312,19 @@ app.get("/api/pending-payments", (req, res) => {
 });
 
 // ─── 보류 항목 채무자 수동 연결 ─────────────────
+// 대기건 생성 시 채널을 추정해 pending_payments에 넣어두지만, 실제로는 연결 화면에서
+// 캐쉬충전/웰컴직접 중 사용자가 명시적으로 고른 값을 우선한다 — channel이 없으면(예: 예전
+// 클라이언트, 일괄연결 등 하위호환) pending 테이블에 저장된 값을 그대로 쓴다.
+function splitChannelAmount(pending, channel) {
+  const total = pending.total_amount;
+  if (channel === "캐쉬충전") return { companyAccount: 0, cashCharge: total, welcomeDirect: 0 };
+  if (channel === "웰컴직접상환") return { companyAccount: 0, cashCharge: 0, welcomeDirect: total };
+  return { companyAccount: pending.company_account, cashCharge: pending.cash_charge, welcomeDirect: pending.welcome_direct };
+}
+
 app.post("/api/pending-payments/:id/resolve", (req, res) => {
   const pendingId = parseInt(req.params.id, 10);
-  const { debtorId, createdByName, force } = req.body || {};
+  const { debtorId, createdByName, force, channel } = req.body || {};
   if (!debtorId) return res.status(400).json({ ok: false, error: "debtorId가 필요합니다" });
 
   const pending = db.prepare("SELECT * FROM pending_payments WHERE id = ? AND resolved = 0").get(pendingId);
@@ -2325,9 +2335,7 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
     paymentDate: pending.payment_date,
     payerName: pending.payer_name,
     totalAmount: pending.total_amount,
-    companyAccount: pending.company_account,
-    cashCharge: pending.cash_charge,
-    welcomeDirect: pending.welcome_direct,
+    ...splitChannelAmount(pending, channel),
     note: pending.note,
     source: pending.source,
     sourceRef: pending.source_ref,
@@ -2363,9 +2371,7 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
         paymentDate: other.payment_date,
         payerName: other.payer_name,
         totalAmount: other.total_amount,
-        companyAccount: other.company_account,
-        cashCharge: other.cash_charge,
-        welcomeDirect: other.welcome_direct,
+        ...splitChannelAmount(other, channel),
         note: other.note,
         source: other.source,
         sourceRef: other.source_ref,

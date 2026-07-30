@@ -8648,6 +8648,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [resolving, setResolving] = useState(null);
     const [selectedDebtor, setSelectedDebtor] = useState({});
     const [debtorSearch, setDebtorSearch] = useState({});
+    const [channelSel, setChannelSel] = useState({}); // item.id → "캐쉬충전" | "웰컴직접상환" — 연결 시 채널을 명시적으로 고르게 함
     const [learnedMap, setLearnedMap] = useState({}); // { payerName → { debtor_id, debtor_name, resolved_count } }
     const [showMappings, setShowMappings] = useState(false);
     const [checkedIds, setCheckedIds] = useState(new Set());
@@ -8695,13 +8696,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const doResolve = async (item, forceOverride = false) => {
       const dId = selectedDebtor[item.id];
       if (!dId) { showToast("채무자를 선택하세요"); return; }
+      const channel = channelSel[item.id];
+      if (!channel) { showToast("캐쉬충전 / 웰컴직접 중 입금 채널을 선택하세요"); return; }
       const d = data.debtors.find(x => x.id === dId);
-      if (!forceOverride && !confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
+      if (!forceOverride && !confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}(${channel})을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
       setResolving(item.id);
       try {
         const res = await fetch(`/api/pending-payments/${item.id}/resolve`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ debtorId: dId, createdByName: currentUser?.name, force: forceOverride }),
+          body: JSON.stringify({ debtorId: dId, createdByName: currentUser?.name, force: forceOverride, channel }),
         });
         const result = await res.json();
         if (result.ok) {
@@ -8765,22 +8768,45 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const doResolveAll = async () => {
       if (learnedPendingItems.length === 0) return;
-      if (!confirm(`학습 매핑된 ${learnedPendingItems.length}건을 일괄 연결할까요?`)) return;
+      // 각 항목의 캐쉬충전/웰컴직접 채널을 먼저 골라야 함 — 안 고른 건은 일괄 연결에서 제외
+      const ready = learnedPendingItems.filter(item => channelSel[item.id]);
+      const skipped = learnedPendingItems.length - ready.length;
+      if (ready.length === 0) { showToast("먼저 각 항목의 입금 채널(캐쉬충전/웰컴직접)을 선택하세요"); return; }
+      if (!confirm(`학습 매핑된 ${ready.length}건을 일괄 연결할까요?${skipped > 0 ? ` (채널 미선택 ${skipped}건 제외)` : ""}`)) return;
       let ok = 0;
-      for (const item of learnedPendingItems) {
+      for (const item of ready) {
         const mapping = learnedMap[item.payer_name];
         if (!mapping) continue;
         try {
           const res = await fetch(`/api/pending-payments/${item.id}/resolve`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ debtorId: mapping.debtor_id, createdByName: currentUser?.name }),
+            body: JSON.stringify({ debtorId: mapping.debtor_id, createdByName: currentUser?.name, channel: channelSel[item.id] }),
           });
           if ((await res.json()).ok) ok++;
         } catch {}
       }
-      showToast(`${ok}건 일괄 연결 완료`);
+      showToast(`${ok}건 일괄 연결 완료${skipped > 0 ? ` (채널 미선택 ${skipped}건 제외)` : ""}`);
       await loadPending();
       await reloadFromBackend();
+    };
+
+    // 캐쉬충전/웰컴직접 중 어느 채널로 들어온 입금인지 명시적으로 고르게 하는 토글.
+    // 두 대기열(미매칭 대기열, 학습 매핑 대기)에서 공유해서 쓴다.
+    const renderChannelToggle = (item) => {
+      const sel = channelSel[item.id];
+      const options = [config.paymentChannels[1], config.paymentChannels[2]]; // "캐쉬충전", "웰컴직접상환"
+      return (
+        <div style={{ display: "flex", gap: 4 }}>
+          {options.map(ch => (
+            <button key={ch} type="button" onClick={() => setChannelSel(p => ({ ...p, [item.id]: ch }))}
+              style={{ padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                background: sel === ch ? "var(--acc)" : "var(--bg)", color: sel === ch ? "#fff" : "var(--tm)",
+                border: sel === ch ? "none" : "1px solid var(--brd)" }}>
+              {ch === "웰컴직접상환" ? "웰컴직접" : ch}
+            </button>
+          ))}
+        </div>
+      );
     };
 
     return (
@@ -8877,10 +8903,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           </div>
                         )}
                       </div>
+                      {canEdit && renderChannelToggle(item)}
                       {canEdit && <button
                         onClick={() => doResolve(item)}
-                        disabled={!chosen || resolving === item.id}
-                        style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: chosen ? "var(--ok)" : "var(--bg)", color: chosen ? "#fff" : "var(--tm)", border: chosen ? "none" : "1px solid var(--brd)", opacity: (!chosen || resolving === item.id) ? 0.6 : 1, cursor: !chosen ? "not-allowed" : "pointer" }}
+                        disabled={!chosen || !channelSel[item.id] || resolving === item.id}
+                        style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: (chosen && channelSel[item.id]) ? "var(--ok)" : "var(--bg)", color: (chosen && channelSel[item.id]) ? "#fff" : "var(--tm)", border: (chosen && channelSel[item.id]) ? "none" : "1px solid var(--brd)", opacity: (!chosen || !channelSel[item.id] || resolving === item.id) ? 0.6 : 1, cursor: (!chosen || !channelSel[item.id]) ? "not-allowed" : "pointer" }}
                       >
                         {resolving === item.id ? "처리중..." : "✓ 연결"}
                       </button>}
@@ -8925,7 +8952,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{item.payment_date}</span>
                         <span style={{ color: "var(--tm)", fontSize: 12 }}>→</span>
                         <span style={{ fontSize: 13, color: "var(--ok)", fontWeight: 500, flex: 1 }}>{mapping?.debtor_name} <span style={{ fontSize: 11, color: "var(--tm)" }}>({mapping?.debtor_id})</span></span>
-                        <button onClick={() => doResolve(item)} disabled={resolving === item.id} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer", opacity: resolving === item.id ? 0.6 : 1 }}>
+                        {renderChannelToggle(item)}
+                        <button onClick={() => doResolve(item)} disabled={!channelSel[item.id] || resolving === item.id} style={{ padding: "4px 10px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "#7c3aed", color: "#fff", border: "none", cursor: !channelSel[item.id] ? "not-allowed" : "pointer", opacity: (!channelSel[item.id] || resolving === item.id) ? 0.6 : 1 }}>
                           {resolving === item.id ? "처리중..." : "✓ 연결"}
                         </button>
                         <button onClick={() => doDiscard(item)} style={{ padding: "4px 8px", borderRadius: 5, fontSize: 11, background: "#ef444410", color: "var(--err)", border: "1px solid #ef444430", cursor: "pointer" }}>
