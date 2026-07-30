@@ -3,6 +3,7 @@ import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
 import { COLLECTION_ORDERS } from "./collectionData.js";
+import { addIntervals, generateInstallmentDates, computeInstallmentCount, buildScheduleAmounts } from "./lib/installmentCalc.js";
 
 // ─── Utilities ────────────────────────────────────────────
 const fmt = (n) => `${(n || 0).toLocaleString("ko-KR")}원`;
@@ -3947,85 +3948,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [memo, setMemo] = useState("");
     const [saving, setSaving] = useState(false);
 
-    // 로컬 날짜 포맷 — toISOString()은 UTC 기준이라 UTC+9에서 하루 밀림
-    const localStr = (d) => {
-      if (!d || isNaN(d.getTime())) return "";
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
-    };
-
     const debtor = data.debtors.find(d => d.id === debtorId);
     const parsedAmount = Number(amountStr.replace(/,/g, "")) || 0;
     const totalClaim = debtor?.finalBalanceLegal || 0;
-    const count = totalClaim > 0 && parsedAmount > 0 ? Math.ceil(totalClaim / parsedAmount) : 0;
+    const count = computeInstallmentCount(totalClaim, parsedAmount);
 
     const firstDay = firstDueDate ? new Date(firstDueDate + "T00:00:00").getDate() : 0;
     const showEndOfMonthToggle = repeatInterval === "매월" && firstDay >= 28;
 
-    const addNIntervals = (dateStr, interval, n, endOfMonth = false) => {
-      if (!dateStr || n <= 0) return dateStr;
-      const d = new Date(dateStr + "T00:00:00");
-      if (isNaN(d.getTime())) return "";
-      if (interval === "매주") d.setDate(d.getDate() + 7 * n);
-      else if (interval === "격주") d.setDate(d.getDate() + 14 * n);
-      else if (interval === "매월") {
-        const origDay = endOfMonth ? 31 : d.getDate();
-        const ny = d.getFullYear() + Math.floor((d.getMonth() + n) / 12);
-        const nm = (d.getMonth() + n) % 12;
-        const lastDay = new Date(ny, nm + 1, 0).getDate();
-        d.setFullYear(ny, nm, Math.min(origDay, lastDay));
-      } else if (interval === "매년") {
-        d.setFullYear(d.getFullYear() + n);
-      }
-      if (isNaN(d.getTime())) return "";
-      return localStr(d);
-    };
-
     const cappedCount = Math.min(count, 1200);
-    const suggestedEndDate = cappedCount > 1 && firstDueDate ? addNIntervals(firstDueDate, repeatInterval, cappedCount - 1, useEndOfMonth) : "";
+    const suggestedEndDate = cappedCount > 1 && firstDueDate ? addIntervals(firstDueDate, repeatInterval, cappedCount - 1, useEndOfMonth) : "";
 
-    const generateDates = () => {
-      if (!firstDueDate) return [];
-      if (!repeat || !endDate) return [firstDueDate];
-      const endD = new Date(endDate + "T00:00:00");
-      if (isNaN(endD.getTime())) return [firstDueDate];
-      const dates = [];
-      const MAX = 1200;
-      if (repeatInterval === "매월") {
-        const origDay = useEndOfMonth ? 31 : new Date(firstDueDate + "T00:00:00").getDate();
-        let cur = new Date(firstDueDate + "T00:00:00");
-        while (dates.length < MAX) {
-          if (isNaN(cur.getTime()) || cur > endD) break;
-          dates.push(localStr(cur));
-          const nm = (cur.getMonth() + 1) % 12;
-          const ny = cur.getMonth() === 11 ? cur.getFullYear() + 1 : cur.getFullYear();
-          const lastDay = new Date(ny, nm + 1, 0).getDate();
-          cur = new Date(ny, nm, Math.min(origDay, lastDay));
-        }
-      } else if (repeatInterval === "매년") {
-        const origDay = new Date(firstDueDate + "T00:00:00").getDate();
-        const origMonth = new Date(firstDueDate + "T00:00:00").getMonth();
-        let cur = new Date(firstDueDate + "T00:00:00");
-        while (dates.length < MAX) {
-          if (isNaN(cur.getTime()) || cur > endD) break;
-          dates.push(localStr(cur));
-          cur = new Date(cur.getFullYear() + 1, origMonth, origDay);
-        }
-      } else {
-        const iv = repeatInterval === "매주" ? 7 : 14;
-        let cur = new Date(firstDueDate + "T00:00:00");
-        while (dates.length < MAX) {
-          if (isNaN(cur.getTime()) || cur > endD) break;
-          dates.push(localStr(cur));
-          cur.setDate(cur.getDate() + iv);
-        }
-      }
-      return dates;
-    };
-
-    const previewDates = generateDates();
+    const previewDates = generateInstallmentDates({ firstDate: firstDueDate, endDate, interval: repeat ? repeatInterval : null, useEndOfMonth });
 
     const handleSave = async () => {
       if (!debtorId) return showToast("채무자를 선택하세요");
@@ -4042,14 +3976,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const pResult = await pr.json();
         if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
         if (previewDates.length > 0) {
-          const schedules = previewDates.map((d, idx) => {
-            let amt = parsedAmount;
-            if (totalClaim > 0 && parsedAmount > 0 && previewDates.length > 1 && idx === previewDates.length - 1) {
-              const remainder = totalClaim - (previewDates.length - 1) * parsedAmount;
-              if (remainder > 0 && remainder < parsedAmount) amt = remainder;
-            }
-            return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amt, status: "예정", memo: "" };
-          });
+          const amounts = buildScheduleAmounts(previewDates, parsedAmount, totalClaim);
+          const schedules = previewDates.map((d, idx) => (
+            { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amounts[idx], status: "예정", memo: "" }
+          ));
           const sr = await fetch("/api/installments/schedules/batch", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ planId, schedules }),
@@ -5687,61 +5617,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const showEndOfMonthToggle = repeatType === "월간" && firstDay >= 28;
 
       // 추천 계산 (월간: 횟수, 주간/격주: 주 수)
-      const suggestedCount = totalClaim > 0 && parsedAmount > 0 ? Math.ceil(totalClaim / parsedAmount) : 0;
+      const suggestedCount = computeInstallmentCount(totalClaim, parsedAmount);
+      const intervalForCalc = repeatType === "월간" ? "매월" : repeatType === "주간" ? "매주" : repeatType === "격주" ? "격주" : null;
       const applySuggestion = () => {
-        if (!date || !suggestedCount) return;
-        const d = new Date(date + "T00:00:00");
-        if (repeatType === "월간") {
-          const origDay = useEndOfMonth ? 31 : d.getDate();
-          const ny = d.getFullYear() + Math.floor((d.getMonth() + suggestedCount - 1) / 12);
-          const nm = (d.getMonth() + suggestedCount - 1) % 12;
-          const lastDay = new Date(ny, nm + 1, 0).getDate();
-          d.setFullYear(ny, nm, Math.min(origDay, lastDay));
-        } else if (repeatType === "주간") {
-          d.setDate(d.getDate() + (suggestedCount - 1) * 7);
-        } else if (repeatType === "격주") {
-          d.setDate(d.getDate() + (suggestedCount - 1) * 14);
-        }
-        setRepeatEnd(localStr(d));
+        if (!date || !suggestedCount || !intervalForCalc) return;
+        setRepeatEnd(addIntervals(date, intervalForCalc, suggestedCount - 1, useEndOfMonth));
       };
       const suggestionLabel = repeatType === "월간" ? `약 ${suggestedCount}개월` : repeatType === "주간" ? `약 ${suggestedCount}주` : repeatType === "격주" ? `약 ${suggestedCount}회(격주)` : "";
 
-      const localStr = (d) => {
-        if (!d || isNaN(d.getTime())) return "";
-        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-      };
-
-      const generateDates = () => {
-        if (!date) return [];
-        if (repeatType === "없음" || !repeatEnd) return [date];
-        const dates = [];
-        const end = new Date(repeatEnd + "T00:00:00");
-        if (isNaN(end.getTime())) return [date];
-        const MAX = 1200;
-        if (repeatType === "월간") {
-          const origDay = useEndOfMonth ? 31 : new Date(date + "T00:00:00").getDate();
-          let cur = new Date(date + "T00:00:00");
-          while (dates.length < MAX) {
-            if (isNaN(cur.getTime()) || cur > end) break;
-            dates.push(localStr(cur));
-            const nm = cur.getMonth() === 11 ? 0 : cur.getMonth() + 1;
-            const ny = cur.getMonth() === 11 ? cur.getFullYear() + 1 : cur.getFullYear();
-            const daysInNm = new Date(ny, nm + 1, 0).getDate();
-            cur = new Date(ny, nm, Math.min(origDay, daysInNm));
-          }
-        } else {
-          const interval = repeatType === "주간" ? 7 : 14;
-          let cur = new Date(date + "T00:00:00");
-          while (dates.length < MAX) {
-            if (isNaN(cur.getTime()) || cur > end) break;
-            dates.push(localStr(cur));
-            cur.setDate(cur.getDate() + interval);
-          }
-        }
-        return dates;
-      };
-
-      const previewDates = generateDates();
+      const previewDates = generateInstallmentDates({ firstDate: date, endDate: repeatEnd, interval: intervalForCalc, useEndOfMonth });
 
       const handleSave = async () => {
         if (!debtorId) return showToast("채무자를 선택하세요");
@@ -5760,13 +5644,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
             targetPlanId = newPlanId;
           }
+          const amounts = buildScheduleAmounts(previewDates, parsedAmount, totalClaim);
           const schedules = previewDates.map((d, idx) => {
-            let amt = parsedAmount;
-            if (totalClaim > 0 && parsedAmount > 0 && previewDates.length > 1 && idx === previewDates.length - 1) {
-              const remainder = totalClaim - (previewDates.length - 1) * parsedAmount;
-              if (remainder > 0 && remainder < parsedAmount) amt = remainder;
-            }
-            return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amt, status, memo };
+            return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amounts[idx], status, memo };
           });
           const r = await fetch("/api/installments/schedules/batch", {
             method: "POST", headers: { "Content-Type": "application/json" },
