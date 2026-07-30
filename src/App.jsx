@@ -2523,10 +2523,15 @@ export default function App() {
 
   // ─── Data Mutation Helpers ──────────────────────────────
   // #2,#3 채무자 수정 — 이름/브랜드 변경 시 관련 데이터 연쇄 ���신
-  const updateDebtor = async (id, changes) => {
+  // changesOrFn이 함수면 setData 적용 시점의 최신 채무자 값을 넘겨서 결과 객체를 계산한다.
+  // (예: AI 종합분석처럼 응답을 기다리는 동안 사용자가 다른 필드를 먼저 저장해도
+  // 그 최신 값 위에 이어붙이도록 — 오래 걸리는 호출 시작 시점의 낡은 값을 덮어쓰지 않게)
+  const updateDebtor = async (id, changesOrFn) => {
+    let changes = changesOrFn;
     setData(prev => {
       const old = prev.debtors.find(d => d.id === id);
       if (!old) return prev;
+      if (typeof changesOrFn === "function") changes = changesOrFn(old) || {};
       const nameChanged = changes.name && changes.name !== old.name;
       const brandChanged = changes.brand && changes.brand !== old.brand;
       const cascadeRelated = (arr) => {
@@ -2556,6 +2561,7 @@ export default function App() {
         complaints: cascadeRelated(prev.complaints),
       };
     });
+    if (typeof changes === "function") return; // 로컬에 해당 채무자가 없어 계산이 안 됨 — 저장할 값이 없으므로 중단
     if (sel && sel.id === id) setSel(prev => ({ ...prev, ...changes }));
     // DB에 영구 저장 (에러 시 토스트로 즉시 알림)
     try {
@@ -4507,12 +4513,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const data = await res.json();
         if (!data.ok) { showToast(data.error ? `종합분석 실패: ${data.error}` : "종합분석 실패"); return; }
         const marker = "[채무자 및 연대보증인 종합분석]";
-        const cur = debtor.keyNotes || "";
-        const idx = cur.indexOf(marker);
-        const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
-        const block = `${marker}\n${data.text}`;
-        const newNotes = before ? `${before}\n\n${block}` : block;
-        await updateDebtor(debtor.id, { keyNotes: newNotes });
+        // keyNotes는 latest(저장 시점의 최신 채무자 값)에서 계산 — API 응답을 기다리는 동안
+        // 사용자가 주요사항을 직접 수정/저장했다면 그 최신 내용 위에 이어붙여야 하고,
+        // 여기서 캡처한 debtor.keyNotes(호출 시작 시점의 낡은 값)로 덮어쓰면 안 된다.
+        await updateDebtor(debtor.id, (latest) => {
+          const cur = latest.keyNotes || "";
+          const idx = cur.indexOf(marker);
+          const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
+          const block = `${marker}\n${data.text}`;
+          return { keyNotes: before ? `${before}\n\n${block}` : block };
+        });
         addLog("수정", "채권", `${debtor.name} — AI 종합분석 추가`);
       } catch { showToast("종합분석 실패"); }
       finally { setAnalyzing(false); }
