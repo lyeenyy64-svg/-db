@@ -307,6 +307,9 @@ function saveMR(key, recs) {
 }
 function addMR(key, rec)   { const r = [rec, ...getMR(key)]; saveMR(key, r); return r; }
 function delMR(key, id)    { const r = getMR(key).filter(x => x.id !== id); saveMR(key, r); return r; }
+// 채무자 삭제 시 그 채무자를 참조하는 수동 추가 레코드(legalCases/minsaCases 등)를 함께 정리.
+// delMR은 레코드 자신의 id로만 지우기 때문에, debtorId로 지워야 하는 캐스케이드 삭제엔 별도로 필요.
+function purgeMRByDebtor(key, debtorId) { const r = getMR(key).filter(x => x.debtorId !== debtorId); saveMR(key, r); return r; }
 function updateMR(key, id, patch) {
   const recs = getMR(key);
   const idx = recs.findIndex(x => x.id === id);
@@ -2615,6 +2618,11 @@ export default function App() {
     }
   };
   // #2 채무자 삭제 — 관련 데이터 캐스케이드 삭제
+  // installmentSchedules/legalCases/minsaCases/assetDisclosures/negotiations는 원래 안 지워지고
+  // 남아서, 다음 전체 새로고침(SSE 재로드 또는 수동 새로고침) 전까지 삭제된 채무자를 참조한
+  // 채로 화면에 계속 보이는 문제가 있었다. forcedExecutions/creditAnalyses는 debtorId가 아니라
+  // 자유 텍스트 이름(debtorName/target)만 가지고 있어서 채무자와 구조적으로 연결돼 있지 않으므로
+  // 캐스케이드 대상이 아니다.
   const deleteDebtor = async (id) => {
     setData(prev => ({
       ...prev,
@@ -2624,11 +2632,20 @@ export default function App() {
       seizureCases: prev.seizureCases.filter(s => s.debtorId !== id),
       rehabilitations: prev.rehabilitations.filter(r => r.debtorId !== id),
       installmentPlans: prev.installmentPlans.filter(p => p.debtorId !== id),
+      installmentSchedules: prev.installmentSchedules.filter(s => s.debtorId !== id),
       complaints: prev.complaints.filter(c => c.debtorId !== id),
+      legalCases: prev.legalCases.filter(c => c.debtorId !== id),
+      minsaCases: prev.minsaCases.filter(c => c.debtorId !== id),
+      assetDisclosures: prev.assetDisclosures.filter(c => c.debtorId !== id),
+      negotiations: prev.negotiations.filter(n => n.debtorId !== id),
     }));
     if (sel && sel.id === id) setSel(null);
-    // DB 삭제 시도, localStorage에서도 제거
+    // DB 삭제 시도, localStorage에서도 제거 (수동 추가 레코드는 debtorId 기준으로 함께 정리)
     delMR(MK.debtors, id);
+    purgeMRByDebtor(MK.legalCases, id);
+    purgeMRByDebtor(MK.minsaCases, id);
+    purgeMRByDebtor(MK.assetDisclosures, id);
+    purgeMRByDebtor(MK.negotiations, id);
     if (backendStatus === "connected") {
       fetch(`/api/debtors/${id}`, { method: "DELETE" }).catch(() => {});
     }
