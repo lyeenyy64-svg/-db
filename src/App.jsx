@@ -870,6 +870,7 @@ const I = ({ name, size = 18 }) => {
     sparkles: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="M19 3l.75 2.25L22 6l-2.25.75L19 9l-.75-2.25L16 6l2.25-.75z"/><path d="M5 17l.75 2.25L8 20l-2.25.75L5 23l-.75-2.25L2 20l2.25-.75z"/></svg>,
     pieChart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>,
     flag: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4"/><path d="M4 4h14l-3 4 3 4H4"/></svg>,
+    menu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
   };
   return s[name] || null;
 };
@@ -1362,7 +1363,7 @@ const Overlay = ({ children, onClose, wide }) => (
 );
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const pad2 = n => String(n).padStart(2, "0");
-function HeaderClock({ currentUser, lastSaved }) {
+function HeaderClock({ currentUser, lastSaved, compact }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -1375,6 +1376,10 @@ function HeaderClock({ currentUser, lastSaved }) {
     const t = `${pad2(lastSaved.getHours())}:${pad2(lastSaved.getMinutes())}:${pad2(lastSaved.getSeconds())}`;
     return sameDay ? t : `${lastSaved.getMonth()+1}/${pad2(lastSaved.getDate())} ${t}`;
   })() : "-";
+  // 좁은 화면에서는 날짜/담당자/마지막 갱신 줄이 다 들어갈 자리가 없어 시간만 남긴다
+  if (compact) {
+    return <div style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums", fontFamily: "monospace", color: "var(--tp)" }}>{timeStr}</div>;
+  }
   return (
     <div style={{ textAlign: "right" }}>
       <div style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: "tabular-nums", fontFamily: "monospace", color: "var(--tp)", lineHeight: "1.4" }}>{dateStr}&nbsp;&nbsp;{timeStr}</div>
@@ -2132,6 +2137,14 @@ export default function App() {
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
   const [tab, setTab] = useState("dashboard");
   const [sel, setSel] = useState(null);
+  // 모바일 반응형 — 폭이 좁으면 사이드바를 슬라이드형 드로어로 전환
+  const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth <= 768);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth <= 768);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [q, setQ] = useState("");
   const [brandFilter, setBrandFilter] = useState("전체");
   const [catFilter, setCatFilter] = useState("전체");
@@ -4428,7 +4441,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 { k: "collectedAmount",    l: "회수액",        w: 120 },
                 { k: "finalBalanceFinance",l: "재무기준잔액",   w: 130 },
                 { k: "finalBalanceLegal",  l: "법무기준잔액",   w: 130 },
-              ].map(c => (
+                // 좁은 화면에서는 핵심 항목만 남기고 나머지는 상세화면에서 보게 함(가로 스크롤 거리 축소)
+              ].filter(c => !isNarrow || !["guarantors", "hubCode", "debtCause", "adjustment", "finalBalanceFinance"].includes(c.k)).map(c => (
                 <th key={c.k} onClick={() => doSort(c.k)} style={{ padding: "10px 10px", textAlign: "center", fontWeight: 600, fontSize: 11, color: "var(--tm)", cursor: "pointer", whiteSpace: "nowrap", borderBottom: "1px solid var(--brd)", width: c.w, userSelect: "none" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>{c.l}{sort.f === c.k && <I name={sort.d === "asc" ? "arrowUp" : "arrowDown"} size={12} />}</div>
                 </th>
@@ -4453,14 +4467,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <td style={{ padding: "10px 10px", whiteSpace: "nowrap", textAlign: "center" }}><Badge status={d.category} small /></td>
                     <td style={{ padding: "10px 10px", fontSize: 12, textAlign: "center" }}>{d.assignee}</td>
                     <td style={{ padding: "10px 10px", fontWeight: 500, textAlign: "center" }}>{d.name}</td>
-                    <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{d.guarantors?.join(", ") || "-"}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{d.hubCode}</td>
+                    {!isNarrow && <td style={{ padding: "10px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{d.guarantors?.join(", ") || "-"}</td>}
+                    {!isNarrow && <td className="mono" style={{ padding: "10px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{d.hubCode}</td>}
                     <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{d.hubName}</td>
-                    <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{d.debtCause || "-"}</td>
+                    {!isNarrow && <td style={{ padding: "10px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{d.debtCause || "-"}</td>}
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(d.principalBalance)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>
+                    {!isNarrow && <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{d.adjustment ? fmt(d.adjustment) : "-"}</td>}
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(d.collectedAmount)}</td>
-                    <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(d.finalBalanceFinance)}</td>
+                    {!isNarrow && <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(d.finalBalanceFinance)}</td>}
                     <td className="mono" style={{ padding: "10px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, color: "var(--err)" }}>{fmt(d.finalBalanceLegal)}</td>
                   </tr>
                 );
@@ -4504,14 +4518,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div style={{ fontSize: 10, color: "var(--tm)", fontWeight: 400, marginTop: 2 }}>{span}건</div>
                       </td>
                     )}
-                    <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{sub.guarantors?.join(", ") || "-"}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{sub.hubCode}</td>
+                    {!isNarrow && <td style={{ padding: "8px 10px", fontSize: 11, color: "var(--ts)", textAlign: "center" }}>{sub.guarantors?.join(", ") || "-"}</td>}
+                    {!isNarrow && <td className="mono" style={{ padding: "8px 10px", fontSize: 11, color: "var(--tm)", textAlign: "center" }}>{sub.hubCode}</td>}
                     <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{sub.hubName}</td>
-                    <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{sub.debtCause || "-"}</td>
+                    {!isNarrow && <td style={{ padding: "8px 10px", fontSize: 12, color: "var(--ts)", textAlign: "center" }}>{sub.debtCause || "-"}</td>}
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{fmt(sub.principalBalance || 0)}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>
+                    {!isNarrow && <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#f59e0b" }}>{sub.adjustment ? fmt(sub.adjustment) : "-"}</td>}
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "var(--ok)" }}>{fmt(sub.collectedAmount || 0)}</td>
-                    <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(sub.finalBalanceFinance ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0)))}</td>
+                    {!isNarrow && <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", color: "#8b5cf6" }}>{fmt(sub.finalBalanceFinance ?? ((sub.principalBalance || 0) - (sub.collectedAmount || 0)))}</td>}
                     <td className="mono" style={{ padding: "8px 10px", fontSize: 12, textAlign: "right", whiteSpace: "nowrap", fontWeight: 600, color: "var(--err)" }}>{fmt(subLegal)}</td>
                   </tr>
                 );
@@ -4718,7 +4732,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     return (
       <div className="slide" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* Header with edit/delete */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", background: "var(--card)", borderRadius: 12, padding: isNarrow ? 14 : 20, border: "1px solid var(--brd)", flexWrap: isNarrow ? "wrap" : "nowrap", gap: isNarrow ? 10 : 0 }}>
           <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
             <div style={{ position: "relative", width: 52, height: 52 }}>
               <div style={{ width: 52, height: 52, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", background: `${d.brandColor}18`, fontSize: 20, fontWeight: 700, color: d.brandColor }}>{d.brand}</div>
@@ -4775,12 +4789,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>
 
         {/* Financial */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2,1fr)" : "repeat(5,1fr)", gap: 12 }}>
           {[{ l: "원채무액", v: fmt(d.principalBalance), c: "var(--tp)" },{ l: "추가법무비용", v: d.adjustment ? fmt(d.adjustment) : "-", c: "#f59e0b" },{ l: "회수액", v: fmt(d.collectedAmount), c: "var(--ok)" },{ l: "재무기준잔액", v: fmt(d.finalBalanceFinance), c: "#8b5cf6" },{ l: "법무기준잔액", v: fmt(d.finalBalanceLegal), c: "var(--err)" }].map((x, i) => (<div key={i} style={{ background: "var(--card)", borderRadius: 10, padding: 14, border: "1px solid var(--brd)" }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 6 }}>{x.l}</div><div className="mono" style={{ fontSize: 15, fontWeight: 700, color: x.c }}>{x.v}</div></div>))}
         </div>
 
         {/* Info cards */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "1fr 1fr", gap: 12 }}>
           {/* 왼쪽: 기본 정보 */}
           <div style={{ background: "var(--card)", borderRadius: 10, padding: 16, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>기본 정보</div>
@@ -5028,8 +5042,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* Tabs with quick-add buttons */}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <div style={{ display: "flex", gap: 2, flex: 1, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-            {dtabs.map(t => (<button key={t.k} onClick={() => setDetailTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 500, background: detailTab === t.k ? "var(--bg)" : "transparent", color: detailTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.k} {t.count > 0 && <span className="mono" style={{ fontSize: 10 }}>({t.count})</span>}</button>))}
+          <div style={{ display: "flex", gap: 2, flex: 1, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)", overflowX: isNarrow ? "auto" : "visible" }}>
+            {dtabs.map(t => (<button key={t.k} onClick={() => setDetailTab(t.k)} style={{ flex: isNarrow ? "0 0 auto" : 1, whiteSpace: "nowrap", padding: isNarrow ? "8px 12px" : "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 500, background: detailTab === t.k ? "var(--bg)" : "transparent", color: detailTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.k} {t.count > 0 && <span className="mono" style={{ fontSize: 10 }}>({t.count})</span>}</button>))}
           </div>
           {detailTab === "히스토리" && canEdit && (
             <button onClick={openAdd} style={{ padding: "8px 14px", borderRadius: 8, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", border: "1px solid var(--acc)40", cursor: "pointer" }}>히스토리 추가</button>
@@ -5100,9 +5114,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>}
 
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
+          <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
               {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
+          </div>
         </div>}
 
         <div style={{ display: detailTab === "분할상환" ? "flex" : "none", flexDirection: "column", gap: 12 }}>
@@ -5204,7 +5220,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
                 <Badge status={c.progressStatus || c.status || "진행"} small />
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 11, color: "var(--ts)" }}>
+              <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 8, fontSize: 11, color: "var(--ts)" }}>
                 {c.filingDate && <span>접수일: {c.filingDate}</span>}
                 {c.applicationDate && <span>신청일: {c.applicationDate}</span>}
                 {c.defendant && <span>피고: {c.defendant}</span>}
@@ -5218,7 +5234,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>}
 
         {detailTab === "회생파산" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
+          {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
           {debtorRehabs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>회생/파산 내역 없음</div>}
         </div>}
 
@@ -6764,8 +6780,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 520 }}>
-          <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }}>
+        <div style={{ display: "flex", flexDirection: isNarrow ? "column" : "row", gap: 12, flex: 1, minHeight: isNarrow ? 0 : 520 }}>
+          <div style={isNarrow
+            ? { width: "100%", maxHeight: 220, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }
+            : { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }}>
             {locations === null
               ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
               : searched.length === 0
@@ -10610,10 +10628,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   if (!approvedUser?.approved) return <><style>{CSS}</style><PendingScreen user={currentUser} onLogout={handleLogout} /></>;
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: "#fff", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100vh", background: "#fff", overflow: "hidden", position: "relative" }}>
       <style>{CSS}</style>
+      {/* 모바일에서 드로어 열렸을 때 바깥 클릭하면 닫히는 배경 */}
+      {isNarrow && mobileNavOpen && (
+        <div onClick={() => setMobileNavOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", zIndex: 400 }} />
+      )}
       {/* Sidebar */}
-      <div style={{ width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <div style={isNarrow
+        ? { width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0, position: "fixed", top: 0, bottom: 0, left: mobileNavOpen ? 0 : -240, zIndex: 500, transition: "left .2s", boxShadow: mobileNavOpen ? "4px 0 20px rgba(0,0,0,.2)" : "none" }
+        : { width: 220, background: "var(--bg2)", borderRight: "1px solid var(--brd)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
         <div onClick={() => setTab("dashboard")} style={{ padding: "20px 16px", borderBottom: "1px solid var(--brd)", cursor: "pointer" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <BrandLogo size={30} />
@@ -10629,6 +10653,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div key={t.k}>
                 <button
                   onClick={() => {
+                    if (isNarrow) setMobileNavOpen(false);
                     if (t.k === "debtors") {
                       setDebtorsSubTab("채무자 목록");
                       goToDebtorList();
@@ -10663,7 +10688,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       return (
                         <button
                           key={s.k}
-                          onClick={() => { t.setSub(s.k); /* 부모 expanded 상태 건드리지 않음 */ }}
+                          onClick={() => { t.setSub(s.k); if (isNarrow) setMobileNavOpen(false); /* 부모 expanded 상태 건드리지 않음 */ }}
                           style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px 7px 28px", borderRadius: 6, fontSize: 12, fontWeight: isSubActive ? 600 : 400, background: isSubActive ? "#ff5f0015" : "transparent", color: isSubActive ? "var(--acc)" : "var(--ts)", textAlign: "left", width: "100%", border: "none", cursor: "pointer" }}
                         >
                           <span style={{ width: 5, height: 5, borderRadius: "50%", background: isSubActive ? "var(--acc)" : "var(--tm)", flexShrink: 0 }} />
@@ -10734,8 +10759,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       </div>
       {/* Main */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ height: 56, padding: "0 24px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <div style={{ height: 56, padding: isNarrow ? "0 12px" : "0 24px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {isNarrow && <button onClick={() => setMobileNavOpen(true)} aria-label="메뉴 열기" style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)", border: "none", flexShrink: 0 }}><I name="menu" size={18} /></button>}
             {sel && tab === "debtors" && <button onClick={goBack} style={{ width: 32, height: 32, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--ts)" }}><I name="back" size={16} /></button>}
             <span
               onClick={tab === "debtors" ? () => { setDebtorsSubTab("채무자 목록"); goToDebtorList(); } : undefined}
@@ -10747,14 +10773,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </span>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <HeaderClock currentUser={currentUser} lastSaved={lastSaved} />
+            <HeaderClock currentUser={currentUser} lastSaved={lastSaved} compact={isNarrow} />
             <div style={{ width: 1, height: 28, background: "var(--brd)" }} />
             <button onClick={() => loadData()} disabled={isRefreshing} title="데이터 새로고침" style={{ width: 36, height: 36, borderRadius: 8, background: isRefreshing ? "var(--acc)" : "var(--card)", color: isRefreshing ? "#fff" : "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: isRefreshing ? "default" : "pointer" }}>
               <span className={isRefreshing ? "spinning" : ""}><I name="refresh" size={16} /></span>
             </button>
           </div>
         </div>
-        <div style={{ flex: 1, overflow: "auto", padding: 24 }}>
+        <div style={{ flex: 1, overflow: "auto", padding: isNarrow ? 12 : 24 }}>
           {tab === "dashboard" && Dashboard()}
           {tab === "issues" && issuesView}
           {tab === "debtors" && (sel ? <DebtorDetail d={sel} /> : (debtorsSubTab === "채무자 위치" ? <DebtorLocationsView /> : debtorListView))}
