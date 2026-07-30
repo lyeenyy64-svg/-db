@@ -2721,18 +2721,24 @@ export default function App() {
   const isRehabPayerName = (payerName) => /\d{1,2}$/.test((payerName || "").trim());
 
   // 입금 후 회생파산 회차 자동 증가 처리
+  // 예전엔 setData로 화면에만 반영하고 영구 저장을 안 해서, 결제 직후엔 회차가 늘어난
+  // 것처럼 보이다가 다음 새로고침(idle SSE, 수동 새로고침, 재접속)에 원래 회차로
+  // 되돌아가는 버그가 있었다. 다른 사건 필드 편집과 동일하게 saveCaseFieldOv로
+  // 영구 저장해야 loadData/reloadFromBackend의 applyCaseFieldOv가 다시 읽어들인다.
   const applyRehabRoundIncrement = (debtorId, payerName) => {
     if (!debtorId || !isRehabPayerName(payerName)) return;
+    let savedCaseId = null, newRound = null;
     setData(prev => {
-      const hasRehab = prev.rehabilitations.some(r => r.debtorId === debtorId);
-      if (!hasRehab) return prev;
+      const target = prev.rehabilitations.find(r => r.debtorId === debtorId);
+      if (!target) return prev;
+      newRound = incrementRehabRound(target.currentRound);
+      savedCaseId = target.id;
       const updated = prev.rehabilitations.map(r =>
-        r.debtorId === debtorId
-          ? { ...r, currentRound: incrementRehabRound(r.currentRound) }
-          : r
+        r.debtorId === debtorId ? { ...r, currentRound: newRound } : r
       );
       return { ...prev, rehabilitations: updated };
     });
+    if (savedCaseId) saveCaseFieldOv(savedCaseId, { currentRound: newRound });
   };
 
   // 입금 추가 — 백엔드 API 호출 (잔액·분할상환·추심상태 자동 처리)
