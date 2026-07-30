@@ -244,9 +244,21 @@ EXCEL_DEBTORS.forEach(e => {
     EXCEL_BY_PHONE[pkey] = (pkey in EXCEL_BY_PHONE) ? null : e;
   }
 });
+// 이름+전화번호 매칭이 둘 다 실패한 특정 건을 위한 수동 별칭.
+// 동일인의 대여금이 여러 건으로 나뉘면(예: "문호섭1"/"문호섭2") 전화번호 칸 맨 앞에
+// 본인 번호가 똑같이 적혀 있어 EXCEL_BY_PHONE에서 서로 충돌해 모호 처리(null)되고,
+// 원장에서 나중에 "이름1"/"이름2"로 재정리되면 엑셀 스냅샷의 원래 이름과도 안 맞아
+// 이름 매칭도 끊긴다. 이런 경우만 여기 { "브랜드||현재이름": "브랜드||엑셀원본이름" }로 등록.
+const EXCEL_NAME_ALIASES = {
+  "D||문호섭1": "D||문호섭(딜버)",
+  "D||문호섭2": "D||문호섭",
+};
 // 이름+브랜드 매칭 실패 시에만, 전화번호가 유일하게 일치하는 원본이 있으면 보조로 매칭
 function matchExcelDebtor(d) {
-  return EXCEL_BY_KEY[`${d.brand}||${d.name}`] || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`] || undefined;
+  const key = `${d.brand}||${d.name}`;
+  return EXCEL_BY_KEY[key]
+    || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`]
+    || (EXCEL_NAME_ALIASES[key] ? EXCEL_BY_KEY[EXCEL_NAME_ALIASES[key]] : undefined);
 }
 
 // 현재 로그인한 사용자 이름 — App() 컴포넌트 밖에서도 참조할 수 있도록
