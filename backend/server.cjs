@@ -892,7 +892,7 @@ app.post("/api/slack/preview", (req, res) => {
   const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
   const idx = matcher.buildIndex(all, guarantors);
   const enriched = entries.map(e => {
-    const m = matcher.matchDebtor(idx, { payerName: e.payerName, debtorName: e.payerName });
+    const m = matcher.matchDebtor(idx, { brand: e.brand || meta.brand, payerName: e.payerName, debtorName: e.payerName });
     if (m) {
       const d = db.prepare("SELECT id, name, brand_code, hub_name FROM debtors WHERE id = ?").get(m.debtorId);
       return {
@@ -928,6 +928,7 @@ app.post("/api/slack/ingest", (req, res) => {
       payerName: e.payerName,
       totalAmount: e.totalAmount,
       companyAccount: e.totalAmount,  // Slack은 본사계좌(국민#1812)로 가정
+      brand: e.brand || meta.brand,
       source: "slack",
       sourceRef: messageDate || null,
       createdByName: createdByName || "Slack 자동수집",
