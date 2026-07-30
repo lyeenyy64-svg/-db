@@ -9043,9 +9043,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   const AiDocsView = useStableComponent(() => {
     const [selTemplate,   setSelTemplate]   = useState("압류별지");
     const [execType,      setExecType]      = useState("공정증서");
-    const [debtorQ,       setDebtorQ]       = useState("");
-    const [selDebtor,     setSelDebtor]     = useState(null);
-    const [residentId,    setResidentId]    = useState("");
     const [origPrincipal, setOrigPrincipal] = useState("");
     const [remaining,     setRemaining]     = useState("");
     // 공정증서 전용
@@ -9066,42 +9063,54 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [dlLoading,  setDlLoading]  = useState(false);
     const [dlError,    setDlError]    = useState("");
 
-    // 이름/허브코드가 채무자 본인과 안 맞아도 연대보증인 이름으로도 찾을 수 있어야 한다 —
-    // "압류 및 추심할 채권의 표시" 같은 문건은 연대보증인을 상대로도 만들 필요가 있기 때문.
-    const debtorResults = useMemo(() => {
-      if (!debtorQ.trim()) return [];
-      const q = debtorQ.trim().toLowerCase();
+    // 대상자(별지 1, 별지 2, ...) — 공정증서/판결문 하나로 채무자 본인+연대보증인 등
+    // 여러 명에게 각각 별지를 작성해야 하는 경우를 위해, 대상자 수를 늘리면 그만큼
+    // 아래 블록이 생기고 각자 채무자 검색·주민등록번호·제3채무자 항목을 따로 채운다.
+    const [targets, setTargets] = useState([{ id: 1, q: "", sel: null, residentId: "", enabled: {} }]);
+    const nextTargetIdRef = useRef(2);
+
+    const setTargetCount = (n) => {
+      n = Math.max(1, Math.min(20, n || 1));
+      setTargets(prev => {
+        if (n === prev.length) return prev;
+        if (n < prev.length) return prev.slice(0, n);
+        const add = Array.from({ length: n - prev.length }, () => ({ id: nextTargetIdRef.current++, q: "", sel: null, residentId: "", enabled: {} }));
+        return [...prev, ...add];
+      });
+    };
+    const updateTarget = (idx, patch) => setTargets(prev => prev.map((t, i) => i === idx ? { ...t, ...patch } : t));
+
+    // 이름/허브코드가 본인과 안 맞아도 연대보증인 이름으로도 찾을 수 있어야 한다 —
+    // 대상자 여러 명 중엔 연대보증인이 섞여 있는 경우가 흔하기 때문.
+    const searchTargets = (q) => {
+      if (!q || !q.trim()) return [];
+      const qq = q.trim().toLowerCase();
       const results = [];
       for (const d of data.debtors) {
-        if (d.name.toLowerCase().includes(q) || (d.hubCode || "").includes(q)) {
-          results.push({ ...d, _asGuarantor: null });
-        }
+        if (d.name.toLowerCase().includes(qq) || (d.hubCode || "").includes(qq)) results.push({ ...d, _asGuarantor: null });
         for (const g of d.guarantors || []) {
-          if (g && String(g).toLowerCase().includes(q)) results.push({ ...d, _asGuarantor: g });
+          if (g && String(g).toLowerCase().includes(qq)) results.push({ ...d, _asGuarantor: g });
         }
       }
       return results.slice(0, 8);
-    }, [debtorQ, data.debtors]);
-
-    const handleSelectDebtor = (d) => {
-      setSelDebtor(d);
-      setDebtorQ(d._asGuarantor || d.name);
-      setRemaining(String(d.principalBalance || d.principal_balance || ""));
     };
 
-    // 연대보증인을 선택했으면 문건에는 채무자 본인이 아니라 그 연대보증인 이름이 들어가야 함.
-    // 채권 원금/잔액은 같은 채무에 대한 것이므로 그대로 selDebtor(연결된 채무자)의 값을 쓴다.
-    const docPersonName = selDebtor?._asGuarantor || selDebtor?.name || "";
+    const selectTargetDebtor = (idx, d) => {
+      updateTarget(idx, { sel: d, q: d._asGuarantor || d.name });
+      // 대상자가 1명뿐이고 잔액을 아직 안 채웠으면(첫 선택) 그 채무자 원금으로 자동 채움
+      if (targets.length === 1 && !remaining) setRemaining(String(d.principalBalance || d.principal_balance || ""));
+    };
+    const targetName = (t) => t.sel?._asGuarantor || t.sel?.name || "";
 
     const togglePreset = (preset) => {
       const exists = items.find(it => it.name === preset.fullName);
       if (exists) setItems(items.filter(it => it.name !== preset.fullName));
-      else setItems([...items, { id: Date.now(), name: preset.fullName, amount: 2000000, type: preset.type }]);
+      else setItems([...items, { id: Date.now(), name: preset.fullName, amount: 300000, type: preset.type }]);
     };
 
     const addCustom = () => {
       if (!customName.trim()) return;
-      setItems([...items, { id: Date.now(), name: customName.trim(), amount: 2000000, type: customType }]);
+      setItems([...items, { id: Date.now(), name: customName.trim(), amount: 300000, type: customType }]);
       setCustomName("");
     };
 
@@ -9109,7 +9118,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setItems(items.map(it => it.id === id ? { ...it, amount: parseInt(String(val).replace(/,/g, ""), 10) || 0 } : it));
     const updateItemName = (id, val) =>
       setItems(items.map(it => it.id === id ? { ...it, name: val } : it));
-    const removeItem = (id) => setItems(items.filter(it => it.id !== id));
+    const removeItem = (id) => {
+      setItems(items.filter(it => it.id !== id));
+      setTargets(prev => prev.map(t => { if (t.enabled[id] == null) return t; const e = { ...t.enabled }; delete e[id]; return { ...t, enabled: e }; }));
+    };
     const moveItem = (id, dir) => {
       const idx = items.findIndex(it => it.id === id);
       if (idx < 0) return;
@@ -9120,56 +9132,101 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       setItems(next);
     };
 
-    const bankItems     = items.filter(it => it.type === "bank");
-    const platformItems = items.filter(it => it.type === "platform");
-    const totalAmount   = items.reduce((s, it) => s + (it.amount || 0), 0);
-    const fmtNum        = n => Number(n || 0).toLocaleString("ko-KR");
-    const origNum       = parseInt(String(origPrincipal).replace(/,/g, ""), 10) || 0;
-    const remNum        = parseInt(String(remaining).replace(/,/g, ""), 10) || 0;
+    // 대상자별로 이 항목을 포함할지 토글 — 처음 체크할 때 마스터 기본금액을 가져온다.
+    const toggleTargetItem = (tIdx, item) => {
+      setTargets(prev => prev.map((t, i) => {
+        if (i !== tIdx) return t;
+        const e = { ...t.enabled };
+        if (e[item.id] != null) delete e[item.id]; else e[item.id] = item.amount;
+        return { ...t, enabled: e };
+      }));
+    };
+    const setTargetItemAmount = (tIdx, itemId, val) => {
+      const n = parseInt(String(val).replace(/,/g, ""), 10) || 0;
+      setTargets(prev => prev.map((t, i) => i === tIdx ? { ...t, enabled: { ...t.enabled, [itemId]: n } } : t));
+    };
+
+    const fmtNum = n => Number(n || 0).toLocaleString("ko-KR");
+    const origNum = parseInt(String(origPrincipal).replace(/,/g, ""), 10) || 0;
+    const remNum  = parseInt(String(remaining).replace(/,/g, ""), 10) || 0;
+
+    // 항목 번호는 "제3채무자 선택"에 추가한 순서(마스터 목록 인덱스)로 고정되고, 대상자마다
+    // 자신에게 해당되는 번호만 골라서 쓴다 — 같은 은행이라도 대상자 전체에서 번호가 동일해야
+    // 함께 첨부되는 별지들 사이에서 항목을 혼동하지 않기 때문.
+    const targetClaimAmount = (t) => items.reduce((s, it) => s + (t.enabled[it.id] != null ? t.enabled[it.id] : 0), 0);
+    const targetFormula = (t) => {
+      const nums = items.map((it, i) => t.enabled[it.id] != null ? i + 1 : null).filter(Boolean);
+      return nums.length ? `(${nums.join("+")})` : "";
+    };
 
     const buildExecTitleText = () => {
       if (execType === "공정증서") {
-        return `[${notaryDoc || "공증인가 법무법인 ○○ 증서 20__년 제___호"}] 집행력있는 [${docType || "공정증서 정본"}] [${clause || "제1조(목적)상"}]의 채무자가 채권자에게 [${borrowDate || "20__년 __월 __일"}] 차용한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+        return `[${notaryDoc || "공증인가 법무법인 ○○ 증서 20__년 제___호"}] 집행력있는 [${docType || "공정증서 정본"}] [${clause || "제1조(목적)상"}]의 채무자가 채권자에게 [${borrowDate || "20__년 __월 __일"}] 차용한 원금 [${fmtNum(origNum)}원]`;
       } else if (execType === "판결문") {
-        return `[${courtName || "○○지방법원"}] [${caseNumber || "20__가단_____"}] 판결문에 의한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+        return `[${courtName || "○○지방법원"}] [${caseNumber || "20__가단_____"}] 판결문에 의한 원금 [${fmtNum(origNum)}원]`;
       } else {
-        return `[${courtName || "○○지방법원"}] [${orderNumber || "20__차_____"}] 지급명령에 의한 원금 [${fmtNum(origNum)}원] 중 변제 후 잔액 [${fmtNum(remNum)}원]`;
+        return `[${courtName || "○○지방법원"}] [${orderNumber || "20__차_____"}] 지급명령에 의한 원금 [${fmtNum(origNum)}원]`;
       }
     };
+    const targetClaimText = (t) => `${buildExecTitleText()} 중 변제 후 잔액 [${fmtNum(remNum)}원] 중 일부 ${fmtNum(targetClaimAmount(t))}원를 청구함`;
 
-    const buildDocData = () => ({
-      debtorName:         docPersonName,
-      residentId:         residentId || "000000-0000000",
-      totalAmount,
-      executionTitleText: buildExecTitleText(),
-      bankItems:          bankItems.map(it => ({ name: it.name, amount: it.amount })),
-      platformItems:      platformItems.map(it => ({ name: it.name, amount: it.amount })),
-    });
+    // HWPX 다운로드는 대상자 1명일 때만 지원 — 여러 명을 한 파일로 합치는 건 별도 작업이라
+    // 대상자가 여러 명이면 PDF 출력(여러 별지를 이어서 인쇄)을 쓰도록 안내한다.
+    const buildDocData = () => {
+      const t = targets[0] || { enabled: {}, residentId: "" };
+      return {
+        debtorName:         targetName(t),
+        residentId:         t.residentId || "000000-0000000",
+        totalAmount:        targetClaimAmount(t),
+        executionTitleText: targetClaimText(t),
+        bankItems:          items.filter(it => it.type === "bank" && t.enabled[it.id] != null).map(it => ({ name: it.name, amount: t.enabled[it.id] })),
+        platformItems:      items.filter(it => it.type === "platform" && t.enabled[it.id] != null).map(it => ({ name: it.name, amount: t.enabled[it.id] })),
+      };
+    };
 
-    const generateDocHtml = () => {
-      const dName = docPersonName || "(채무자 미선택)";
-      const rid   = residentId || "000000-0000000";
-      const execText = buildExecTitleText();
-      const allItems = [...bankItems, ...platformItems];
-      const formula  = allItems.length > 0
-        ? "(" + allItems.map((_, i) => i + 1).join("+") + ")"
-        : "(항목 없음)";
+    // 대상자 한 명의 "별지" 내용(HTML) — 은행 항목은 항목 번호(마스터 목록 인덱스) 순으로
+    // 묶어서 보여주고 그 사이에 "다음" 안내문구를 한 번만 넣은 뒤, 플랫폼 항목을 잇는다.
+    const renderTargetSection = (t, idx, total) => {
+      const dName = targetName(t) || `(대상자${idx + 1} 미선택)`;
+      const rid = t.residentId || "000000-0000000";
+      const claim = targetClaimAmount(t);
+      const formula = targetFormula(t) || "(항목 없음)";
+      const bankEnabled = items.filter(it => it.type === "bank" && t.enabled[it.id] != null);
+      const platEnabled = items.filter(it => it.type === "platform" && t.enabled[it.id] != null);
 
       const bankBody = (name) =>
         `채무자[${dName}][(주민등록번호 : ${rid})]이 제3채무자 [${name}]에 대하여 가지는 다음의 예금채권 중 현재 입금되어 있거나 장래 입금될 예금채권으로서 다음에서 기재한 순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 7호, 8호 및 동법시행령에 의하여 압류가 금지되는 예금은 제외한다.)`;
       const platBody = (name) =>
         `채무자[${dName}][(주민등록번호 : ${rid})]이 제3채무자 [${name}]의 배달대행 프로그램상 가지는 배달수수료 및 이에 따른 수당채권 일체중 제3채무자가 채무자에게 현재 지급해야 할 금액 및 장래에 지급해야 금액 중 위 청구금액에 이를 때까지의 금액`;
 
-      const bankRows = bankItems.map((item, i) => `
-        <div class="item-title"><strong>${i + 1}. [${item.name}]에 대하여</strong></div>
-        <div class="item-amount">&nbsp;&nbsp;&nbsp;[금 ${fmtNum(item.amount)}원]</div>
-        <p>${bankBody(item.name)}</p>`).join("");
+      const rows = (list, bodyFn) => list.map(it => `
+        <div class="item-title"><strong>${items.indexOf(it) + 1}. [${it.name}]에 대하여</strong></div>
+        <div class="item-amount">&nbsp;&nbsp;&nbsp;[금 ${fmtNum(t.enabled[it.id])}원]</div>
+        <p>${bodyFn(it.name)}</p>`).join("");
 
-      const platRows = platformItems.map((item, i) => `
-        <div class="item-title"><strong>${bankItems.length + i + 1}. [${item.name}]에 대하여</strong></div>
-        <div class="item-amount">&nbsp;&nbsp;[ 금 ${fmtNum(item.amount)}원]</div>
-        <p>${platBody(item.name)}</p>`).join("");
+      return `
+  <p>[별지${total > 1 ? ` ${idx + 1}` : ""}]</p>
+  <h2>압류 및 추심할 채권의 표시</h2>
+  <div class="label">채무자${total > 1 ? idx + 1 : ""} : [ ${dName} ]</div>
+  <div class="claim">청구금액 : [ ${fmtNum(claim)} ]원</div>
+  <div>${formula}</div>
+  <div class="notary">* 청구금액 산정내역 : ${targetClaimText(t)}</div>
+  ${rows(bankEnabled, bankBody)}
+  ${bankEnabled.length > 0 ? `<div class="daeum-box">
+    <div class="daeum-title">- 다 음 -</div>
+    <div>1. 압류·가압류되지 않은 예금과 압류·가압류된 예금이 있는 때에는 다음 순서에 따라서 압류한다.<br>
+      &nbsp;&nbsp;&nbsp;① 선행 압류·가압류가 되지 않은 예금&nbsp;&nbsp;② 선행 압류·가압류가 된 예금</div>
+    <div>2. 여러 종류의 예금이 있는 때에는 다음 순서에 의하여 압류한다.<br>
+      &nbsp;&nbsp;&nbsp;① 보통예금 ② 당좌예금 ③ 정기예금 ④ 정기적금 ⑤ 별단예금<br>
+      &nbsp;&nbsp;&nbsp;⑥ 저축예금 ⑦ MMF ⑧ MMDA ⑨ 적립식펀드예금 ⑩ 신탁예금 ⑪ 채권형 예금 ⑫청약예금</div>
+    <div>3. 같은 종류의 예금이 여러 계좌에 있는 때에는 계좌번호가 빠른 예금부터 압류한다.</div>
+    <div><strong>4. 다만, 채무자의 1개월간 생계유지에 필요한 예금으로 민사집행법 시행령이 정한 금액에 해당하는 경우에는 이를 제외한 나머지 금액. 끝.</strong></div>
+  </div>` : ""}
+  ${rows(platEnabled, platBody)}`;
+    };
 
+    const generateDocHtml = () => {
+      const pages = targets.map((t, i) => `<div class="page"${i < targets.length - 1 ? ' style="page-break-after:always"' : ""}>${renderTargetSection(t, i, targets.length)}</div>`).join("");
       return `<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8"/>
 <style>
@@ -9185,27 +9242,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   .daeum-box{border:1px solid #000;padding:10px 14px;margin:14px 0;font-size:9.5pt}
   .daeum-title{text-align:center;font-weight:bold;margin-bottom:8px}
   @media print{body{margin:0}.page{margin:0;padding:15mm 18mm}}
-</style></head><body>
-<div class="page">
-  <p>[별지]</p>
-  <h2>압류 및 추심할 채권의 표시</h2>
-  <div class="label">채무자 : [ ${dName} ]</div>
-  <div class="claim">청구금액 : [ ${fmtNum(totalAmount)} ]원</div>
-  <div>${formula}</div>
-  <div class="notary">* 청구금액 산정내역 : ${execText}</div>
-  ${bankRows}
-  ${bankItems.length > 0 ? `<div class="daeum-box">
-    <div class="daeum-title">- 다 음 -</div>
-    <div>1. 압류·가압류되지 않은 예금과 압류·가압류된 예금이 있는 때에는 다음 순서에 따라서 압류한다.<br>
-      &nbsp;&nbsp;&nbsp;① 선행 압류·가압류가 되지 않은 예금&nbsp;&nbsp;② 선행 압류·가압류가 된 예금</div>
-    <div>2. 여러 종류의 예금이 있는 때에는 다음 순서에 의하여 압류한다.<br>
-      &nbsp;&nbsp;&nbsp;① 보통예금 ② 당좌예금 ③ 정기예금 ④ 정기적금 ⑤ 별단예금<br>
-      &nbsp;&nbsp;&nbsp;⑥ 저축예금 ⑦ MMF ⑧ MMDA ⑨ 적립식펀드예금 ⑩ 신탁예금 ⑪ 채권형 예금 ⑫청약예금</div>
-    <div>3. 같은 종류의 예금이 여러 계좌에 있는 때에는 계좌번호가 빠른 예금부터 압류한다.</div>
-    <div><strong>4. 다만, 채무자의 1개월간 생계유지에 필요한 예금으로 민사집행법 시행령이 정한 금액에 해당하는 경우에는 이를 제외한 나머지 금액. 끝.</strong></div>
-  </div>` : ""}
-  ${platRows}
-</div></body></html>`;
+</style></head><body>${pages}</body></html>`;
     };
 
     const handlePreview = () => {
@@ -9215,8 +9252,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const handleDownloadHwpx = async () => {
-      if (!selDebtor) return setDlError("채무자를 먼저 선택하세요.");
-      if (items.length === 0) return setDlError("제3채무자 항목을 1개 이상 추가하세요.");
+      if (targets.length > 1) return setDlError("대상자가 2명 이상이면 HWPX 다운로드는 지원하지 않습니다 — PDF 출력을 이용해주세요.");
+      const t = targets[0];
+      if (!t?.sel) return setDlError("채무자를 먼저 선택하세요.");
+      if (Object.keys(t.enabled).length === 0) return setDlError("제3채무자 항목을 1개 이상 선택하세요.");
       setDlLoading(true); setDlError("");
       try {
         const res = await fetch("/api/documents/generate-hwpx", {
@@ -9232,7 +9271,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const url  = URL.createObjectURL(blob);
         const a    = document.createElement("a");
         a.href = url;
-        a.download = `압류채권표시_${docPersonName}.hwpx`;
+        a.download = `압류채권표시_${targetName(t)}.hwpx`;
         document.body.appendChild(a); a.click();
         document.body.removeChild(a); URL.revokeObjectURL(url);
       } catch (e) {
@@ -9283,44 +9322,95 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
 
-          {/* 채무자 정보 */}
+          {/* 대상자 정보 — 하나의 공정증서/판결문으로 여러 명(채무자 본인+연대보증인 등)에게
+              각각 별지를 작성해야 할 수 있어, 대상자 수를 늘리면 그만큼 블록이 추가된다. */}
           <div style={sectionStyle}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>채무자 정보</div>
-            <label style={labelStyle}>채무자 검색 (DB)</label>
-            <div style={{ position: "relative", marginBottom: 10 }}>
-              <KoreanInput
-                value={debtorQ}
-                onChange={e => { setDebtorQ(e.target.value); setSelDebtor(null); }}
-                placeholder="채무자명 또는 허브코드 입력..."
-                style={inputStyle}
-              />
-              {debtorResults.length > 0 && !selDebtor && (
-                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
-                  border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
-                  {debtorResults.map((d, i) => (
-                    <div key={`${d.id}-${d._asGuarantor || "main"}-${i}`} onClick={() => handleSelectDebtor(d)}
-                      style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <span style={{ fontWeight: 600 }}>{d._asGuarantor || d.name}</span>
-                      {d._asGuarantor && <span style={{ fontSize: 10, color: "var(--acc)", marginLeft: 6 }}>연대보증인 · {d.name}</span>}
-                      <span style={{ color: "var(--tm)", marginLeft: 8 }}>{d.brandName || d.brand_code} / {d.hubCode || d.hub_code}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            {selDebtor && (
-              <div style={{ background: "var(--bg2)", borderRadius: 6, padding: "6px 10px", fontSize: 11,
-                color: "var(--ts)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span>선택됨: <strong>{docPersonName}</strong>{selDebtor._asGuarantor && <span style={{ color: "var(--acc)" }}> — {selDebtor.name}의 연대보증인</span>} ({selDebtor.brandName || selDebtor.brand_code})</span>
-                <button onClick={() => { setSelDebtor(null); setDebtorQ(""); }}
-                  style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 10 }}>×</button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>대상자 정보</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--tm)" }}>대상자 수</span>
+                <button onClick={() => setTargetCount(targets.length - 1)} disabled={targets.length <= 1}
+                  style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--bg)",
+                    cursor: targets.length <= 1 ? "default" : "pointer", opacity: targets.length <= 1 ? 0.5 : 1 }}>−</button>
+                <span style={{ fontSize: 12, fontWeight: 700, minWidth: 16, textAlign: "center" }}>{targets.length}</span>
+                <button onClick={() => setTargetCount(targets.length + 1)}
+                  style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer" }}>+</button>
               </div>
-            )}
-            <label style={labelStyle}>주민등록번호 (수동 입력)</label>
-            <KoreanInput value={residentId} onChange={e => setResidentId(e.target.value)}
-              placeholder="000000-0000000" style={{ ...inputStyle, marginBottom: 0 }} />
+            </div>
+
+            {targets.map((t, idx) => {
+              const results = (!t.sel && t.q.trim()) ? searchTargets(t.q) : [];
+              const claim = targetClaimAmount(t);
+              return (
+                <div key={t.id} style={{ border: "1px solid var(--brd)", borderRadius: 8, padding: 10,
+                  marginBottom: idx < targets.length - 1 ? 10 : 0, background: "var(--bg2)" }}>
+                  {targets.length > 1 && <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)", marginBottom: 6 }}>대상자{idx + 1} · 별지{idx + 1}</div>}
+                  <label style={labelStyle}>채무자 검색 (DB)</label>
+                  <div style={{ position: "relative", marginBottom: 8 }}>
+                    <KoreanInput
+                      value={t.q}
+                      onChange={e => updateTarget(idx, { q: e.target.value, sel: null })}
+                      placeholder="채무자명 또는 허브코드 입력..."
+                      style={inputStyle}
+                    />
+                    {results.length > 0 && (
+                      <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
+                        border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
+                        {results.map((d, i) => (
+                          <div key={`${d.id}-${d._asGuarantor || "main"}-${i}`} onClick={() => selectTargetDebtor(idx, d)}
+                            style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
+                            onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            <span style={{ fontWeight: 600 }}>{d._asGuarantor || d.name}</span>
+                            {d._asGuarantor && <span style={{ fontSize: 10, color: "var(--acc)", marginLeft: 6 }}>연대보증인 · {d.name}</span>}
+                            <span style={{ color: "var(--tm)", marginLeft: 8 }}>{d.brandName || d.brand_code} / {d.hubCode || d.hub_code}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {t.sel && (
+                    <div style={{ background: "var(--bg)", borderRadius: 6, padding: "6px 10px", fontSize: 11,
+                      color: "var(--ts)", display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span>선택됨: <strong>{targetName(t)}</strong>{t.sel._asGuarantor && <span style={{ color: "var(--acc)" }}> — {t.sel.name}의 연대보증인</span>}</span>
+                      <button onClick={() => updateTarget(idx, { sel: null, q: "" })}
+                        style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 10 }}>×</button>
+                    </div>
+                  )}
+                  <label style={labelStyle}>주민등록번호 (수동 입력)</label>
+                  <KoreanInput value={t.residentId} onChange={e => updateTarget(idx, { residentId: e.target.value })}
+                    placeholder="000000-0000000" style={{ ...inputStyle, marginBottom: 8 }} />
+
+                  {items.length > 0 ? (
+                    <>
+                      <label style={labelStyle}>이 대상자에게 청구할 항목 (아래 "제3채무자 선택"에서 추가한 목록)</label>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {items.map(it => {
+                          const on = t.enabled[it.id] != null;
+                          return (
+                            <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input type="checkbox" checked={on} onChange={() => toggleTargetItem(idx, it)} style={{ cursor: "pointer" }} />
+                              <span style={{ fontSize: 11, color: "var(--tm)", width: 16 }}>{items.indexOf(it) + 1}.</span>
+                              <span style={{ fontSize: 11, flex: 1, color: on ? "var(--tp)" : "var(--tm)" }}>{it.name}</span>
+                              {on && (
+                                <KoreanInput value={t.enabled[it.id].toLocaleString("ko-KR")}
+                                  onChange={e => setTargetItemAmount(idx, it.id, e.target.value)}
+                                  style={{ ...inputStyle, width: 90, flex: "none", padding: "3px 6px", fontSize: 11, textAlign: "right", fontFamily: "monospace" }} />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ textAlign: "right", fontSize: 11, color: "var(--tm)", marginTop: 6 }}>
+                        이 대상자 청구금액: <strong style={{ color: "var(--acc)" }}>{claim.toLocaleString("ko-KR")}원</strong>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 11, color: "var(--tm)" }}>아래 "제3채무자 선택"에서 항목을 먼저 추가하세요</div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* 집행권원 유형 + 동적 필드 */}
@@ -9455,8 +9545,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       style={{ background: "none", color: "var(--err)", border: "none", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>×</button>
                   </div>
                 ))}
-                <div style={{ textAlign: "right", fontSize: 11, color: "var(--tm)", marginTop: 4 }}>
-                  총 청구금액: <strong style={{ color: "var(--acc)" }}>{totalAmount.toLocaleString("ko-KR")}원</strong>
+                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 4 }}>
+                  금액은 대상자가 이 항목을 체크할 때 채워지는 기본값입니다 — 위 "대상자 정보"에서 대상자별로 다시 조정할 수 있습니다.
                 </div>
               </div>
             ) : (
@@ -9475,10 +9565,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <I name="eye" size={15} /> 미리보기
             </button>
-            <button onClick={handleDownloadHwpx} disabled={dlLoading}
+            <button onClick={handleDownloadHwpx} disabled={dlLoading || targets.length > 1}
+              title={targets.length > 1 ? "대상자가 여러 명이면 HWPX 다운로드는 지원하지 않습니다 — PDF 출력을 이용하세요" : ""}
               style={{ flex: 1, padding: "10px 0", borderRadius: 8,
-                background: dlLoading ? "var(--bg2)" : "#6366f1", color: dlLoading ? "var(--tm)" : "#fff",
-                fontSize: 13, fontWeight: 600, border: "none", cursor: dlLoading ? "default" : "pointer",
+                background: (dlLoading || targets.length > 1) ? "var(--bg2)" : "#6366f1", color: (dlLoading || targets.length > 1) ? "var(--tm)" : "#fff",
+                fontSize: 13, fontWeight: 600, border: "none", cursor: (dlLoading || targets.length > 1) ? "default" : "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <I name="download" size={15} /> {dlLoading ? "생성 중..." : "HWPX 다운"}
             </button>
