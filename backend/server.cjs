@@ -760,9 +760,14 @@ function ingestPayment(b) {
   let resolvedId = b.debtorId;
   let matchedBy = "수동지정";
   if (!resolvedId) {
-    // 1순위: 학습된 매핑 확인
+    // 1순위: 학습된 매핑 확인 — 브랜드가 주어졌으면 그 debtor의 실제 브랜드와 일치할 때만 신뢰
+    // (동일 입금자명이 과거엔 다른 브랜드 채무자로 학습됐을 수 있으므로, 안 맞으면 2순위 매처로 넘김)
     if (b.payerName) {
-      const learned = db.prepare("SELECT debtor_id FROM payer_name_mappings WHERE payer_name = ?").get(b.payerName);
+      const learned = db.prepare(`
+        SELECT pm.debtor_id FROM payer_name_mappings pm
+        JOIN debtors d ON d.id = pm.debtor_id
+        WHERE pm.payer_name = ? AND (? IS NULL OR d.brand_code = ?)
+      `).get(b.payerName, b.brand || null, b.brand || null);
       if (learned) { resolvedId = learned.debtor_id; matchedBy = "학습매핑"; }
     }
   }
@@ -2345,10 +2350,10 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
         learned_at = excluded.learned_at
     `).run(pending.payer_name, debtorId, debtor?.name || null);
 
-    // 같은 입금자명의 다른 보류 건 즉시 자동처리
+    // 같은 입금자명 + 같은 브랜드의 다른 보류 건만 즉시 자동처리 (다른 브랜드 동명이인 오매칭 방지)
     const samePending = db.prepare(
-      "SELECT * FROM pending_payments WHERE payer_name = ? AND resolved = 0 AND id != ?"
-    ).all(pending.payer_name, pendingId);
+      "SELECT * FROM pending_payments WHERE payer_name = ? AND resolved = 0 AND id != ? AND excel_brand IS ?"
+    ).all(pending.payer_name, pendingId, pending.excel_brand);
 
     let autoResolved = 0;
     for (const other of samePending) {
