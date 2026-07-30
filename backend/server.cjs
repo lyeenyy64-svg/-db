@@ -2870,6 +2870,38 @@ function korName3(name) {
   return kor.length >= 2 ? kor.slice(0, 3) : null;
 }
 
+// 이름으로 CB(신용정보) 보고서 PDF를 찾아 OCR로 점수를 추출.
+// /api/debtor/:id/credit-score 화면 표시와 AI 종합분석(연대보증인 신용점수)이 각자
+// 따로 검색하다가 서로 다른 값을 보여주던 문제가 있어 이 함수로 통합했다.
+// 이름이 완전히 일치하는 파일이 있으면 그것만 쓰고, 하나도 없을 때만 앞 2~3글자
+// 부분일치로 넓혀서 찾는다 — 동명이인(다른 사람)의 CB 파일이 잘못 매칭되는 걸 줄이기 위함.
+async function findCreditScoreForName(name, limit, priority) {
+  if (!name) return null;
+  const CB_FILTER = `(LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%') AND ext = 'pdf'`;
+
+  let rows = db.prepare(
+    `SELECT file_path, filename FROM file_index
+     WHERE parsed_person_name = ? AND ${CB_FILTER}
+     ORDER BY parsed_date DESC LIMIT ?`
+  ).all(name, limit);
+
+  if (rows.length === 0) {
+    const kor = korName3(name);
+    if (!kor) return null;
+    rows = db.prepare(
+      `SELECT file_path, filename FROM file_index
+       WHERE (parsed_person_name LIKE ? OR filename LIKE ?) AND ${CB_FILTER}
+       ORDER BY parsed_date DESC LIMIT ?`
+    ).all(`%${kor}%`, `%${kor}%`, limit);
+  }
+
+  for (const c of rows) {
+    const r = await ocrPdfForCreditScore(c.file_path, priority);
+    if (r.ok && r.score) return { score: r.score, filename: c.filename };
+  }
+  return null;
+}
+
 // 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
 // (예전 로직이 잘못 저장해둔 값은 덮어쓰지 않으므로, 그걸 고치려면 먼저 컬럼을 비워야 한다 — /resident-number/refresh 참고)
 async function lookupResidentDetails(debtorId, debtor, priority) {
@@ -3044,27 +3076,10 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 
     const entries = [];
 
-    const findScore = async (name) => {
-      const kor = korName3(name);
-      if (!kor) return null;
-      const rows = db.prepare(
-        `SELECT file_path, filename FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-         AND ext = 'pdf'
-         ORDER BY parsed_date DESC LIMIT 5`
-      ).all(`%${kor}%`, `%${kor}%`);
-      for (const c of rows) {
-        const r = await ocrPdfForCreditScore(c.file_path);
-        if (r.ok && r.score) return { score: r.score, filename: c.filename };
-      }
-      return null;
-    };
-
     // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
     // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
     // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다.
-    const mainResult = await findScore(debtor.name);
+    const mainResult = await findCreditScoreForName(debtor.name, 5);
     if (mainResult) {
       entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
       if (!debtor.credit_grade) {
@@ -3075,7 +3090,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
     // 연대보증인
     const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
     for (const gName of guarantors) {
-      const r = await findScore(gName);
+      const r = await findCreditScoreForName(gName, 5);
       if (r) entries.push({ name: gName, ...r, source: "ocr" });
     }
 
@@ -3934,20 +3949,12 @@ async function generateDebtorAnalysisText(debtorId, priority) {
     const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
 
     // 연대보증인 신용점수 — CB보고서에서 라이브 OCR (best-effort, 못 찾아도 무시)
+    // /api/debtor/:id/credit-score와 같은 findCreditScoreForName을 공유해서, 두 화면이
+    // 서로 다른 파일을 골라 서로 다른 점수를 보여주는 일이 없도록 한다.
     const guarantorScores = [];
     for (const gName of guarantorNames) {
-      const kor = korName3(gName);
-      if (!kor) continue;
-      const rows = db.prepare(
-        `SELECT file_path FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 3`
-      ).all(`%${kor}%`, `%${kor}%`);
-      for (const r of rows) {
-        const result = await ocrPdfForCreditScore(r.file_path, priority);
-        if (result.ok && result.score) { guarantorScores.push(`${gName}: ${result.score}점`); break; }
-      }
+      const result = await findCreditScoreForName(gName, 3, priority);
+      if (result) guarantorScores.push(`${gName}: ${result.score}점`);
     }
 
     const contextText = `
