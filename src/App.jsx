@@ -10928,12 +10928,14 @@ function AiAnalysisView({
             value={aiDebtorQ}
             onChange={e => { setAiDebtorQ(e.target.value); if (!e.target.value) setAiSelDebtor(null); }}
             placeholder="채무자 이름 검색..."
+            disabled={aiLoading}
             style={{ flex: 1, padding: "7px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 13 }}
           />
           {aiSelDebtor && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--acc)", color: "#fff", borderRadius: 7, padding: "5px 10px", fontSize: 12, fontWeight: 600 }}>
               <span>{aiSelDebtor.name}</span>
-              <button onClick={() => { setAiSelDebtor(null); setAiDebtorQ(""); }} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+              {/* 응답 대기 중 채무자를 바꾸면 그 응답이 새 채무자 맥락에 잘못 섞여 붙기 때문에 로딩 중엔 비활성화 */}
+              <button onClick={() => { setAiSelDebtor(null); setAiDebtorQ(""); }} disabled={aiLoading} style={{ background: "none", border: "none", color: "#fff", cursor: aiLoading ? "default" : "pointer", padding: 0, fontSize: 14, lineHeight: 1, opacity: aiLoading ? 0.5 : 1 }}>×</button>
             </div>
           )}
         </div>
