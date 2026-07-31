@@ -2190,6 +2190,9 @@ export default function App() {
   const [paymentsFocusDate, setPaymentsFocusDate] = useState(null);
   const [adminEditLogs, setAdminEditLogs] = useState(null); // null=미로드, []~=로드됨
   const [adminEditLogsLoading, setAdminEditLogsLoading] = useState(false);
+  const [logQ, setLogQ] = useState("");
+  const [logFrom, setLogFrom] = useState("");
+  const [logTo, setLogTo] = useState("");
   const [adminStats, setAdminStats] = useState(null); // null=미로드
   const [adminStatsLoading, setAdminStatsLoading] = useState(false);
   const [statsAccessGran, setStatsAccessGran] = useState("daily"); // daily|monthly|yearly
@@ -10583,9 +10586,24 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               .then(rows => { setAdminEditLogs(rows); setAdminEditLogsLoading(false); })
               .catch(() => { setAdminEditLogs([]); setAdminEditLogsLoading(false); });
           };
+          // 날짜/담당자/채무자명(연대보증인명)으로 검색
+          const filteredLogs = logs.filter(l => {
+            const day = (l.changedAt || "").slice(0, 10);
+            if (logFrom && day < logFrom) return false;
+            if (logTo && day > logTo) return false;
+            if (logQ.trim()) {
+              const q = logQ.trim().toLowerCase();
+              const debtor = data.debtors.find(d => d.id === l.debtorId);
+              const guarantorNames = debtor?.guarantors || [];
+              const haystack = [l.changedBy, l.debtorName, l.debtorId, ...guarantorNames].join(" ").toLowerCase();
+              if (!haystack.includes(q)) return false;
+            }
+            return true;
+          });
+          const clearLogFilters = () => { setLogQ(""); setLogFrom(""); setLogTo(""); };
           // 로그 항목을 채무자별로 그룹핑 (같은 시각, 같은 사람의 수정을 묶음)
           const grouped = [];
-          logs.forEach(l => {
+          filteredLogs.forEach(l => {
             const last = grouped[grouped.length - 1];
             const sameGroup = last && last.debtorId === l.debtorId && last.changedBy === l.changedBy
               && Math.abs(new Date(last.changedAt) - new Date(l.changedAt)) < 5000; // 5초 이내 동일인 동일채무자
@@ -10596,24 +10614,35 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             }
           });
           return (
-            <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-              <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>수정 로그 ({logs.length}건)</span>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={loadLogs} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", fontSize: 11, fontWeight: 600, border: "1px solid #3b82f640", cursor: "pointer" }}>
-                    {adminEditLogsLoading ? "로딩중…" : "새로고침"}
-                  </button>
-                  <button onClick={() => {
-                    const rows = logs.map(l => [l.changedAt, l.changedBy, l.debtorName, l.debtorId, l.fieldLabel || l.fieldName, l.oldValue, l.newValue]);
-                    downloadCSV(`수정로그_${today()}.csv`, ["수정시각","수정자","채무자명","채무자ID","항목","변경전","변경후"], rows);
-                  }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}>
-                    <I name="arrowDown" size={12} />엑셀
-                  </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
+                  <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
+                  <KoreanInput value={logQ} onChange={e => setLogQ(e.target.value)} placeholder="담당자, 채무자명, 연대보증인명 검색..." style={{ width: "100%", paddingLeft: 32 }} />
                 </div>
+                <input type="date" value={logFrom} onChange={e => setLogFrom(e.target.value)} style={{ width: 150, fontSize: 12 }} />
+                <span style={{ color: "var(--tm)" }}>~</span>
+                <input type="date" value={logTo} onChange={e => setLogTo(e.target.value)} style={{ width: 150, fontSize: 12 }} />
+                {(logQ || logFrom || logTo) && <button onClick={clearLogFilters} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444440" }}>필터 해제</button>}
               </div>
-              <div style={{ maxHeight: 620, overflow: "auto" }}>
-                {adminEditLogsLoading && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>로딩 중...</div>}
-                {!adminEditLogsLoading && logs.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>아직 기록된 수정 로그가 없습니다</div>}
+              <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>수정 로그 ({filteredLogs.length}건{filteredLogs.length !== logs.length ? ` / 전체 ${logs.length}건` : ""})</span>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={loadLogs} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#3b82f618", color: "#3b82f6", fontSize: 11, fontWeight: 600, border: "1px solid #3b82f640", cursor: "pointer" }}>
+                      {adminEditLogsLoading ? "로딩중…" : "새로고침"}
+                    </button>
+                    <button onClick={() => {
+                      const rows = filteredLogs.map(l => [l.changedAt, l.changedBy, l.debtorName, l.debtorId, l.fieldLabel || l.fieldName, l.oldValue, l.newValue]);
+                      downloadCSV(`수정로그_${today()}.csv`, ["수정시각","수정자","채무자명","채무자ID","항목","변경전","변경후"], rows);
+                    }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 6, background: "#10b98118", color: "#10b981", fontSize: 11, fontWeight: 600, border: "1px solid #10b98140", cursor: "pointer" }}>
+                      <I name="arrowDown" size={12} />엑셀
+                    </button>
+                  </div>
+                </div>
+                <div style={{ maxHeight: 620, overflow: "auto" }}>
+                  {adminEditLogsLoading && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>로딩 중...</div>}
+                  {!adminEditLogsLoading && filteredLogs.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--tm)" }}>{logs.length === 0 ? "아직 기록된 수정 로그가 없습니다" : "검색 결과가 없습니다"}</div>}
                 {!adminEditLogsLoading && grouped.map((g, gi) => (
                   <div key={gi} style={{ borderBottom: "1px solid var(--brd)" }}>
                     <div style={{ display: "flex", gap: 10, padding: "10px 16px", alignItems: "center", background: "var(--bg2)" }}>
@@ -10635,6 +10664,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
             </div>
           );
