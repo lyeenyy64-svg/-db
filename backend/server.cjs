@@ -508,6 +508,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_debtor_docs ON debtor_documents(debtor_id);
 `);
 
+// 채무자-관련데이터(이메일/슬랙/노션 이력) 테이블
+db.exec(`
+  CREATE TABLE IF NOT EXISTS debtor_related_data (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id    TEXT NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
+    source       TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    summary      TEXT,
+    url          TEXT NOT NULL,
+    occurred_at  TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    created_by   TEXT,
+    UNIQUE(debtor_id, source, url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_debtor_related_data ON debtor_related_data(debtor_id);
+`);
+
 const app = express();
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
@@ -2530,6 +2547,36 @@ app.get("/api/documents/:debtorId", (req, res) => {
   try {
     const rows = db.prepare("SELECT * FROM debtor_documents WHERE debtor_id = ? ORDER BY linked_at DESC").all(req.params.debtorId);
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 채무자별 관련 데이터(이메일/슬랙/노션 이력) 조회
+app.get("/api/related-data/:debtorId", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? ORDER BY occurred_at DESC").all(req.params.debtorId);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 채무자별 관련 데이터 등록
+app.post("/api/related-data/:debtorId", (req, res) => {
+  try {
+    const { source, title, summary, url, occurredAt, createdBy } = req.body;
+    if (!source || !title || !url) return res.status(400).json({ error: "source, title, url은 필수입니다" });
+    db.prepare(`
+      INSERT OR IGNORE INTO debtor_related_data (debtor_id, source, title, summary, url, occurred_at, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.debtorId, source, title, summary || null, url, occurredAt || null, createdBy || null);
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? ORDER BY occurred_at DESC").all(req.params.debtorId);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 관련 데이터 삭제
+app.delete("/api/related-data/:id", (req, res) => {
+  try {
+    db.prepare("DELETE FROM debtor_related_data WHERE id = ?").run(parseInt(req.params.id, 10));
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

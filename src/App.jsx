@@ -4659,6 +4659,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [scanResult, setScanResult] = useState(null);
     const [scanning, setScanning] = useState(false);
     const [docModal, setDocModal] = useState(null); // { url, filename, candidates }
+    const [relatedData, setRelatedData] = useState(null);
 
     const openDocModal = async (debtorId, keywords, debtorName) => {
       setDocModal({ searching: true, keywords, debtorName });
@@ -4692,7 +4693,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (detailTab === "연결서류") {
         fetch(`/api/documents/${d.id}`).then(r => r.json()).then(rows => setLinkedDocs(rows)).catch(() => setLinkedDocs([]));
       }
+      if (detailTab === "관련 데이터") {
+        fetch(`/api/related-data/${d.id}`).then(r => r.json()).then(rows => setRelatedData(rows)).catch(() => setRelatedData([]));
+      }
     }, [detailTab, d.id]);
+
+    const deleteRelatedData = async (id) => {
+      if (!confirm("이 항목을 삭제하시겠습니까?")) return;
+      await fetch(`/api/related-data/${id}`, { method: "DELETE" });
+      setRelatedData(prev => prev.filter(x => x.id !== id));
+      showToast("삭제 완료");
+    };
 
     const runDocScan = async () => {
       setScanning(true); setScanResult(null);
@@ -4727,6 +4738,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       { k: "법적절차내역", count: debtorLegalAll.length },
       { k: "회생파산", count: debtorRehabs.length },
       { k: "연결서류", count: linkedDocs ? linkedDocs.length : 0 },
+      { k: "관련 데이터", count: relatedData ? relatedData.length : 0 },
     ];
 
     return (
@@ -5394,6 +5406,39 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 );
               })}
             </div>}
+          </div>}
+        </div>}
+
+        {detailTab === "관련 데이터" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--brd)", fontSize: 13, fontWeight: 600 }}>
+            관련 데이터 <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>({relatedData ? relatedData.length : 0})</span>
+          </div>
+          {!relatedData && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>}
+          {relatedData && relatedData.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>
+            연결된 이메일/슬랙/노션 데이터가 없습니다.
+          </div>}
+          {relatedData && relatedData.length > 0 && <div style={{ display: "flex", flexDirection: "column" }}>
+            {(() => {
+              const SRC_ICON = { email: "📧", slack: "💬", notion: "📓" };
+              const SRC_LABEL = { email: "이메일", slack: "슬랙", notion: "노션" };
+              return relatedData.map(row => (
+                <div key={row.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderBottom: "1px solid var(--brd)", fontSize: 12 }}>
+                  <span style={{ fontSize: 16, flexShrink: 0 }}>{SRC_ICON[row.source] || "🔗"}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a href={row.url} target="_blank" rel="noopener noreferrer"
+                       style={{ fontWeight: 500, color: "var(--acc)", textDecoration: "none" }}>
+                      {row.title}
+                    </a>
+                    {row.summary && <div style={{ marginTop: 3, color: "var(--tx)", whiteSpace: "pre-wrap" }}>{row.summary}</div>}
+                    <div style={{ display: "flex", gap: 8, marginTop: 4, color: "var(--ts)", fontSize: 10 }}>
+                      <span style={{ background: "var(--bg)", border: "1px solid var(--brd)", padding: "1px 5px", borderRadius: 4 }}>{SRC_LABEL[row.source] || row.source}</span>
+                      {row.occurred_at && <span>{row.occurred_at.slice(0, 10)}</span>}
+                    </div>
+                  </div>
+                  {canEdit && <button onClick={() => deleteRelatedData(row.id)} style={{ background: "none", color: "var(--err)", padding: 4, flexShrink: 0 }} title="삭제"><I name="trash" size={13} /></button>}
+                </div>
+              ));
+            })()}
           </div>}
         </div>}
       </div>
