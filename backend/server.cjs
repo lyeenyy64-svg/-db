@@ -338,6 +338,15 @@ db.exec(`
     console.log(`[stats_unknown_cleanup_v4] "알수없음" ${removedUnknown.changes}건, "진단테스트" ${removedDiag.changes}건, 테스트용 kv 키 ${testKeys.length}개 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v4', '1')").run();
   }
+  // "관련 데이터"(이메일/슬랙/노션 이력) 배치 백필은 실제 수기 입력이 아니라 자동 수집이므로
+  // 성과 통계에 포함하면 안 된다. 이미 찍힌 기록(2026-07-31, 배치 백필로 김준원 몫에 8.6M자
+  // 잡힌 것 포함)을 한 번만 정리하고, 앞으로도 안 잡히도록 미들웨어에서 이 경로를 제외한다.
+  const relatedDataExcludeDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_related_data_exclude_v1'").get();
+  if (!relatedDataExcludeDone) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE type='data_input' AND path LIKE '/api/related-data/%'").run();
+    console.log(`[stats_related_data_exclude_v1] 관련 데이터 배치 백필 입력량 기록 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_related_data_exclude_v1', '1')").run();
+  }
   // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
   // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
   // 저장 시각) 묶음으로 근사 복원해서 user_activity_log에 한 번만 채워 넣는다 (1회만 실행).
@@ -580,8 +589,11 @@ const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat"];
 // PATCH /api/debtors/:id는 debtor_edit_log에 필드별 실제 변경분을 이미 정확히 기록하므로,
 // 여기서 요청 본문 전체 크기까지 또 세면 같은 저장 1번이 두 번 잡혀 입력량/수정 건수가 부풀려진다.
 const isDebtorPatch = (req) => req.method === "PATCH" && /^\/api\/debtors\/[^/]+$/.test(req.path);
+// "관련 데이터"(이메일/슬랙/노션 이력) 저장은 배치 백필 등 자동 수집으로 들어오는 경우가 있어
+// 실제 수기 입력이 아니다 — 누가 검색해서 채워넣었든 성과 통계에 포함하지 않는다.
+const isRelatedDataWrite = (req) => req.path.startsWith("/api/related-data/");
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req)) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
     // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다 —
     // 누구의 성과에도 귀속시킬 수 없는 기록이라 어차피 평가에 쓸 수 없고, 화면에 노이즈만 남긴다.
