@@ -99,6 +99,9 @@ db.exec(`
 try { db.exec("ALTER TABLE installment_plans ADD COLUMN memo TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE debtors ADD COLUMN resident_number TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"); } catch(e) {}
+// 이월로 새로 생성된 일정이 원래 일정을 역참조하기 위한 컬럼 — 화면에서 "이월된 항목"
+// 배지를 표시하는 데 사용 (rolled_over_to는 옛 일정→새 일정, 이건 반대 방향).
+try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEXT"); } catch(e) {}
 
 // ─── DB 마이그레이션 (컬럼 추가 / 테이블 생성) ─────────────
 {
@@ -1484,7 +1487,7 @@ app.get("/api/installments", (req, res) => {
     schedules: getSchedules.all(p.id).map(s => ({
       id: s.id, planId: s.plan_id, debtSource: s.debt_source, institution: s.institution,
       loanAmount: s.loan_amount, interestRate: s.interest_rate,
-      dueDate: s.due_date, dueMonth: s.due_month, rolledOverTo: s.rolled_over_to,
+      dueDate: s.due_date, dueMonth: s.due_month, rolledOverTo: s.rolled_over_to, rolledOverFrom: s.rolled_over_from,
       scheduledAmount: s.scheduled_amount, paidAmount: s.paid_amount, status: s.status, memo: s.memo,
     })),
     history: getHistory.all(p.id).map(h => ({
@@ -1584,9 +1587,11 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
   try {
     db.transaction(() => {
       db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(newId, req.params.id);
-      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '미납', ?)").run(
+      // 이월로 새로 만드는 일정은 아직 다가올 예정 납부일이지 이미 밀린 미납이 아니므로 '예정'으로
+      // 시작해야 한다 — 예전엔 '미납'으로 박아서 새 날짜가 오기도 전에 연체로 표시되는 버그가 있었다.
+      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo, rolled_over_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '예정', ?, ?)").run(
         newId, sched.plan_id, sched.debt_source, sched.institution, sched.loan_amount, sched.interest_rate,
-        newDate, newMonth, sched.scheduled_amount, memo || null
+        newDate, newMonth, sched.scheduled_amount, memo || null, req.params.id
       );
       db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
         req.params.id, sched.plan_id, sched.debtor_id,

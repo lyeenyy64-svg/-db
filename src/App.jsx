@@ -5165,6 +5165,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <span className="mono" style={{ fontWeight: 700 }}>{fmt(s.scheduledAmount)}</span>
                         {s.debtSource && <span style={{ fontSize: 11, color: "var(--ts)" }}>{s.debtSource}</span>}
                         <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span>
+                        {s.rolledOverFrom && <span title="이월로 생성된 일정" style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 10, fontSize: 10, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>↩ 이월됨</span>}
                         {canEdit && s.status !== "완납" && s.status !== "이월" && (
                           <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
                             <button onClick={async () => { await fetch(`/api/installments/schedules/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완납", userName: "관리자" }) }); await reloadInstallments(); showToast("완납 처리됨"); }} style={{ padding: "2px 10px", borderRadius: 5, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>
@@ -6184,6 +6185,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         {s.debtorName} ↗
                       </button>
                       {s.assignee && <span style={{ fontSize: 11, color: "var(--tm)" }}>{s.assignee}</span>}
+                      {s.rolledOverFrom && <span title="이월로 생성된 일정" style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>↩ 이월됨</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       {canEdit && editingId !== s.id && (
@@ -6403,7 +6405,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                                 cursor: canEdit ? "grab" : "pointer",
                                 opacity: dragSchedId === s.id ? 0.4 : 1,
                               }}>
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.debtorName}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.rolledOverFrom && <span title="이월로 생성된 일정">↩</span>}{s.debtorName}</span>
                               <span style={{ flexShrink: 0, opacity: 0.8 }}>{(s.scheduledAmount / 10000).toFixed(0)}만</span>
                             </div>
                           );
