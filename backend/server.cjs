@@ -518,6 +518,7 @@ db.exec(`
     summary      TEXT,
     url          TEXT NOT NULL,
     occurred_at  TEXT,
+    shared       INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     created_by   TEXT,
     UNIQUE(debtor_id, source, url)
@@ -2551,9 +2552,12 @@ app.get("/api/documents/:debtorId", (req, res) => {
 });
 
 // 채무자별 관련 데이터(이메일/슬랙/노션 이력) 조회
+// 본인이 등록한 항목(created_by=viewer) + 공유(shared=1) 처리된 항목만 보임
 app.get("/api/related-data/:debtorId", (req, res) => {
   try {
-    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? ORDER BY occurred_at DESC").all(req.params.debtorId);
+    const viewer = req.query.viewer || "";
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? AND (shared = 1 OR created_by = ?) ORDER BY occurred_at DESC")
+      .all(req.params.debtorId, viewer);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2561,14 +2565,23 @@ app.get("/api/related-data/:debtorId", (req, res) => {
 // 채무자별 관련 데이터 등록
 app.post("/api/related-data/:debtorId", (req, res) => {
   try {
-    const { source, title, summary, url, occurredAt, createdBy } = req.body;
+    const { source, title, summary, url, occurredAt, createdBy, shared } = req.body;
     if (!source || !title || !url) return res.status(400).json({ error: "source, title, url은 필수입니다" });
     db.prepare(`
-      INSERT OR IGNORE INTO debtor_related_data (debtor_id, source, title, summary, url, occurred_at, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(req.params.debtorId, source, title, summary || null, url, occurredAt || null, createdBy || null);
-    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? ORDER BY occurred_at DESC").all(req.params.debtorId);
+      INSERT OR IGNORE INTO debtor_related_data (debtor_id, source, title, summary, url, occurred_at, created_by, shared)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.debtorId, source, title, summary || null, url, occurredAt || null, createdBy || null, shared ? 1 : 0);
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? AND (shared = 1 OR created_by = ?) ORDER BY occurred_at DESC")
+      .all(req.params.debtorId, createdBy || "");
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 관련 데이터 공유 여부 변경
+app.patch("/api/related-data/:id", (req, res) => {
+  try {
+    db.prepare("UPDATE debtor_related_data SET shared = ? WHERE id = ?").run(req.body.shared ? 1 : 0, parseInt(req.params.id, 10));
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

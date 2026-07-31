@@ -4694,9 +4694,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         fetch(`/api/documents/${d.id}`).then(r => r.json()).then(rows => setLinkedDocs(rows)).catch(() => setLinkedDocs([]));
       }
       if (detailTab === "관련 데이터") {
-        fetch(`/api/related-data/${d.id}`).then(r => r.json()).then(rows => setRelatedData(rows)).catch(() => setRelatedData([]));
+        fetch(`/api/related-data/${d.id}?viewer=${encodeURIComponent(currentUser?.name || "")}`).then(r => r.json()).then(rows => setRelatedData(rows)).catch(() => setRelatedData([]));
       }
     }, [detailTab, d.id]);
+
+    const toggleRelatedDataShare = async (row) => {
+      const shared = !row.shared;
+      await fetch(`/api/related-data/${row.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shared }) });
+      setRelatedData(prev => prev.map(x => x.id === row.id ? { ...x, shared: shared ? 1 : 0 } : x));
+    };
 
     const deleteRelatedData = async (id) => {
       if (!confirm("이 항목을 삭제하시겠습니까?")) return;
@@ -5409,37 +5415,50 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>}
         </div>}
 
-        {detailTab === "관련 데이터" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--brd)", fontSize: 13, fontWeight: 600 }}>
-            관련 데이터 <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>({relatedData ? relatedData.length : 0})</span>
-          </div>
+        {detailTab === "관련 데이터" && <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {!relatedData && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>}
-          {relatedData && relatedData.length === 0 && <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>
-            연결된 이메일/슬랙/노션 데이터가 없습니다.
-          </div>}
-          {relatedData && relatedData.length > 0 && <div style={{ display: "flex", flexDirection: "column" }}>
-            {(() => {
-              const SRC_ICON = { email: "📧", slack: "💬", notion: "📓" };
-              const SRC_LABEL = { email: "이메일", slack: "슬랙", notion: "노션" };
-              return relatedData.map(row => (
-                <div key={row.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 16px", borderBottom: "1px solid var(--brd)", fontSize: 12 }}>
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>{SRC_ICON[row.source] || "🔗"}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <a href={row.url} target="_blank" rel="noopener noreferrer"
-                       style={{ fontWeight: 500, color: "var(--acc)", textDecoration: "none" }}>
-                      {row.title}
-                    </a>
-                    {row.summary && <div style={{ marginTop: 3, color: "var(--tx)", whiteSpace: "pre-wrap" }}>{row.summary}</div>}
-                    <div style={{ display: "flex", gap: 8, marginTop: 4, color: "var(--ts)", fontSize: 10 }}>
-                      <span style={{ background: "var(--bg)", border: "1px solid var(--brd)", padding: "1px 5px", borderRadius: 4 }}>{SRC_LABEL[row.source] || row.source}</span>
-                      {row.occurred_at && <span>{row.occurred_at.slice(0, 10)}</span>}
-                    </div>
+          {relatedData && (() => {
+            const SRC_LABEL = { notion: "노션", slack: "슬랙", email: "이메일" };
+            const colWidths = [90, undefined, 60, 50, 40];
+            return ["notion", "slack", "email"].map(src => {
+              const rows = relatedData.filter(r => r.source === src);
+              return (
+                <div key={src} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ flexShrink: 0, width: 70, padding: "8px 0", borderRadius: 8, background: "#f97316", color: "#fff", fontSize: 13, fontWeight: 700, textAlign: "center" }}>
+                    {SRC_LABEL[src]}
                   </div>
-                  {canEdit && <button onClick={() => deleteRelatedData(row.id)} style={{ background: "none", color: "var(--err)", padding: 4, flexShrink: 0 }} title="삭제"><I name="trash" size={13} /></button>}
+                  <div style={{ flex: 1, overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead><tr>
+                        {["년월일", "내용", "출처", "공유", "삭제"].map((h, i) => <th key={h} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {rows.length === 0 && <tr><td colSpan={5} style={{ ...issueTd, color: "var(--tm)" }}>데이터 없음</td></tr>}
+                        {rows.map(row => (
+                          <tr key={row.id}>
+                            <td style={issueTd}>{row.occurred_at ? row.occurred_at.slice(0, 10) : "-"}</td>
+                            <td style={{ ...issueTd, textAlign: "left" }}>
+                              <div style={{ fontWeight: 600 }}>{row.title}</div>
+                              {row.summary && <div style={{ marginTop: 2, color: "var(--tm)", fontSize: 11 }}>{row.summary}</div>}
+                            </td>
+                            <td style={issueTd}>
+                              <a href={row.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc)" }} title="원본으로 이동">🔗 이동</a>
+                            </td>
+                            <td style={issueTd}>
+                              <input type="checkbox" checked={!!row.shared} disabled={!canEdit} onChange={() => toggleRelatedDataShare(row)} title="법무실 구성원에게 공유" />
+                            </td>
+                            <td style={issueTd}>
+                              {canEdit && <button onClick={() => deleteRelatedData(row.id)} style={{ background: "none", color: "var(--err)", padding: 4 }} title="삭제"><I name="trash" size={13} /></button>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              ));
-            })()}
-          </div>}
+              );
+            });
+          })()}
         </div>}
       </div>
     );
