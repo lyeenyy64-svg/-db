@@ -1961,117 +1961,125 @@ app.patch("/api/debtors/bulk", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+const DEBTOR_FIELD_MAP = {
+  category:"category",assignee:"assignee",name:"name",phone:"phone",
+  hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
+  execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
+  subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
+  creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
+  residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
+  birthDate:"birth_date",residentNumber:"resident_number",
+  salesRep:"sales_rep",keyNotes:"key_notes",
+  principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
+  latestAddress:"latest_address",
+  residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
+  residentNote:"resident_note",creditPhone:"credit_phone",
+};
+const DEBTOR_FIELD_LABELS = {
+  category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
+  hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
+  execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
+  subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
+  creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
+  residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
+  birthDate:"생년월일",residentNumber:"주민등록번호",
+  salesRep:"영업담당자",keyNotes:"주요사항",
+  principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
+  latestAddress:"최신 주소",
+  residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
+  residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
+};
+// PATCH /api/debtors/:id와 수정 로그 "복원"이 공유하는 필드 저장 로직 —
+// 두 곳이 각자 구현하면 조용히 갈라져서 복원만 지오코딩 초기화/담당자 이력을 빼먹는 등의
+// 버그가 나기 쉽다. statsPath는 어드민 통계에 남길 요청 경로 표시용.
+function applyDebtorFieldPatch(id, body, userName, statsPath) {
+  const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
+  for (const [jsKey, dbCol] of Object.entries(DEBTOR_FIELD_MAP)) {
+    if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
+    if (body[jsKey] !== undefined) {
+      // exec_title 등 INTEGER 컬럼에 프론트가 boolean(true/false)을 보내는 경우가 있는데
+      // better-sqlite3는 boolean을 bind 파라미터로 받지 않아 저장 자체가 500으로 전부
+      // 실패한다 (분류 등 다른 필드까지 같이 저장 안 됨). 0/1로 변환해서 방지.
+      let v = body[jsKey];
+      if (typeof v === "boolean") v = v ? 1 : 0;
+      coercedVals[jsKey] = v;
+      fields.push(`${dbCol} = ?`);
+      vals.push(v);
+      changedJsKeys.push(jsKey);
+    }
+  }
+  if (fields.length === 0) return;
+
+  // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
+  const selectParts = Object.entries(DEBTOR_FIELD_MAP)
+    .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
+    .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
+  const oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
+  if (!oldRow) return;
+
+  // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
+  // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
+  if (changedJsKeys.includes('latestAddress')) {
+    fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
+  }
+  if (changedJsKeys.includes('residentAddress')) {
+    fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
+  }
+  fields.push("updated_at = datetime('now','localtime')");
+  vals.push(id);
+  db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+
+  // 담당자가 바뀌면 변경일(effective date) 기준 이력을 남긴다 — 담당자별 실적은
+  // 이 이력을 기준으로 결제일 시점 담당자에게 귀속되므로, 오늘이 아니라 과거/미래
+  // 특정일부터 적용하고 싶을 때 프론트에서 assigneeEffectiveDate로 지정할 수 있다.
+  if (changedJsKeys.includes('assignee') && String(oldRow.assignee ?? '') !== String(coercedVals.assignee ?? '')) {
+    const effDate = /^\d{4}-\d{2}-\d{2}$/.test(body.assigneeEffectiveDate || '')
+      ? body.assigneeEffectiveDate
+      : new Date().toISOString().slice(0, 10);
+    db.prepare(`
+      INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
+      ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
+    `).run(id, coercedVals.assignee, effDate);
+  }
+
+  // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
+  const debtorName = changedJsKeys.includes('name') ? String(body.name || '') : String(oldRow.name || '');
+  const insLog = db.prepare(
+    "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+  let statsBytes = 0;
+  const logTx = db.transaction(() => {
+    for (const jsKey of changedJsKeys) {
+      const oldVal = String(oldRow[jsKey] ?? '');
+      const newVal = String(coercedVals[jsKey] ?? '');
+      if (oldVal !== newVal) {
+        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, oldVal, newVal);
+        statsBytes += newVal.length;
+      }
+    }
+  });
+  logTx();
+  // 어드민 통계용: 필드가 몇 개 바뀌었든 이 저장은 kv 저장과 동일하게
+  // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
+  if (statsBytes > 0 && userName !== '알수없음') {
+    insertActivityLog.run("data_input", userName, statsBytes, statsPath);
+  }
+
+  // "추심상태 변경" 알림 규칙 즉시 평가
+  if (changedJsKeys.includes("collectionStatus") && String(oldRow.collectionStatus ?? "") !== String(body.collectionStatus ?? "")) {
+    fireEventAlert("status_change", { debtorName, oldStatus: oldRow.collectionStatus, newStatus: body.collectionStatus }).catch(() => {});
+  }
+}
+
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
     const _userName = req.body._userName || '관리자';
 
-    const fieldMap = {
-      category:"category",assignee:"assignee",name:"name",phone:"phone",
-      hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
-      execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
-      subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
-      creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
-      residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
-      birthDate:"birth_date",residentNumber:"resident_number",
-      salesRep:"sales_rep",keyNotes:"key_notes",
-      principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
-      latestAddress:"latest_address",
-      residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
-      residentNote:"resident_note",creditPhone:"credit_phone",
-    };
-    const fieldLabels = {
-      category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
-      hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
-      execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
-      subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
-      creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
-      residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
-      birthDate:"생년월일",residentNumber:"주민등록번호",
-      salesRep:"영업담당자",keyNotes:"주요사항",
-      principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
-      latestAddress:"최신 주소",
-      residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
-      residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
-    };
-
-    const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
-    for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
-      if (jsKey === '_userName') continue;
-      if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
-      if (req.body[jsKey] !== undefined) {
-        // exec_title 등 INTEGER 컬럼에 프론트가 boolean(true/false)을 보내는 경우가 있는데
-        // better-sqlite3는 boolean을 bind 파라미터로 받지 않아 저장 자체가 500으로 전부
-        // 실패한다 (분류 등 다른 필드까지 같이 저장 안 됨). 0/1로 변환해서 방지.
-        let v = req.body[jsKey];
-        if (typeof v === "boolean") v = v ? 1 : 0;
-        coercedVals[jsKey] = v;
-        fields.push(`${dbCol} = ?`);
-        vals.push(v);
-        changedJsKeys.push(jsKey);
-      }
-    }
-    if (fields.length === 0 && req.body.guarantors === undefined) return res.json({ ok: true });
-
-    // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
-    let oldRow = null;
-    if (fields.length > 0) {
-      const selectParts = Object.entries(fieldMap)
-        .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
-        .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
-      oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
-    }
-
-    if (fields.length > 0) {
-      // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
-      // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
-      if (changedJsKeys.includes('latestAddress')) {
-        fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
-      }
-      if (changedJsKeys.includes('residentAddress')) {
-        fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
-      }
-      fields.push("updated_at = datetime('now','localtime')");
-      vals.push(id);
-      db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
-    }
-
-    // 담당자가 바뀌면 변경일(effective date) 기준 이력을 남긴다 — 담당자별 실적은
-    // 이 이력을 기준으로 결제일 시점 담당자에게 귀속되므로, 오늘이 아니라 과거/미래
-    // 특정일부터 적용하고 싶을 때 프론트에서 assigneeEffectiveDate로 지정할 수 있다.
-    if (changedJsKeys.includes('assignee') && oldRow && String(oldRow.assignee ?? '') !== String(coercedVals.assignee ?? '')) {
-      const effDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body.assigneeEffectiveDate || '')
-        ? req.body.assigneeEffectiveDate
-        : new Date().toISOString().slice(0, 10);
-      db.prepare(`
-        INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
-        ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
-      `).run(id, coercedVals.assignee, effDate);
-    }
-
-    // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
-    if (oldRow && changedJsKeys.length > 0) {
-      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
-      const insLog = db.prepare(
-        "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      );
-      let statsBytes = 0;
-      const logTx = db.transaction(() => {
-        for (const jsKey of changedJsKeys) {
-          const oldVal = String(oldRow[jsKey] ?? '');
-          const newVal = String(coercedVals[jsKey] ?? '');
-          if (oldVal !== newVal) {
-            insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
-            statsBytes += newVal.length;
-          }
-        }
-      });
-      logTx();
-      // 어드민 통계용: 필드가 몇 개 바뀌었든 이 PATCH 요청은 kv 저장과 동일하게
-      // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
-      if (statsBytes > 0 && _userName !== '알수없음') {
-        insertActivityLog.run("data_input", _userName, statsBytes, req.path);
-      }
+    if (Object.keys(DEBTOR_FIELD_MAP).some(k => req.body[k] !== undefined)) {
+      applyDebtorFieldPatch(id, req.body, _userName, req.path);
+    } else if (req.body.guarantors === undefined) {
+      return res.json({ ok: true });
     }
 
     // 연대보증인 업데이트 (기존 삭제 후 재삽입)
@@ -2082,12 +2090,26 @@ app.patch("/api/debtors/:id", (req, res) => {
       for (const g of guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
 
-    // "추심상태 변경" 알림 규칙 즉시 평가
-    if (oldRow && changedJsKeys.includes("collectionStatus") && String(oldRow.collectionStatus ?? "") !== String(req.body.collectionStatus ?? "")) {
-      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
-      fireEventAlert("status_change", { debtorName, oldStatus: oldRow.collectionStatus, newStatus: req.body.collectionStatus }).catch(() => {});
-    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
+// 수정 로그 항목 하나를 이전 값으로 되돌린다 — 잘못 고친 필드를 그 이전 값으로 복구.
+app.post("/api/edit-logs/:id/restore", (req, res) => {
+  try {
+    const log = db.prepare("SELECT * FROM debtor_edit_log WHERE id = ?").get(req.params.id);
+    if (!log) return res.status(404).json({ ok: false, error: "로그를 찾을 수 없습니다" });
+    if (!DEBTOR_FIELD_MAP[log.field_name]) return res.status(400).json({ ok: false, error: "복원할 수 없는 항목입니다" });
+
+    // principal_balance 등 숫자 컬럼은 문자열로 그대로 보내면 SQLite에 TEXT로 박혀 이후
+    // 합계/비교 연산이 깨질 수 있어, 숫자로 안전하게 변환 가능하면 숫자로 되돌린다.
+    const dbCol = DEBTOR_FIELD_MAP[log.field_name];
+    const isNumericCol = ["principal_balance", "adjustment", "collected_amount", "exec_title"].includes(dbCol);
+    let restoredVal = log.old_value ?? "";
+    if (isNumericCol && restoredVal !== "" && !isNaN(Number(restoredVal))) restoredVal = Number(restoredVal);
+
+    const userName = req.body?.userName || req.headers["x-user-name"] || "관리자";
+    applyDebtorFieldPatch(log.debtor_id, { [log.field_name]: restoredVal }, userName, "/api/edit-logs/:id/restore");
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

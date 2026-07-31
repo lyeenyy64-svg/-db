@@ -10601,6 +10601,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             return true;
           });
           const clearLogFilters = () => { setLogQ(""); setLogFrom(""); setLogTo(""); };
+          const restoreLogItem = async (item) => {
+            if (!confirm(`"${item.fieldLabel || item.fieldName}"을(를) 이전 값(${item.oldValue || "(없음)"})으로 되돌리시겠습니까?`)) return;
+            try {
+              const r = await fetch(`/api/edit-logs/${item.id}/restore`, {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ userName: currentUser?.name }),
+              }).then(x => x.json());
+              if (!r.ok) { showToast(r.error || "복원 실패"); return; }
+              showToast("복원 완료");
+              loadLogs();
+            } catch { showToast("복원 실패"); }
+          };
           // 로그 항목을 채무자별로 그룹핑 (같은 시각, 같은 사람의 수정을 묶음)
           const grouped = [];
           filteredLogs.forEach(l => {
@@ -10659,6 +10671,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.oldValue || "(없음)"}</span>
                           <span style={{ color: "var(--tm)", flexShrink: 0 }}>→</span>
                           <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.newValue || "(없음)"}</span>
+                          {canEdit && <button onClick={() => restoreLogItem(item)} title="이전 값으로 복원" style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 4, background: "#f59e0b18", color: "#f59e0b", border: "1px solid #f59e0b40", fontSize: 10, fontWeight: 600, flexShrink: 0 }}><I name="refresh" size={11} />복원</button>}
                         </div>
                       ))}
                     </div>
