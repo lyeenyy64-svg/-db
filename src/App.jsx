@@ -2876,7 +2876,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
     const [phoneItems, setPhoneItems] = useState(() => {
-      const raw = (isEdit ? modal.data?.phone : "") || "";
+      const raw = modal.data?.phone || "";
       const items = raw.split(/\s*\/\s*|\n/).map(p => p.trim()).filter(Boolean);
       return items.length > 0 ? items : [""];
     });
@@ -3963,7 +3963,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
                           <BrandBadge code={d.brand} brands={config.brands} />
                           {canEdit && (
-                            <button onClick={e => { e.stopPropagation(); setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName } }); }}
+                            <button onClick={e => { e.stopPropagation(); setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName, phone: d.phone, guarantors: d.guarantors } }); }}
                               style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "1px solid var(--acc)55", cursor: "pointer" }}>
                               +항목
                             </button>
@@ -4236,6 +4236,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const autoResidentNote = d.residentNote || (residentDetails && residentDetails.note) || "";
               setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress, creditPhone: autoCreditPhone, residentAddress: autoResidentAddress, residentRegisteredDate: autoResidentRegisteredDate, residentNote: autoResidentNote } });
             }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
+            {canEdit && <button onClick={() => {
+              setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName, phone: d.phone, guarantors: d.guarantors } });
+            }} title={`${d.name}에게 새 채무 건을 추가로 등록합니다`} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="plus" size={14} />채무 추가</button>}
             {canDelete && <button onClick={() => { if (confirm(`${d.name} 채권을 삭제하시겠습니까?`)) { deleteDebtor(d.id); addLog("삭제", "채권", `${d.name} (${d.id}) 삭제`); showToast("삭제 완료"); } }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#ef444418", color: "#ef4444", fontSize: 12, fontWeight: 600, border: "1px solid #ef444440" }}><I name="trash" size={14} />삭제</button>}
             <button onClick={goBack} style={{ width: 36, height: 36, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)", color: "var(--tm)" }}><I name="close" size={16} /></button>
           </div>
