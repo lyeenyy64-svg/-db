@@ -2086,6 +2086,16 @@ export default function App() {
     localStorage.setItem(APP_USERS_KEY, JSON.stringify(users));
     if (usersHydratedRef.current) kvPut(APP_USERS_KEY, users);
   }, [users]);
+  // currentUser는 로그인 시점의 스냅샷이라, 로그인된 세션 도중에 사용자 관리 화면에서
+  // 본인의 role/승인 상태가 바뀌어도(예: 관리자→마스터 승격) 반영되지 않아 재로그인 전까지
+  // 예전 권한으로 남는 문제가 있었다 — users 목록이 갱신될 때마다 본인 항목으로 동기화한다.
+  useEffect(() => {
+    if (!currentUser) return;
+    const fresh = users.find(u => u.id === currentUser.id);
+    if (fresh && (fresh.role !== currentUser.role || fresh.approved !== currentUser.approved || fresh.name !== currentUser.name)) {
+      setCurrentUser(prev => ({ ...prev, ...fresh }));
+    }
+  }, [users, currentUser]);
   const [alertRules, setAlertRules] = useState(DEFAULT_ALERT_RULES);
   // 알림 규칙은 서버 DB(alert_rules 테이블)에 영구 저장되고, 백엔드의 알림 규칙 엔진이
   // 주기적으로 평가해 실제 Slack 발송까지 수행한다 (더 이상 새로고침하면 사라지는 화면 전용 상태가 아님).
