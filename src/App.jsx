@@ -1407,14 +1407,16 @@ const ModalFooter = ({ onCancel, onSave, saveLabel }) => (
 
 // ─── Permissions ──────────────────────────────────────────
 const ROLES = [
+  { key: "superadmin", label: "슈퍼관리자", desc: "관리자 권한 전체 + 통계, 담당자 목표 설정" },
   { key: "admin",   label: "관리자", desc: "모든 데이터 삭제/추가/편집/읽기 + 사용자 관리" },
   { key: "manager", label: "매니저", desc: "본인 데이터 삭제/편집, 전체 추가/읽기 가능" },
   { key: "member",  label: "구성원", desc: "데이터 읽기만 가능" },
 ];
 const PERM_MAP = {
-  admin:   { view: true, edit: true, delete: true,  admin: true },
-  manager: { view: true, edit: true, delete: false, admin: false },
-  member:  { view: true, edit: false, delete: false, admin: false },
+  superadmin: { view: true, edit: true, delete: true,  admin: true, superAdmin: true },
+  admin:      { view: true, edit: true, delete: true,  admin: true, superAdmin: false },
+  manager:    { view: true, edit: true, delete: false, admin: false, superAdmin: false },
+  member:     { view: true, edit: false, delete: false, admin: false, superAdmin: false },
 };
 
 // ─── User Store ────────────────────────────────────────────
@@ -2129,6 +2131,7 @@ export default function App() {
   const canEdit = userPerms.edit;
   const canDelete = userPerms.delete;
   const isAdmin = userPerms.admin;
+  const isSuperAdmin = userPerms.superAdmin;
   // 매니저는 누가 작성했는지와 무관하게 기록을 수정/삭제할 수 있다(작성자 본인만 가능하던 예전 제한 폐지)
   const canEditRecord   = () => isAdmin || currentUser?.role === "manager";
   const canDeleteRecord = () => isAdmin || currentUser?.role === "manager";
@@ -3803,7 +3806,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
-                        {currentUser?.name === "김준원" ? (
+                        {isSuperAdmin ? (
                           <input type="text" inputMode="numeric" value={a.target ? a.target.toLocaleString("ko-KR") : ""}
                             onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "monthlyTarget", isNaN(n) ? 0 : n); }}
                             placeholder="목표 미설정"
@@ -3813,7 +3816,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         )}
                       </td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
-                        {currentUser?.name === "김준원" ? (
+                        {isSuperAdmin ? (
                           <input type="text" inputMode="numeric" value={a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : ""}
                             onChange={e => { const n = Number(e.target.value.replace(/[^0-9]/g, "")); setAssigneeTarget(a.assignee, "annualTarget", isNaN(n) ? 0 : n); }}
                             placeholder="목표 미설정"
@@ -3945,7 +3948,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // 이 때문에 한글 입력 중 커서가 초기화되어 글자 순서가 뒤섞이는 버그가 있었다.
   // 컴포넌트가 아니라 값으로 즉시 호출해 그 결과(JSX 엘리먼트)를 그대로 끼워 넣으면 재마운트가 없다.
   const issuesView = (() => {
-    const canDelete = ["배현진", "김준원"].includes(currentUser?.name);
+    const canDelete = isAdmin; // 관리자(및 슈퍼관리자)만 — 매니저는 제외
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
@@ -10381,7 +10384,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* 상단 4탭 */}
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }, ...(currentUser?.name === "김준원" ? [{ k: "stats", l: "통계" }] : [])].map(t => (
+          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }, ...(isSuperAdmin ? [{ k: "stats", l: "통계" }] : [])].map(t => (
             <button key={t.k} onClick={() => { setMainTab(t.k); if (t.k === "logs") setAdminEditLogs(null); if (t.k === "stats") setAdminStats(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
@@ -10688,8 +10691,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
 
-        {/* 통계 (김준원 전용) */}
-        {mainTab === "stats" && currentUser?.name === "김준원" && (() => {
+        {/* 통계 (슈퍼관리자 전용) */}
+        {mainTab === "stats" && isSuperAdmin && (() => {
           const stats = adminStats || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] };
           const loadStats = () => {
             setAdminStatsLoading(true);
