@@ -1407,11 +1407,12 @@ const ModalFooter = ({ onCancel, onSave, saveLabel }) => (
 
 // ─── Permissions ──────────────────────────────────────────
 const ROLES = [
-  { key: "superadmin", label: "슈퍼관리자", desc: "관리자 권한 전체 + 통계, 담당자 목표 설정" },
+  { key: "superadmin", label: "마스터", desc: "관리자 권한 전체 + 통계, 담당자 목표 설정" },
   { key: "admin",   label: "관리자", desc: "모든 데이터 삭제/추가/편집/읽기 + 사용자 관리" },
   { key: "manager", label: "매니저", desc: "본인 데이터 삭제/편집, 전체 추가/읽기 가능" },
   { key: "member",  label: "구성원", desc: "데이터 읽기만 가능" },
 ];
+const ROLE_CHANGE_PASSCODE = "8590"; // 권한(role) 변경 시 요구하는 확인 암호
 const PERM_MAP = {
   superadmin: { view: true, edit: true, delete: true,  admin: true, superAdmin: true },
   admin:      { view: true, edit: true, delete: true,  admin: true, superAdmin: false },
@@ -3948,7 +3949,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   // 이 때문에 한글 입력 중 커서가 초기화되어 글자 순서가 뒤섞이는 버그가 있었다.
   // 컴포넌트가 아니라 값으로 즉시 호출해 그 결과(JSX 엘리먼트)를 그대로 끼워 넣으면 재마운트가 없다.
   const issuesView = (() => {
-    const canDelete = isAdmin; // 관리자(및 슈퍼관리자)만 — 매니저는 제외
+    const canDelete = isAdmin; // 관리자(및 마스터)만 — 매니저는 제외
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
@@ -10478,6 +10479,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       {isAdmin ? (
                         <select value={u.role} onChange={e => {
                           const newRole = e.target.value;
+                          if (newRole === u.role) return;
+                          const input = window.prompt(`"${u.name}"의 권한을 "${ROLES.find(r => r.key === newRole)?.label}"로 변경합니다.\n확인 암호를 입력하세요.`);
+                          if (input === null) return; // 취소
+                          if (input.trim() !== ROLE_CHANGE_PASSCODE) { showToast("암호가 일치하지 않아 권한이 변경되지 않았습니다"); return; }
                           setUsers(prev => prev.map((x) => x.id === u.id ? { ...x, role: newRole } : x));
                           if (currentUser?.id === u.id) setCurrentUser(prev => ({ ...prev, role: newRole }));
                           showToast(`${u.name} 권한: ${ROLES.find(r => r.key === newRole)?.label}`);
@@ -10691,7 +10696,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
 
-        {/* 통계 (슈퍼관리자 전용) */}
+        {/* 통계 (마스터 전용) */}
         {mainTab === "stats" && isSuperAdmin && (() => {
           const stats = adminStats || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] };
           const loadStats = () => {
