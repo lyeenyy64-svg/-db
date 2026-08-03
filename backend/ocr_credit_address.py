@@ -1,5 +1,5 @@
 """
-CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자 추출 (PaddleOCR)
+CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자 추출 (Windows OCR)
 사용법: python ocr_credit_address.py <pdf_path>
 출력: JSON {
   "ok": true, "address": "서울특별시 ...", "phone": "010-0000-0000",
@@ -11,18 +11,21 @@ CB종합보고서 PDF에서 최신 주소지·연락처(휴대폰)·조회일자
 채택한다. 이 표를 못 찾으면 기존 방식대로 "주소" 라벨 뒤 텍스트를 정규식으로
 찾는 것으로 폴백한다.
 
-Windows OCR(winrt) 대신 PaddleOCR을 쓴다(자세한 설명은 paddle_ocr_engine.py 참고) —
-실 서버 비교 테스트에서 한글 인식 정확도가 훨씬 높았다. PaddleOCR은 값이 여러 박스로
-쪼개지는 경우가 Windows OCR보다 훨씬 적지만, 완전히 없어졌다고 보장할 수는 없어서
-아래 로직(행/페이지 단위로 묶은 뒤 여러 박스를 이어붙여 패턴을 찾는 방식,
-find_last_home_row 참고)은 그대로 유지한다. 한 박스에 값이 통째로 들어있어도
-_find_pattern_span이 첫 박스에서 바로 매칭되므로 동작에는 차이가 없다.
+실 서버 원본 데이터로 확인한 두 가지 특징 때문에 단순 정규식 매칭이 아니라
+행(y)·페이지 단위로 묶은 뒤 여러 단어를 이어붙여 패턴을 찾는 방식을 쓴다
+(find_last_home_row 참고):
+1) Windows OCR이 "2023. 11. 16"이나 "010-7455-9195" 같은 값을 여러 단어로
+   쪼개서 인식하는 경우가 있어, 인접 단어를 이어붙여야 날짜/전화번호 패턴이 보인다.
+2) 서로 다른 페이지의 내용이 우연히 비슷한 y좌표를 가지면 안 되므로, 행은
+   반드시 같은 페이지 안에서만 묶는다.
 """
+import asyncio
 import sys
 import os
 import re
 import json
-from paddle_ocr_engine import ocr_pdf_pages
+import fitz  # PyMuPDF
+import tempfile
 
 
 MAX_PAGES = 5
@@ -36,11 +39,21 @@ PHONE_RE = re.compile(r'01[016789][-\s]?\d{3,4}[-\s]?\d{4}')
 GENERAL_PHONE_RE = re.compile(r'0\d{1,2}[-\s]?\d{3,4}[-\s]?\d{4}')
 QUERY_LABELS = ("조회일자", "조회일", "발급일자", "발급일", "출력일자", "출력일")
 
-HEADER_LABELS = {"정보갱신일", "주소", "휴대폰번호", "휴대폰"}
+HEADER_LABELS = {"정보갱신일", "우편번호", "우편", "번호", "자택주소", "주소", "자택전화번호", "자택전화", "휴대폰번호", "휴대폰"}
 # 등록된 주소엔 한자가 나올 일이 없다 — 세대원/명의자 이름을 한자와 함께 표기한 부분이
 # OCR 박스 분할 때문에 라벨 문자열로 안 걸러지고 주소 칸에 섞여 들어오는 경우가 있어
 # (ocr_resident.py에서 실제로 확인된 문제, 여기도 동일하게 방어) 한자 포함 단어는 제외한다.
 HANJA_RE = re.compile(r'[一-鿿]')
+# 자택정보이력정보 표에 이력이 0건이면 CB보고서 자체가 "조회된 데이터가 없습니다"라고
+# 명시한다 — 이 경우는 OCR 실패가 아니라 이 보고서엔 정말 주소 이력이 없다는 뜻이므로,
+# (server.cjs가 더 오래된 CB보고서로 폴백하지 않고) 확정적으로 "없음"으로 처리하도록
+# 별도 플래그로 알려준다.
+NO_HISTORY_RE = re.compile(r'조회된\s*데이터가\s*없습니다')
+# Windows OCR이 표의 여러 행을 같은 y좌표 밴드로 잘못 묶으면, 채택한 행이 아닌 다른
+# 행의 날짜(예: "2024. 05. 29")가 공백 낀 채로 주소 텍스트에 그대로 남는 경우가 실제로
+# 확인됨. 정상 주소엔 날짜가 남을 일이 없으니, 남아있으면 여러 행이 섞인 것으로 보고
+# 그 주소는 통째로 버린다(잘못된 값을 캐시하는 것보다 "없음" 처리가 안전).
+LOOSE_DATE_RE = re.compile(r'\d{4}\.\s*\d{1,2}\.\s*\d{1,2}')
 
 
 def _clean(s):
@@ -78,6 +91,16 @@ def find_queried_date(text):
         y, mo, d = m.groups()
         return f"{y}-{int(mo):02d}-{int(d):02d}"
     return None
+
+
+def _rect_xy(rect):
+    x = getattr(rect, "x", None)
+    if x is None:
+        x = getattr(rect, "X", 0)
+    y = getattr(rect, "y", None)
+    if y is None:
+        y = getattr(rect, "Y", 0)
+    return x, y
 
 
 def _looks_like_address(s):
@@ -226,6 +249,8 @@ def find_last_home_row(pages_words):
             and not HANJA_RE.search(text)
         ]
         address_text = re.sub(r'\s+', ' ', " ".join(addr_words)).strip()
+        if LOOSE_DATE_RE.search(address_text):
+            address_text = ""
 
         row = {
             "page": page_idx,
@@ -242,42 +267,100 @@ def find_last_home_row(pages_words):
     return {"address": best["address"], "date": best["date"], "phone": best["phone"]}
 
 
-def ocr_pdf(pdf_path):
+async def ocr_pdf(pdf_path):
+    import winrt.windows.media.ocr as winrt_ocr
+    import winrt.windows.storage as winrt_storage
+    import winrt.windows.graphics.imaging as winrt_imaging
+    import winrt.windows.globalization as winrt_glob
+
+    lang = winrt_glob.Language("ko-KR")
+    engine = winrt_ocr.OcrEngine.try_create_from_language(lang)
+    if engine is None:
+        return {"ok": False, "error": "한국어 OCR 엔진 없음"}
+
+    doc = fitz.open(pdf_path)
+    tmp_files = []
+    all_page_words = []
+    all_text = ""
+    first_page_text = ""
+    fallback_address = None
+
     try:
-        all_page_words, first_page_text = ocr_pdf_pages(pdf_path, MAX_PAGES)
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+        n_pages = min(MAX_PAGES, doc.page_count)
+        for page_num in range(n_pages):
+            page = doc[page_num]
+            mat = fitz.Matrix(3, 3)
+            pix = page.get_pixmap(matrix=mat)
 
-    fallback_address = find_address(first_page_text)
-    queried_date = find_queried_date(first_page_text)
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as f:
+                tmp_path = f.name
+            tmp_files.append(tmp_path)
+            pix.save(tmp_path)
 
-    try:
-        last_row = find_last_home_row(all_page_words)
-    except Exception:
-        last_row = None
+            abs_path = os.path.abspath(tmp_path)
+            file = await winrt_storage.StorageFile.get_file_from_path_async(abs_path)
+            stream = await file.open_async(winrt_storage.FileAccessMode.READ)
+            decoder = await winrt_imaging.BitmapDecoder.create_async(stream)
+            bitmap = await decoder.get_software_bitmap_async()
+            result = await engine.recognize_async(bitmap)
+            text = result.text
+            all_text += text
 
-    address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
-    phone = last_row["phone"] if last_row else None
+            if page_num == 0:
+                first_page_text = text
+            if fallback_address is None:
+                fallback_address = find_address(text)
 
-    if not address:
-        # 임시 디버그 정보 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
+            page_words = []
+            try:
+                for line in result.lines:
+                    for w in line.words:
+                        wx, wy = _rect_xy(w.bounding_rect)
+                        page_words.append((w.text, wx, wy))
+            except Exception:
+                page_words = []
+            all_page_words.append(page_words)
+
+        queried_date = find_queried_date(first_page_text)
+
+        try:
+            last_row = find_last_home_row(all_page_words)
+        except Exception:
+            last_row = None
+
+        # find_address()는 좌표 없이 raw 텍스트에서 "주소" 라벨 뒤를 정규식으로 잡는 폴백이라,
+        # Windows OCR이 표를 세로 컬럼 단위로 통째로 읽어버리면(자택주소 컬럼 전체를 위→아래로
+        # 다 읽은 뒤에야 다음 컬럼을 읽는 경우) 이 폴백도 여러 행이 섞인 텍스트를 잡을 수 있다 —
+        # find_last_home_row와 같은 기준으로 방어한다.
+        if fallback_address and LOOSE_DATE_RE.search(fallback_address):
+            fallback_address = None
+
+        address = (last_row["address"] if last_row and last_row.get("address") else None) or fallback_address
+        phone = last_row["phone"] if last_row else None
+
+        if not address:
+            # "자택정보이력정보" 표에 이력이 0건이라고 보고서가 명시하는 경우 — OCR 실패가
+            # 아니라 이 보고서엔 정말 주소 이력이 없다는 뜻이므로, 확정 응답으로 알려줘서
+            # server.cjs가 더 오래된(그리고 잘못 파싱될 수 있는) CB보고서로 넘어가지 않게 한다.
+            no_history = bool(NO_HISTORY_RE.search(all_text))
+            return {"ok": False, "error": "이력 없음" if no_history else "주소 없음", "phone": phone, "queriedDate": queried_date, "noHistory": no_history}
+
         return {
-            "ok": False, "error": "주소 없음", "phone": phone, "queriedDate": queried_date,
-            "debug": {
-                "pages_scanned": len(all_page_words),
-                "words_per_page": [len(w) for w in all_page_words],
-                "last_row_found": last_row is not None,
-                "last_row_raw": last_row,
-                "first_page_sample": first_page_text[:300],
-            },
+            "ok": True,
+            "address": address,
+            "phone": phone,
+            "queriedDate": queried_date,
         }
 
-    return {
-        "ok": True,
-        "address": address,
-        "phone": phone,
-        "queriedDate": queried_date,
-    }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    finally:
+        doc.close()
+        for f in tmp_files:
+            try:
+                os.unlink(f)
+            except Exception:
+                pass
 
 
 def main():
@@ -290,7 +373,7 @@ def main():
         sys.stdout.buffer.write(json.dumps({"ok": False, "error": "파일 없음"}, ensure_ascii=True).encode("ascii"))
         sys.exit(1)
 
-    result = ocr_pdf(pdf_path)
+    result = asyncio.run(ocr_pdf(pdf_path))
     sys.stdout.buffer.write(json.dumps(result, ensure_ascii=True).encode("ascii"))
     sys.stdout.buffer.write(b"\n")
 

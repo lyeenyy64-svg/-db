@@ -10,6 +10,7 @@ const cors = require("cors");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const path = require("path");
+const os = require("os");
 let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = null; }
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
@@ -98,6 +99,9 @@ db.exec(`
 try { db.exec("ALTER TABLE installment_plans ADD COLUMN memo TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE debtors ADD COLUMN resident_number TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_to TEXT"); } catch(e) {}
+// 이월로 새로 생성된 일정이 원래 일정을 역참조하기 위한 컬럼 — 화면에서 "이월된 항목"
+// 배지를 표시하는 데 사용 (rolled_over_to는 옛 일정→새 일정, 이건 반대 방향).
+try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEXT"); } catch(e) {}
 
 // ─── DB 마이그레이션 (컬럼 추가 / 테이블 생성) ─────────────
 {
@@ -253,6 +257,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_edit_log_changed ON debtor_edit_log(changed_at);
 `);
 
+// 담당자 변경 이력 (변경일 기준 실적 귀속용)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assignee_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id      TEXT NOT NULL,
+    assignee       TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(debtor_id, effective_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_assignee_history_debtor ON assignee_history(debtor_id, effective_date);
+`);
+// 기존 채무자는 이력이 없으므로, 등록일부터 현재 담당자였던 것으로 1회 백필
+if (!db.prepare("SELECT value FROM kv_store WHERE key='assignee_history_backfilled'").get()) {
+  db.prepare(`
+    INSERT OR IGNORE INTO assignee_history (debtor_id, assignee, effective_date)
+    SELECT id, assignee, date(created_at) FROM debtors WHERE assignee IS NOT NULL AND assignee != ''
+  `).run();
+  db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('assignee_history_backfilled', '1')").run();
+}
+
 // 어드민 통계용 사용자 활동 로그 (접속 하트비트 / API 쓰기 요청 데이터량)
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_activity_log (
@@ -315,6 +340,15 @@ db.exec(`
     for (const k of testKeys) delKv.run(k);
     console.log(`[stats_unknown_cleanup_v4] "알수없음" ${removedUnknown.changes}건, "진단테스트" ${removedDiag.changes}건, 테스트용 kv 키 ${testKeys.length}개 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_unknown_cleanup_v4', '1')").run();
+  }
+  // "관련 데이터"(이메일/슬랙/노션 이력) 배치 백필은 실제 수기 입력이 아니라 자동 수집이므로
+  // 성과 통계에 포함하면 안 된다. 이미 찍힌 기록(2026-07-31, 배치 백필로 김준원 몫에 8.6M자
+  // 잡힌 것 포함)을 한 번만 정리하고, 앞으로도 안 잡히도록 미들웨어에서 이 경로를 제외한다.
+  const relatedDataExcludeDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_related_data_exclude_v1'").get();
+  if (!relatedDataExcludeDone) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE type='data_input' AND path LIKE '/api/related-data/%'").run();
+    console.log(`[stats_related_data_exclude_v1] 관련 데이터 배치 백필 입력량 기록 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_related_data_exclude_v1', '1')").run();
   }
   // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
   // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
@@ -486,6 +520,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_debtor_docs ON debtor_documents(debtor_id);
 `);
 
+// 채무자-관련데이터(이메일/슬랙/노션 이력) 테이블
+db.exec(`
+  CREATE TABLE IF NOT EXISTS debtor_related_data (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    debtor_id    TEXT NOT NULL REFERENCES debtors(id) ON DELETE CASCADE,
+    source       TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    summary      TEXT,
+    url          TEXT NOT NULL,
+    occurred_at  TEXT,
+    shared       INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    created_by   TEXT,
+    UNIQUE(debtor_id, source, url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_debtor_related_data ON debtor_related_data(debtor_id);
+`);
+
 const app = express();
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
@@ -540,8 +592,11 @@ const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat"];
 // PATCH /api/debtors/:id는 debtor_edit_log에 필드별 실제 변경분을 이미 정확히 기록하므로,
 // 여기서 요청 본문 전체 크기까지 또 세면 같은 저장 1번이 두 번 잡혀 입력량/수정 건수가 부풀려진다.
 const isDebtorPatch = (req) => req.method === "PATCH" && /^\/api\/debtors\/[^/]+$/.test(req.path);
+// "관련 데이터"(이메일/슬랙/노션 이력) 저장은 배치 백필 등 자동 수집으로 들어오는 경우가 있어
+// 실제 수기 입력이 아니다 — 누가 검색해서 채워넣었든 성과 통계에 포함하지 않는다.
+const isRelatedDataWrite = (req) => req.path.startsWith("/api/related-data/");
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req)) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
     // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다 —
     // 누구의 성과에도 귀속시킬 수 없는 기록이라 어차피 평가에 쓸 수 없고, 화면에 노이즈만 남긴다.
@@ -595,7 +650,13 @@ app.get("/api/payments", (req, res) => {
   if (to) { where.push("p.payment_date <= @to"); params.to = to; }
   const sql = `
     SELECT p.id, p.debtor_id AS debtorId, d.name AS debtorName, d.brand_code AS brand,
-           d.assignee, d.hub_name AS hubName, d.hub_code AS hubCode,
+           COALESCE(
+             (SELECT ah.assignee FROM assignee_history ah
+               WHERE ah.debtor_id = d.id AND ah.effective_date <= p.payment_date
+               ORDER BY ah.effective_date DESC, ah.id DESC LIMIT 1),
+             d.assignee
+           ) AS assignee,
+           d.hub_name AS hubName, d.hub_code AS hubCode,
            p.payment_date AS paymentDate, p.payer_name AS payerName,
            p.total_amount AS totalAmount, p.company_account AS companyAccount,
            p.cash_charge AS cashCharge, p.welcome_direct AS welcomeDirect, p.note
@@ -732,9 +793,14 @@ function ingestPayment(b) {
   let resolvedId = b.debtorId;
   let matchedBy = "수동지정";
   if (!resolvedId) {
-    // 1순위: 학습된 매핑 확인
+    // 1순위: 학습된 매핑 확인 — 브랜드가 주어졌으면 그 debtor의 실제 브랜드와 일치할 때만 신뢰
+    // (동일 입금자명이 과거엔 다른 브랜드 채무자로 학습됐을 수 있으므로, 안 맞으면 2순위 매처로 넘김)
     if (b.payerName) {
-      const learned = db.prepare("SELECT debtor_id FROM payer_name_mappings WHERE payer_name = ?").get(b.payerName);
+      const learned = db.prepare(`
+        SELECT pm.debtor_id FROM payer_name_mappings pm
+        JOIN debtors d ON d.id = pm.debtor_id
+        WHERE pm.payer_name = ? AND (? IS NULL OR d.brand_code = ?)
+      `).get(b.payerName, b.brand || null, b.brand || null);
       if (learned) { resolvedId = learned.debtor_id; matchedBy = "학습매핑"; }
     }
   }
@@ -864,7 +930,7 @@ app.post("/api/slack/preview", (req, res) => {
   const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
   const idx = matcher.buildIndex(all, guarantors);
   const enriched = entries.map(e => {
-    const m = matcher.matchDebtor(idx, { payerName: e.payerName, debtorName: e.payerName });
+    const m = matcher.matchDebtor(idx, { brand: e.brand || meta.brand, payerName: e.payerName, debtorName: e.payerName });
     if (m) {
       const d = db.prepare("SELECT id, name, brand_code, hub_name FROM debtors WHERE id = ?").get(m.debtorId);
       return {
@@ -900,6 +966,7 @@ app.post("/api/slack/ingest", (req, res) => {
       payerName: e.payerName,
       totalAmount: e.totalAmount,
       companyAccount: e.totalAmount,  // Slack은 본사계좌(국민#1812)로 가정
+      brand: e.brand || meta.brand,
       source: "slack",
       sourceRef: messageDate || null,
       createdByName: createdByName || "Slack 자동수집",
@@ -1420,7 +1487,7 @@ app.get("/api/installments", (req, res) => {
     schedules: getSchedules.all(p.id).map(s => ({
       id: s.id, planId: s.plan_id, debtSource: s.debt_source, institution: s.institution,
       loanAmount: s.loan_amount, interestRate: s.interest_rate,
-      dueDate: s.due_date, dueMonth: s.due_month, rolledOverTo: s.rolled_over_to,
+      dueDate: s.due_date, dueMonth: s.due_month, rolledOverTo: s.rolled_over_to, rolledOverFrom: s.rolled_over_from,
       scheduledAmount: s.scheduled_amount, paidAmount: s.paid_amount, status: s.status, memo: s.memo,
     })),
     history: getHistory.all(p.id).map(h => ({
@@ -1520,9 +1587,11 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
   try {
     db.transaction(() => {
       db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(newId, req.params.id);
-      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '미납', ?)").run(
+      // 이월로 새로 만드는 일정은 아직 다가올 예정 납부일이지 이미 밀린 미납이 아니므로 '예정'으로
+      // 시작해야 한다 — 예전엔 '미납'으로 박아서 새 날짜가 오기도 전에 연체로 표시되는 버그가 있었다.
+      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo, rolled_over_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '예정', ?, ?)").run(
         newId, sched.plan_id, sched.debt_source, sched.institution, sched.loan_amount, sched.interest_rate,
-        newDate, newMonth, sched.scheduled_amount, memo || null
+        newDate, newMonth, sched.scheduled_amount, memo || null, req.params.id
       );
       db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
         req.params.id, sched.plan_id, sched.debtor_id,
@@ -1813,6 +1882,10 @@ app.post("/api/debtors", (req, res) => {
       const insG = db.prepare("INSERT INTO debtor_guarantors (debtor_id, name) VALUES (?, ?)");
       for (const g of b.guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
+    if (b.assignee) {
+      db.prepare("INSERT OR IGNORE INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, date('now','localtime'))")
+        .run(id, b.assignee);
+    }
     fireEventAlert("new_debtor", { debtorName: b.name || "", brand: b.brand || "" }).catch(() => {});
     res.json({ ok: true, id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -1828,6 +1901,7 @@ app.delete("/api/debtors/:id", (req, res) => {
     db.prepare("DELETE FROM installment_plans WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM complaint_history WHERE complaint_id IN (SELECT id FROM complaints WHERE debtor_id = ?)").run(id);
     db.prepare("DELETE FROM complaints WHERE debtor_id = ?").run(id);
+    db.prepare("DELETE FROM assignee_history WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM debtors WHERE id = ?").run(id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -1839,104 +1913,178 @@ app.delete("/api/debtors/:id", (req, res) => {
 // 조회하려다 전체 PATCH가 실패해서 아무 필드도 저장되지 않는 문제를 방지한다.
 const DEBTOR_TABLE_COLS = new Set(db.prepare("PRAGMA table_info(debtors)").all().map(c => c.name));
 
+// ─── 채무자 대량 작업 (담당자/추심상태 일괄 변경) ─────────
+// /api/debtors/:id 보다 먼저 등록해야 한다 — 안 그러면 Express가 "bulk"을 :id로 매칭해버린다.
+app.patch("/api/debtors/bulk", (req, res) => {
+  try {
+    const { ids, assignee, collectionStatus, assigneeEffectiveDate, userName } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: "ids가 필요합니다" });
+    if (!assignee && !collectionStatus) return res.status(400).json({ ok: false, error: "변경할 담당자 또는 추심상태가 없습니다" });
+    const _userName = userName || "관리자";
+    const effDate = /^\d{4}-\d{2}-\d{2}$/.test(assigneeEffectiveDate || "")
+      ? assigneeEffectiveDate
+      : new Date().toISOString().slice(0, 10);
+
+    const getOld = db.prepare("SELECT id, name, assignee, collection_status AS collectionStatus FROM debtors WHERE id = ?");
+    const updBoth = db.prepare("UPDATE debtors SET assignee = ?, collection_status = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const updAssignee = db.prepare("UPDATE debtors SET assignee = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const updStatus = db.prepare("UPDATE debtors SET collection_status = ?, updated_at = datetime('now','localtime') WHERE id = ?");
+    const insHist = db.prepare(`
+      INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
+      ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
+    `);
+    const insLog = db.prepare(
+      "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    );
+
+    let updated = 0;
+    const statusChanges = [];
+    const tx = db.transaction(() => {
+      for (const id of ids) {
+        const old = getOld.get(id);
+        if (!old) continue;
+        if (assignee && collectionStatus) updBoth.run(assignee, collectionStatus, id);
+        else if (assignee) updAssignee.run(assignee, id);
+        else updStatus.run(collectionStatus, id);
+
+        if (assignee && String(old.assignee ?? "") !== String(assignee)) {
+          insHist.run(id, assignee, effDate);
+          insLog.run(id, old.name, _userName, "assignee", "담당자", old.assignee ?? "", assignee);
+        }
+        if (collectionStatus && String(old.collectionStatus ?? "") !== String(collectionStatus)) {
+          insLog.run(id, old.name, _userName, "collectionStatus", "추심상태", old.collectionStatus ?? "", collectionStatus);
+          statusChanges.push({ debtorName: old.name, oldStatus: old.collectionStatus, newStatus: collectionStatus });
+        }
+        updated++;
+      }
+    });
+    tx();
+
+    statusChanges.forEach(c => { fireEventAlert("status_change", c).catch(() => {}); });
+
+    res.json({ ok: true, updated });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+const DEBTOR_FIELD_MAP = {
+  category:"category",assignee:"assignee",name:"name",phone:"phone",
+  hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
+  execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
+  subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
+  creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
+  residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
+  birthDate:"birth_date",residentNumber:"resident_number",
+  salesRep:"sales_rep",keyNotes:"key_notes",
+  principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
+  latestAddress:"latest_address",
+  residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
+  residentNote:"resident_note",creditPhone:"credit_phone",
+};
+const DEBTOR_FIELD_LABELS = {
+  category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
+  hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
+  execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
+  subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
+  creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
+  residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
+  birthDate:"생년월일",residentNumber:"주민등록번호",
+  salesRep:"영업담당자",keyNotes:"주요사항",
+  principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
+  latestAddress:"최신 주소",
+  residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
+  residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
+};
+// PATCH /api/debtors/:id와 수정 로그 "복원"이 공유하는 필드 저장 로직 —
+// 두 곳이 각자 구현하면 조용히 갈라져서 복원만 지오코딩 초기화/담당자 이력을 빼먹는 등의
+// 버그가 나기 쉽다. statsPath는 어드민 통계에 남길 요청 경로 표시용.
+function applyDebtorFieldPatch(id, body, userName, statsPath) {
+  const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
+  for (const [jsKey, dbCol] of Object.entries(DEBTOR_FIELD_MAP)) {
+    if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
+    if (body[jsKey] !== undefined) {
+      // exec_title 등 INTEGER 컬럼에 프론트가 boolean(true/false)을 보내는 경우가 있는데
+      // better-sqlite3는 boolean을 bind 파라미터로 받지 않아 저장 자체가 500으로 전부
+      // 실패한다 (분류 등 다른 필드까지 같이 저장 안 됨). 0/1로 변환해서 방지.
+      let v = body[jsKey];
+      if (typeof v === "boolean") v = v ? 1 : 0;
+      coercedVals[jsKey] = v;
+      fields.push(`${dbCol} = ?`);
+      vals.push(v);
+      changedJsKeys.push(jsKey);
+    }
+  }
+  if (fields.length === 0) return;
+
+  // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
+  const selectParts = Object.entries(DEBTOR_FIELD_MAP)
+    .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
+    .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
+  const oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
+  if (!oldRow) return;
+
+  // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
+  // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
+  if (changedJsKeys.includes('latestAddress')) {
+    fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
+  }
+  if (changedJsKeys.includes('residentAddress')) {
+    fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
+  }
+  fields.push("updated_at = datetime('now','localtime')");
+  vals.push(id);
+  db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
+
+  // 담당자가 바뀌면 변경일(effective date) 기준 이력을 남긴다 — 담당자별 실적은
+  // 이 이력을 기준으로 결제일 시점 담당자에게 귀속되므로, 오늘이 아니라 과거/미래
+  // 특정일부터 적용하고 싶을 때 프론트에서 assigneeEffectiveDate로 지정할 수 있다.
+  if (changedJsKeys.includes('assignee') && String(oldRow.assignee ?? '') !== String(coercedVals.assignee ?? '')) {
+    const effDate = /^\d{4}-\d{2}-\d{2}$/.test(body.assigneeEffectiveDate || '')
+      ? body.assigneeEffectiveDate
+      : new Date().toISOString().slice(0, 10);
+    db.prepare(`
+      INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
+      ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
+    `).run(id, coercedVals.assignee, effDate);
+  }
+
+  // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
+  const debtorName = changedJsKeys.includes('name') ? String(body.name || '') : String(oldRow.name || '');
+  const insLog = db.prepare(
+    "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  );
+  let statsBytes = 0;
+  const logTx = db.transaction(() => {
+    for (const jsKey of changedJsKeys) {
+      const oldVal = String(oldRow[jsKey] ?? '');
+      const newVal = String(coercedVals[jsKey] ?? '');
+      if (oldVal !== newVal) {
+        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, oldVal, newVal);
+        statsBytes += newVal.length;
+      }
+    }
+  });
+  logTx();
+  // 어드민 통계용: 필드가 몇 개 바뀌었든 이 저장은 kv 저장과 동일하게
+  // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
+  if (statsBytes > 0 && userName !== '알수없음') {
+    insertActivityLog.run("data_input", userName, statsBytes, statsPath);
+  }
+
+  // "추심상태 변경" 알림 규칙 즉시 평가
+  if (changedJsKeys.includes("collectionStatus") && String(oldRow.collectionStatus ?? "") !== String(body.collectionStatus ?? "")) {
+    fireEventAlert("status_change", { debtorName, oldStatus: oldRow.collectionStatus, newStatus: body.collectionStatus }).catch(() => {});
+  }
+}
+
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
     const _userName = req.body._userName || '관리자';
 
-    const fieldMap = {
-      category:"category",assignee:"assignee",name:"name",phone:"phone",
-      hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
-      execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
-      subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
-      creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
-      residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
-      birthDate:"birth_date",residentNumber:"resident_number",
-      salesRep:"sales_rep",keyNotes:"key_notes",
-      principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
-      latestAddress:"latest_address",
-      residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
-      residentNote:"resident_note",creditPhone:"credit_phone",
-    };
-    const fieldLabels = {
-      category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
-      hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
-      execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
-      subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
-      creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
-      residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
-      birthDate:"생년월일",residentNumber:"주민등록번호",
-      salesRep:"영업담당자",keyNotes:"주요사항",
-      principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
-      latestAddress:"최신 주소",
-      residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
-      residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
-    };
-
-    const fields = [], vals = [], changedJsKeys = [], coercedVals = {};
-    for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
-      if (jsKey === '_userName') continue;
-      if (!DEBTOR_TABLE_COLS.has(dbCol)) continue;
-      if (req.body[jsKey] !== undefined) {
-        // exec_title 등 INTEGER 컬럼에 프론트가 boolean(true/false)을 보내는 경우가 있는데
-        // better-sqlite3는 boolean을 bind 파라미터로 받지 않아 저장 자체가 500으로 전부
-        // 실패한다 (분류 등 다른 필드까지 같이 저장 안 됨). 0/1로 변환해서 방지.
-        let v = req.body[jsKey];
-        if (typeof v === "boolean") v = v ? 1 : 0;
-        coercedVals[jsKey] = v;
-        fields.push(`${dbCol} = ?`);
-        vals.push(v);
-        changedJsKeys.push(jsKey);
-      }
-    }
-    if (fields.length === 0 && req.body.guarantors === undefined) return res.json({ ok: true });
-
-    // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
-    let oldRow = null;
-    if (fields.length > 0) {
-      const selectParts = Object.entries(fieldMap)
-        .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
-        .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
-      oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
-    }
-
-    if (fields.length > 0) {
-      // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
-      // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
-      if (changedJsKeys.includes('latestAddress')) {
-        fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
-      }
-      if (changedJsKeys.includes('residentAddress')) {
-        fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
-      }
-      fields.push("updated_at = datetime('now','localtime')");
-      vals.push(id);
-      db.prepare(`UPDATE debtors SET ${fields.join(", ")} WHERE id = ?`).run(...vals);
-    }
-
-    // 변경 항목을 debtor_edit_log에 기록 (필드별 상세 이력 — "최근 수정 내역" 화면용)
-    if (oldRow && changedJsKeys.length > 0) {
-      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
-      const insLog = db.prepare(
-        "INSERT INTO debtor_edit_log (debtor_id, debtor_name, changed_by, field_name, field_label, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      );
-      let statsBytes = 0;
-      const logTx = db.transaction(() => {
-        for (const jsKey of changedJsKeys) {
-          const oldVal = String(oldRow[jsKey] ?? '');
-          const newVal = String(coercedVals[jsKey] ?? '');
-          if (oldVal !== newVal) {
-            insLog.run(id, debtorName, _userName, jsKey, fieldLabels[jsKey] || jsKey, oldVal, newVal);
-            statsBytes += newVal.length;
-          }
-        }
-      });
-      logTx();
-      // 어드민 통계용: 필드가 몇 개 바뀌었든 이 PATCH 요청은 kv 저장과 동일하게
-      // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
-      if (statsBytes > 0 && _userName !== '알수없음') {
-        insertActivityLog.run("data_input", _userName, statsBytes, req.path);
-      }
+    if (Object.keys(DEBTOR_FIELD_MAP).some(k => req.body[k] !== undefined)) {
+      applyDebtorFieldPatch(id, req.body, _userName, req.path);
+    } else if (req.body.guarantors === undefined) {
+      return res.json({ ok: true });
     }
 
     // 연대보증인 업데이트 (기존 삭제 후 재삽입)
@@ -1947,12 +2095,26 @@ app.patch("/api/debtors/:id", (req, res) => {
       for (const g of guarantors.filter(n => n && String(n).trim())) insG.run(id, String(g).trim());
     }
 
-    // "추심상태 변경" 알림 규칙 즉시 평가
-    if (oldRow && changedJsKeys.includes("collectionStatus") && String(oldRow.collectionStatus ?? "") !== String(req.body.collectionStatus ?? "")) {
-      const debtorName = changedJsKeys.includes('name') ? String(req.body.name || '') : String(oldRow.name || '');
-      fireEventAlert("status_change", { debtorName, oldStatus: oldRow.collectionStatus, newStatus: req.body.collectionStatus }).catch(() => {});
-    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
+// 수정 로그 항목 하나를 이전 값으로 되돌린다 — 잘못 고친 필드를 그 이전 값으로 복구.
+app.post("/api/edit-logs/:id/restore", (req, res) => {
+  try {
+    const log = db.prepare("SELECT * FROM debtor_edit_log WHERE id = ?").get(req.params.id);
+    if (!log) return res.status(404).json({ ok: false, error: "로그를 찾을 수 없습니다" });
+    if (!DEBTOR_FIELD_MAP[log.field_name]) return res.status(400).json({ ok: false, error: "복원할 수 없는 항목입니다" });
+
+    // principal_balance 등 숫자 컬럼은 문자열로 그대로 보내면 SQLite에 TEXT로 박혀 이후
+    // 합계/비교 연산이 깨질 수 있어, 숫자로 안전하게 변환 가능하면 숫자로 되돌린다.
+    const dbCol = DEBTOR_FIELD_MAP[log.field_name];
+    const isNumericCol = ["principal_balance", "adjustment", "collected_amount", "exec_title"].includes(dbCol);
+    let restoredVal = log.old_value ?? "";
+    if (isNumericCol && restoredVal !== "" && !isNaN(Number(restoredVal))) restoredVal = Number(restoredVal);
+
+    const userName = req.body?.userName || req.headers["x-user-name"] || "관리자";
+    applyDebtorFieldPatch(log.debtor_id, { [log.field_name]: restoredVal }, userName, "/api/edit-logs/:id/restore");
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -2145,6 +2307,59 @@ app.delete("/api/complaint-history/:id", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// ─── 재무실 대여금 회수 스케쥴 엑셀 대사 ────────────────
+// 프론트에서 xlsx 파일을 직접 파싱해 해당 월에 회수 표시된 채무자 목록을 보내오면,
+// CMS 입금 기록에 이미 반영돼 있는지 확인하고 없으면 미매칭 관리(pending_payments)에 등록한다.
+// body: { year, month, items: [{ debtorName, hubName, hubCode, companyName, amount }], brand? }
+app.post("/api/payments/verify-excel", (req, res) => {
+  const { year, month, items, brand } = req.body || {};
+  if (!year || !month || !Array.isArray(items)) {
+    return res.status(400).json({ ok: false, error: "year, month, items가 필요합니다" });
+  }
+  const from = `${year}-${String(month).padStart(2, "0")}-01`;
+  const lastDay = new Date(year, month, 0).getDate();
+  const to = `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+
+  const all = db.prepare("SELECT id, brand_code, name, hub_code FROM debtors").all();
+  const guarantors = db.prepare("SELECT debtor_id, name FROM debtor_guarantors").all();
+  const idx = matcher.buildIndex(all, guarantors);
+
+  let checked = 0, alreadyRecorded = 0, newlyFlagged = 0, duplicateSkipped = 0;
+  for (const item of items) {
+    const name = (item.debtorName || "").toString().trim();
+    const amount = parseInt(item.amount, 10) || 0;
+    if (!name || amount <= 0) continue;
+    checked++;
+
+    const m = matcher.matchDebtor(idx, { brand, hubCode: item.hubCode, debtorName: name });
+    if (m) {
+      const existing = db.prepare(
+        "SELECT id FROM payments WHERE debtor_id = ? AND payment_date BETWEEN ? AND ?"
+      ).get(m.debtorId, from, to);
+      if (existing) { alreadyRecorded++; continue; }
+    }
+
+    const sourceRef = `verify:${brand || ""}:${year}-${String(month).padStart(2, "0")}:${item.hubCode || ""}:${name}`;
+    const dup = db.prepare("SELECT id FROM pending_payments WHERE source_ref = ?").get(sourceRef);
+    if (dup) { duplicateSkipped++; continue; }
+
+    db.prepare(`
+      INSERT INTO pending_payments (payment_date, excel_brand, excel_hub_name, excel_hub_code, excel_debtor_name,
+                                    payer_name, total_amount, company_account, cash_charge,
+                                    welcome_direct, note, source, source_ref, reason)
+      VALUES (@payment_date, @brand, @hub_name, @hub_code, @debtor_name, @payer_name, @total, 0, @total, 0,
+              @note, 'excel', @source_ref, '대여금 회수 스케쥴 대사 — CMS 입금 미확인')
+    `).run({
+      payment_date: to, brand: brand || null, hub_name: item.hubName || null, hub_code: item.hubCode || null,
+      debtor_name: name, payer_name: name, total: amount,
+      note: item.companyName ? `거래처: ${item.companyName}` : null, source_ref: sourceRef,
+    });
+    newlyFlagged++;
+  }
+
+  res.json({ ok: true, checked, alreadyRecorded, newlyFlagged, duplicateSkipped });
+});
+
 // ─── 매칭 실패 대기열 조회 ──────────────────────
 app.get("/api/pending-payments", (req, res) => {
   const rows = db.prepare(`
@@ -2154,9 +2369,19 @@ app.get("/api/pending-payments", (req, res) => {
 });
 
 // ─── 보류 항목 채무자 수동 연결 ─────────────────
+// 대기건 생성 시 채널을 추정해 pending_payments에 넣어두지만, 실제로는 연결 화면에서
+// 캐쉬충전/웰컴직접 중 사용자가 명시적으로 고른 값을 우선한다 — channel이 없으면(예: 예전
+// 클라이언트, 일괄연결 등 하위호환) pending 테이블에 저장된 값을 그대로 쓴다.
+function splitChannelAmount(pending, channel) {
+  const total = pending.total_amount;
+  if (channel === "캐쉬충전") return { companyAccount: 0, cashCharge: total, welcomeDirect: 0 };
+  if (channel === "웰컴직접상환") return { companyAccount: 0, cashCharge: 0, welcomeDirect: total };
+  return { companyAccount: pending.company_account, cashCharge: pending.cash_charge, welcomeDirect: pending.welcome_direct };
+}
+
 app.post("/api/pending-payments/:id/resolve", (req, res) => {
   const pendingId = parseInt(req.params.id, 10);
-  const { debtorId, createdByName } = req.body || {};
+  const { debtorId, createdByName, force, channel } = req.body || {};
   if (!debtorId) return res.status(400).json({ ok: false, error: "debtorId가 필요합니다" });
 
   const pending = db.prepare("SELECT * FROM pending_payments WHERE id = ? AND resolved = 0").get(pendingId);
@@ -2167,13 +2392,12 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
     paymentDate: pending.payment_date,
     payerName: pending.payer_name,
     totalAmount: pending.total_amount,
-    companyAccount: pending.company_account,
-    cashCharge: pending.cash_charge,
-    welcomeDirect: pending.welcome_direct,
+    ...splitChannelAmount(pending, channel),
     note: pending.note,
     source: pending.source,
     sourceRef: pending.source_ref,
     createdByName: createdByName || "수동연결",
+    force: !!force,
   });
 
   if (result.ok) {
@@ -2192,10 +2416,10 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
         learned_at = excluded.learned_at
     `).run(pending.payer_name, debtorId, debtor?.name || null);
 
-    // 같은 입금자명의 다른 보류 건 즉시 자동처리
+    // 같은 입금자명 + 같은 브랜드의 다른 보류 건만 즉시 자동처리 (다른 브랜드 동명이인 오매칭 방지)
     const samePending = db.prepare(
-      "SELECT * FROM pending_payments WHERE payer_name = ? AND resolved = 0 AND id != ?"
-    ).all(pending.payer_name, pendingId);
+      "SELECT * FROM pending_payments WHERE payer_name = ? AND resolved = 0 AND id != ? AND excel_brand IS ?"
+    ).all(pending.payer_name, pendingId, pending.excel_brand);
 
     let autoResolved = 0;
     for (const other of samePending) {
@@ -2204,9 +2428,7 @@ app.post("/api/pending-payments/:id/resolve", (req, res) => {
         paymentDate: other.payment_date,
         payerName: other.payer_name,
         totalAmount: other.total_amount,
-        companyAccount: other.company_account,
-        cashCharge: other.cash_charge,
-        welcomeDirect: other.welcome_direct,
+        ...splitChannelAmount(other, channel),
         note: other.note,
         source: other.source,
         sourceRef: other.source_ref,
@@ -2365,6 +2587,48 @@ app.get("/api/documents/:debtorId", (req, res) => {
   try {
     const rows = db.prepare("SELECT * FROM debtor_documents WHERE debtor_id = ? ORDER BY linked_at DESC").all(req.params.debtorId);
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 채무자별 관련 데이터(이메일/슬랙/노션 이력) 조회
+// 본인이 등록한 항목(created_by=viewer) + 공유(shared=1) 처리된 항목만 보임
+app.get("/api/related-data/:debtorId", (req, res) => {
+  try {
+    const viewer = req.query.viewer || "";
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? AND (shared = 1 OR created_by = ?) ORDER BY occurred_at DESC")
+      .all(req.params.debtorId, viewer);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 채무자별 관련 데이터 등록
+app.post("/api/related-data/:debtorId", (req, res) => {
+  try {
+    const { source, title, summary, url, occurredAt, createdBy, shared } = req.body;
+    if (!source || !title || !url) return res.status(400).json({ error: "source, title, url은 필수입니다" });
+    db.prepare(`
+      INSERT OR IGNORE INTO debtor_related_data (debtor_id, source, title, summary, url, occurred_at, created_by, shared)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(req.params.debtorId, source, title, summary || null, url, occurredAt || null, createdBy || null, shared ? 1 : 0);
+    const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? AND (shared = 1 OR created_by = ?) ORDER BY occurred_at DESC")
+      .all(req.params.debtorId, createdBy || "");
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 관련 데이터 공유 여부 변경
+app.patch("/api/related-data/:id", (req, res) => {
+  try {
+    db.prepare("UPDATE debtor_related_data SET shared = ? WHERE id = ?").run(req.body.shared ? 1 : 0, parseInt(req.params.id, 10));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 관련 데이터 삭제
+app.delete("/api/related-data/:id", (req, res) => {
+  try {
+    db.prepare("DELETE FROM debtor_related_data WHERE id = ?").run(parseInt(req.params.id, 10));
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2641,6 +2905,7 @@ const OCR_SCRIPT = path.join(__dirname, "ocr_resident.py");
 const OCR_CREDIT_SCRIPT = path.join(__dirname, "ocr_credit_score.py");
 const OCR_SUBROGATION_SCRIPT = path.join(__dirname, "ocr_subrogation_date.py");
 const OCR_ADDRESS_SCRIPT = path.join(__dirname, "ocr_credit_address.py");
+const OCR_DOCUMENT_SCRIPT = path.join(__dirname, "ocr_document_text.py");
 
 // pythonw.exe = GUI subsystem, never opens a console window.
 // 절대경로로 고정하지 않고 PATH에서 찾는다 — 서버 PC의 사용자 계정/파이썬 설치 위치가
@@ -2684,11 +2949,7 @@ function spawnOcr(script, pdfPath, timeout) {
 }
 
 function ocrPdfForResident(pdfPath, priority) {
-  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. PaddleOCR로 교체하면서 mkldnn
-  // 가속을 끈 상태라(oneDNN 호환성 문제 회피용) Windows OCR보다 느릴 수 있어 여유를 둔다.
-  // (원래 240초였으나, 전체 채무자 배치 추출 시 후보 파일마다 이 시간을 기다리면
-  // 한 명 처리에 최악의 경우 너무 오래 걸려 150초로 줄임 — lookupResidentDetails의
-  // 후보 파일 수도 5→2로 같이 줄여서 worst-case 대기시간을 함께 낮췄다.)
+  // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. Windows OCR(winrt) 기준이라 여유를 둔다.
   return withOcrSlot(() => spawnOcr(OCR_SCRIPT, pdfPath, 150000), priority);
 }
 
@@ -2701,16 +2962,50 @@ function ocrPdfForCreditScore(pdfPath, priority) {
 }
 
 function ocrPdfForCreditAddress(pdfPath, priority) {
-  // 자택정보이력표(보통 3페이지)까지 스캔. PaddleOCR + mkldnn 비활성화라 여유를 둔다.
-  // (배치 추출 worst-case 대기시간을 줄이기 위해 240초→150초로 단축 — 위 ocrPdfForResident 주석 참고)
-  // 2026-07-22 실측: 가속 없는 CPU에서 페이지 1개 예측에만 368초가 걸리는 파일이 있어 150초 안엔
-  // 어차피 못 끝나는 경우가 있음을 확인 — 근본 해결(가속/모델 교체)은 별도 작업으로 미루고 원래 값 유지.
+  // 자택정보이력표(보통 3페이지)까지 스캔. Windows OCR(winrt) 기준이라 여유를 둔다.
   return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
+}
+
+function ocrPdfForDocument(pdfPath, priority) {
+  // 문건 분석: 스캔본(이미지) PDF의 전체 텍스트 추출. 최대 30페이지라 다른 OCR보다 오래 걸릴 수 있어 여유를 크게 둔다.
+  return withOcrSlot(() => spawnOcr(OCR_DOCUMENT_SCRIPT, pdfPath, 240000), priority);
 }
 
 function korName3(name) {
   const kor = String(name || "").replace(/[^가-힣]/g, "");
   return kor.length >= 2 ? kor.slice(0, 3) : null;
+}
+
+// 이름으로 CB(신용정보) 보고서 PDF를 찾아 OCR로 점수를 추출.
+// /api/debtor/:id/credit-score 화면 표시와 AI 종합분석(연대보증인 신용점수)이 각자
+// 따로 검색하다가 서로 다른 값을 보여주던 문제가 있어 이 함수로 통합했다.
+// 이름이 완전히 일치하는 파일이 있으면 그것만 쓰고, 하나도 없을 때만 앞 2~3글자
+// 부분일치로 넓혀서 찾는다 — 동명이인(다른 사람)의 CB 파일이 잘못 매칭되는 걸 줄이기 위함.
+async function findCreditScoreForName(name, limit, priority) {
+  if (!name) return null;
+  const CB_FILTER = `(LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%') AND ext = 'pdf'`;
+
+  let rows = db.prepare(
+    `SELECT file_path, filename FROM file_index
+     WHERE parsed_person_name = ? AND ${CB_FILTER}
+     ORDER BY parsed_date DESC LIMIT ?`
+  ).all(name, limit);
+
+  if (rows.length === 0) {
+    const kor = korName3(name);
+    if (!kor) return null;
+    rows = db.prepare(
+      `SELECT file_path, filename FROM file_index
+       WHERE (parsed_person_name LIKE ? OR filename LIKE ?) AND ${CB_FILTER}
+       ORDER BY parsed_date DESC LIMIT ?`
+    ).all(`%${kor}%`, `%${kor}%`, limit);
+  }
+
+  for (const c of rows) {
+    const r = await ocrPdfForCreditScore(c.file_path, priority);
+    if (r.ok && r.score) return { score: r.score, filename: c.filename };
+  }
+  return null;
 }
 
 // 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
@@ -2887,27 +3182,10 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 
     const entries = [];
 
-    const findScore = async (name) => {
-      const kor = korName3(name);
-      if (!kor) return null;
-      const rows = db.prepare(
-        `SELECT file_path, filename FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-         AND ext = 'pdf'
-         ORDER BY parsed_date DESC LIMIT 5`
-      ).all(`%${kor}%`, `%${kor}%`);
-      for (const c of rows) {
-        const r = await ocrPdfForCreditScore(c.file_path);
-        if (r.ok && r.score) return { score: r.score, filename: c.filename };
-      }
-      return null;
-    };
-
     // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
     // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
     // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다.
-    const mainResult = await findScore(debtor.name);
+    const mainResult = await findCreditScoreForName(debtor.name, 5);
     if (mainResult) {
       entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
       if (!debtor.credit_grade) {
@@ -2918,7 +3196,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
     // 연대보증인
     const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
     for (const gName of guarantors) {
-      const r = await findScore(gName);
+      const r = await findCreditScoreForName(gName, 5);
       if (r) entries.push({ name: gName, ...r, source: "ocr" });
     }
 
@@ -2946,9 +3224,20 @@ async function lookupCreditAddress(debtor, priority) {
   ).all(`%${kor}%`, `%${kor}%`);
 
   const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
+  let noHistoryResult = null;
   for (const c of rows) {
     const r = await ocrPdfForCreditAddress(c.file_path, priority);
     _debugAttempts.push({ filename: c.filename, debug: r.debug || null, ocrError: r.error || null, stderr: r._stderr || null });
+    if (r.noHistory) {
+      // 가장 최근 CB보고서가 "자택정보이력 0건"이라고 명시하면, 그보다 오래된 보고서로
+      // 넘어가지 않는다 — 더 오래된 보고서의 이력을 잘못 캐치는 것보다 "없음"이 안전하다.
+      const noHistUpdates = [], noHistVals = [];
+      if (!debtor.credit_phone && r.phone) { noHistUpdates.push("credit_phone = ?"); noHistVals.push(r.phone); }
+      if (!debtor.credit_queried_date && r.queriedDate) { noHistUpdates.push("credit_queried_date = ?"); noHistVals.push(r.queriedDate); }
+      if (noHistUpdates.length) db.prepare(`UPDATE debtors SET ${noHistUpdates.join(", ")} WHERE id = ?`).run(...noHistVals, debtor.id);
+      noHistoryResult = { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || r.phone || null, queriedDate: debtor.credit_queried_date || r.queriedDate || null, error: "CB보고서에 자택정보이력 없음", filename: c.filename };
+      break;
+    }
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
@@ -2972,6 +3261,7 @@ async function lookupCreditAddress(debtor, priority) {
     };
   }
 
+  if (noHistoryResult) return { ...noHistoryResult, _debugAttempts };
   return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패", _debugAttempts };
 }
 
@@ -3382,10 +3672,45 @@ function getOpenAIClient() {
   return openaiClient;
 }
 
+// AI 챗봇이 "활동 로그에 남겨줘" 요청을 실제로 처리할 수 있도록 하는 function-calling 도구.
+// 히스토리 탭이 실제로 읽는 저장소는 activities 테이블이 아니라 kv_store의 hist_m_{debtorId}
+// 배열이므로(위 주석 참고), 여기서도 반드시 같은 키/형태로 써야 화면에 보인다.
+const AI_ACTIVITY_TYPES = ["전화", "문자", "입금확인", "법적조치", "방문", "카카오톡", "내용증명", "기타"];
+const AI_ACTIVITY_LOG_TOOLS = [{
+  type: "function",
+  function: {
+    name: "log_activity",
+    description: "이 채무자의 히스토리(활동 로그)에 새 활동 기록을 실제로 추가한다. 사용자가 방금 한 통화/문자/방문 등의 내용을 \"기록해줘\", \"남겨줘\", \"적어줘\" 라고 명시적으로 요청할 때만 호출한다. 단순 질문이나 분석 요청에는 호출하지 않는다. 이 함수는 대화당 한 번만 호출한다.",
+    parameters: {
+      type: "object",
+      properties: {
+        content: {
+          type: "string",
+          description: "히스토리에 실제로 저장될 본문. \"분석 기록함\", \"조언 기록\" 같은 메타 설명이 아니라, 직전 assistant 답변에 담긴 실질적 내용(성향 판단, 회수율 평가, 강제집행 결과, 제시한 대안 등 핵심 근거와 결론)을 담당자가 나중에 읽어도 이해할 수 있도록 구체적으로 요약해서 담는다. 사용자가 통화/방문 내용을 직접 불러준 경우엔 그 내용을 그대로 요약한다.",
+        },
+        type: { type: "string", enum: AI_ACTIVITY_TYPES, description: "활동 유형, 알 수 없으면 기타" },
+        date: { type: "string", description: "활동 날짜 YYYY.MM.DD 형식, 명시하지 않으면 오늘 날짜 사용" },
+      },
+      required: ["content"],
+    },
+  },
+}];
+function appendDebtorHistory(debtorId, entry) {
+  const key = `hist_m_${debtorId}`;
+  const row = db.prepare("SELECT value FROM kv_store WHERE key=?").get(key);
+  let arr = [];
+  if (row) { try { const parsed = JSON.parse(row.value); if (Array.isArray(parsed)) arr = parsed; } catch {} }
+  arr = [entry, ...arr];
+  db.prepare(`
+    INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(key, JSON.stringify(arr));
+}
+
 app.post("/api/ai-chat", async (req, res) => {
   const openaiClient = getOpenAIClient();
   if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
-  const { query, debtorId } = req.body;
+  const { query, debtorId, history, chatHistory } = req.body;
   if (!query) return res.status(400).json({ error: "query 필요" });
 
   try {
@@ -3394,40 +3719,85 @@ app.post("/api/ai-chat", async (req, res) => {
     if (debtorId) {
       const d = db.prepare("SELECT * FROM debtors WHERE id=?").get(debtorId);
       if (d) {
-        const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 20").all(debtorId);
-        const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 10").all(debtorId);
+        const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 30").all(debtorId);
         const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(debtorId);
+        const seizureTargets = seizures.length
+          ? db.prepare(`SELECT * FROM seizure_targets WHERE seizure_case_id IN (${seizures.map(() => "?").join(",")}) ORDER BY seizure_case_id, seq`).all(...seizures.map(s => s.id))
+          : [];
         const rehabs = db.prepare("SELECT * FROM rehabilitations WHERE debtor_id=? ORDER BY id DESC LIMIT 3").all(debtorId);
         const installs = db.prepare("SELECT * FROM installment_plans WHERE debtor_id=? ORDER BY id DESC LIMIT 1").all(debtorId);
+        const instLogs = installs.length
+          ? db.prepare("SELECT * FROM installment_logs WHERE plan_id=? ORDER BY id DESC LIMIT 12").all(installs[0].id)
+          : [];
         const complaints = db.prepare("SELECT * FROM complaints WHERE debtor_id=? ORDER BY complaint_date DESC LIMIT 3").all(debtorId);
+        const guarantors = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id=?").all(debtorId).map(g => g.name);
+
+        // "히스토리" 탭에 실제로 보이는 기록(엑셀 원본+수정/삭제 반영 + 수동 추가)은 서버 DB의
+        // activities 테이블이 아니라 프론트(엑셀 원본 + localStorage/kv_store)에만 있어서, 여기선
+        // 클라이언트가 함께 보낸 history를 우선 사용한다 — activities 테이블은 이 화면 밖에서
+        // 쓰이는 경우를 위한 보조 폴백일 뿐 히스토리 탭 내용과는 별개다.
+        const clientHistory = Array.isArray(history) ? history.filter(h => h && h.content) : [];
+        const histLines = clientHistory.length > 0
+          ? clientHistory.slice(0, 40).map((h, i) => `${i + 1}. ${h.date || "날짜미상"} [${h.type || "메모"}] ${h.content}`).join("\n")
+          : (() => {
+              const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(debtorId);
+              return acts.length === 0 ? "없음" : acts.map((a, i) => `${i + 1}. ${a.activity_date} [${a.activity_type}] ${a.content || ""}`).join("\n");
+            })();
 
         const fmt = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
         const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
         const lastPay = pays[0];
+        const finalFinance = (d.principal_balance || 0) - (d.collected_amount || 0);
+        const finalLegal = (d.principal_balance || 0) + (d.adjustment || 0) - (d.collected_amount || 0);
+        const daysSinceLastPay = lastPay ? Math.floor((Date.now() - new Date(lastPay.payment_date).getTime()) / 86400000) : null;
+        // 최근 3건 vs 그 이전 3건 입금액 비교로 입금 추세(증가/감소/정지) 파악
+        const recent3 = pays.slice(0, 3).reduce((s, p) => s + (p.total_amount || 0), 0);
+        const prev3 = pays.slice(3, 6).reduce((s, p) => s + (p.total_amount || 0), 0);
+        const paymentTrend = pays.length === 0 ? "입금 이력 없음"
+          : pays.length < 4 ? "판단하기엔 입금 건수 부족"
+          : recent3 > prev3 * 1.1 ? "증가세"
+          : recent3 < prev3 * 0.9 ? "감소세"
+          : "유지";
+
+        const targetsByCase = {};
+        for (const t of seizureTargets) (targetsByCase[t.seizure_case_id] ||= []).push(t);
+
         contextText = `
 [채무자 기본정보]
 이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 허브: ${d.hub_name || "-"}
-원금: ${fmt(d.principal_balance)}원 | 수금상태: ${d.collection_status || "-"}
+원금: ${fmt(d.principal_balance)}원 | 조정액: ${fmt(d.adjustment)}원 | 회수액: ${fmt(d.collected_amount)}원
+잔액(재무기준): ${fmt(finalFinance)}원 | 잔액(법무기준, 법무비용 포함): ${fmt(finalLegal)}원
+수금상태: ${d.collection_status || "-"}
 담당자: ${d.assignee || "-"} | 메모: ${d.key_notes || "-"}
 전화: ${d.phone || "-"} | 채무원인: ${d.debt_cause || "-"}
 집행권원: ${d.exec_title || "-"}
+연대보증인: ${guarantors.length ? guarantors.join(", ") : "없음"}
 
 [입금 현황]
-총 입금액: ${fmt(totalPaid)}원 (${pays.length}건)
-최근 입금: ${lastPay ? `${lastPay.payment_date} ${fmt(lastPay.total_amount)}원` : "없음"}
-${pays.length > 0 ? pays.slice(0, 10).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원 (${p.payer_name || "-"})`).join("\n") : ""}
+총 입금액(전체): ${fmt(d.collected_amount)}원 | 최근 조회된 입금: ${fmt(totalPaid)}원 (${pays.length}건, 최근 30건 기준)
+전체 청구액 대비 회수율: ${(finalLegal + (d.collected_amount || 0)) > 0 ? (((d.collected_amount || 0) / (finalLegal + (d.collected_amount || 0))) * 100).toFixed(1) : "0"}%
+최근 입금: ${lastPay ? `${lastPay.payment_date} ${fmt(lastPay.total_amount)}원 (오늘까지 ${daysSinceLastPay}일 경과)` : "없음"}
+최근 입금 추세(최근 3건 합 vs 그 이전 3건 합 비교): ${paymentTrend}
+${pays.length > 0 ? pays.slice(0, 15).map(p => `  ${p.payment_date} ${fmt(p.total_amount)}원 (${p.payer_name || "-"})`).join("\n") : ""}
 
-[활동 이력 (최대 10건)]
-${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity_type}] ${a.content || ""}`).join("\n")}
+[히스토리 — 담당자가 실제 기록한 추심활동 전체 흐름, 시간순 최신이 위 (최대 40건)]
+${histLines}
 
-[압류/법적절차 (최대 5건)]
-${seizures.length === 0 ? "없음" : seizures.map(s => `법원: ${s.court || "-"} | 사건번호: ${s.case_number || "-"} | 상태: ${s.status || "-"}`).join("\n")}
+[압류/강제집행 결과 (최대 5건, 제3채무자별 실제 회수 내역 포함)]
+${seizures.length === 0 ? "없음" : seizures.map(s => {
+  const targets = targetsByCase[s.id] || [];
+  const head = `법원: ${s.court || "-"} | 사건번호: ${s.case_number || "-"} | 상태: ${s.status || "-"}`;
+  if (targets.length === 0) return `${head}\n  제3채무자 진술 내역 없음`;
+  const lines = targets.map(t => `  - ${t.third_party_name || "-"} | 청구액 ${fmt(t.claim_amount)}원 | 잔액 ${fmt(t.balance)}원 | 회수액 ${fmt(t.collected)}원 | 회신일 ${t.response_date || "-"} | ${t.completed ? "완료" : "진행중"}${t.note ? ` | ${t.note}` : ""}`);
+  return `${head}\n${lines.join("\n")}`;
+}).join("\n")}
 
 [회생/파산]
 ${rehabs.length === 0 ? "없음" : rehabs.map(r => `${r.type || "-"} | 사건번호: ${r.case_number || "-"} | 법원: ${r.court || "-"}`).join("\n")}
 
-[분납약정]
+[분납약정 및 실제 이행 현황 — 이행 로그는 채무자의 상환 의지/능력을 보여주는 핵심 근거]
 ${installs.length === 0 ? "없음" : installs.map(i => `월 ${fmt(i.monthly_amount)}원 | 총채권: ${fmt(i.total_claim)}원 | 상태: ${i.status}`).join("\n")}
+${instLogs.length > 0 ? instLogs.map(l => `  ${l.target_month} [${l.status}] ${fmt(l.paid_amount)}원${l.memo ? ` (${l.memo})` : ""}`).join("\n") : (installs.length > 0 ? "  월별 이행 로그 없음" : "")}
 
 [형사고소]
 ${complaints.length === 0 ? "없음" : complaints.map(c => `${c.complaint_date} | ${c.police_station || "-"} | ${c.status_note || "-"}`).join("\n")}
@@ -3451,30 +3821,213 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
     }
 
     const systemPrompt = `당신은 NPL 채권관리 전문 AI 어시스턴트입니다.
-바로고 채권관리 시스템의 실제 데이터를 바탕으로 담당자에게 실무적인 분석과 조언을 제공합니다.
+바로고 채권관리 시스템의 실제 데이터를 바탕으로 담당자에게 이 채무자 개인에게 맞춘 실무 분석과
+조언을 제공합니다. "협상을 시도해보세요", "압류를 고려해보세요", "지속적으로 연락하세요" 같은
+누구에게나 적용되는 뭉뚱그린 답변은 절대 금지입니다. 반드시 아래 데이터를 종합해 이 채무자만의
+근거를 인용하며 답하세요.
+
+- [히스토리]는 담당자가 그동안 실제로 남긴 추심활동 기록(통화·문자·방문·협상·주소변경 등)으로,
+  가장 구체적이고 신뢰도 높은 근거입니다. 연락 시도 빈도/최근성, 채무자의 반응이나 약속과 그
+  이행 여부, 협상·분납 논의 경과, 연락처·주소 변경 이력, 반복되는 패턴(예: 특정 시기마다 연락
+  끊김)을 파악하고 "N월 N일 기록에 따르면"처럼 구체적인 날짜를 인용해 근거를 제시하세요.
+  히스토리·데이터에 없는 내용은 추측해서 답하지 마세요.
+
+- **사용자의 질문에 직접 답하는 것이 최우선입니다.** 질문이 특정 정보만 묻고 있으면(예: "완납
+  가능성이 얼마나 돼?", "소멸시효 임박했어?", "압류 가능성 있어?") 그 질문에 필요한 근거만
+  사용해서 그 질문에만 간결하게 답하세요. 아래 성향 판단/강제집행 결과/채무액·회수율/대안 제시
+  항목을 매번 전부 나열하지 마세요 — 질문과 관련 없는 항목까지 억지로 붙이면 실제로 원하는 답이
+  묻혀버립니다. "히스토리에 남겨줘"처럼 기록만 요청하는 경우엔 무엇을 기록했는지만 답하세요.
+  사용자가 "종합적으로 분석해줘", "전반적으로 어떻게 해야해" 처럼 전체 현황·대응방향을 물을
+  때만 아래 항목들을 모두 포함한 구조화된 답변을 주세요.
+
+- **성향 판단** (종합분석 시 포함): 히스토리의 연락 반응 패턴, [분납약정 및 실제 이행 현황]의
+  완납/미납/지연 비율, [입금 현황]의 입금 추세·경과일을 종합해 이 채무자를 다음과 같은 유형 중
+  가장 근접한 것으로 명시적으로 분류하고 그 근거를 제시하세요: 협조적 상환형(약속을 대체로 지킴) /
+  상환 의지는 있으나 능력 부족형(약속하지만 반복적으로 미납·지연) / 회피·잠적형(연락 두절·주소·
+  연락처 변경 반복) / 의도적 비협조형(연락은 되지만 상환 의사 없음) / 판단 근거 부족(데이터 부족).
+  유형은 참고용 명칭이며 데이터와 다르면 다르게 표현해도 됩니다.
+
+- **강제집행 결과 반영** (종합분석·압류 관련 질문 시 포함): [압류/강제집행 결과]에 제3채무자별
+  청구액·잔액·회수액·완료여부가 있으면 회수율과 효과를 평가하고("OO은행 압류에서 청구액 대비
+  OO% 회수" 등), 압류가 없거나 실효성이 낮았다면 왜 그런지(재산 없음/제3채무자 무응답 등)와
+  추가 압류 대상 발굴 필요성을 판단하세요.
+
+- **채무액·회수율 반영** (종합분석·완납가능성 관련 질문 시 포함): [채무자 기본정보]의 잔액(재무/
+  법무기준)과 [입금 현황]의 전체 청구액 대비 회수율을 근거로, 잔액 규모와 회수 속도 대비 완전
+  회수까지 걸릴 기간이나 현실적 회수 가능성을 구체적으로 판단하세요.
+
+- **현실적 대안 제시** (종합분석·대응방향 질문 시 포함): 성향·강제집행 결과·채무액·회수율 분석을
+  종합해서, 이 채무자에게 실제로 실행 가능한 대안을 우선순위(1, 2, 3...) 순으로 제시하세요. 각
+  항목은 "무엇을/누구에게/어떻게/왜 이 채무자에게 이 방법이 적합한지(데이터 근거)"를 포함해야
+  하며, 일반론이 아니라 이 채무자의 구체적 상황(성향, 남은 잔액, 연대보증인 유무와 그쪽 상태,
+  압류 실효성, 회생·분납 이력)에 근거해야 합니다. 예를 들어 회피·잠적형이면 연락 재개보다
+  재산조사·압류가 우선이고, 능력 부족형이면 분납 재조정이나 연대보증인 활용이 우선일 수
+  있습니다 — 데이터가 실제로 그렇게 보일 때만 그렇게 판단하세요.
+
 - 금액은 항상 원화(원) 단위로 표시하고 천단위 콤마를 사용하세요.
-- 입금 패턴, 법적 조치 이력을 분석해 구체적인 다음 조치를 추천하세요.
-- 압류, 분납약정, 법적 조치 가능성을 실무적 관점에서 판단하세요.
-- 답변은 간결하되 핵심 정보를 빠짐없이 포함하세요.
+- 답변은 질문 범위에 맞게 간결하게, 그러나 근거(날짜·건수·금액·비율 등)는 빠짐없이 포함하세요.
 - 한국어로 답변하세요.`;
 
     const userMessage = contextText
       ? `[채무자 데이터]\n${contextText}\n\n[질문]\n${query}`
       : query;
 
+    const fullSystemPrompt = debtorId
+      ? `${systemPrompt}\n\n- 사용자가 방금 한 통화·문자·방문 등의 활동 내용을 히스토리에 기록해달라고 요청하면 log_activity 기능을 호출해 실제로 기록하고, 기록 완료 여부를 답변에 알려주세요.`
+      : systemPrompt;
+
+    // "히스토리에 남겨줘"는 보통 방금 나눈 대화(직전 분석 답변)를 가리키므로, 그 내용을 알아야
+    // log_activity의 content에 실제 분석 내용을 담을 수 있다 — 프론트가 최근 대화 turn을 함께 보낸다.
+    const priorTurns = Array.isArray(chatHistory)
+      ? chatHistory.filter(m => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string").slice(-8)
+      : [];
+
+    const baseMessages = [
+      { role: "system", content: fullSystemPrompt },
+      ...priorTurns,
+      { role: "user", content: userMessage },
+    ];
+
     const completion = await openaiClient.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      max_tokens: 1000,
+      messages: baseMessages,
+      max_tokens: 1500,
+      temperature: 0.3,
+      ...(debtorId ? { tools: AI_ACTIVITY_LOG_TOOLS, tool_choice: "auto" } : {}),
+    });
+
+    const assistantMsg = completion.choices[0].message;
+    const toolCalls = assistantMsg.tool_calls || [];
+
+    if (debtorId && toolCalls.length > 0) {
+      const userName = extractUserName(req);
+      const todayDot = db.prepare("SELECT date('now','localtime') AS d").get().d.replace(/-/g, ".");
+      let loggedAny = false;
+      const seenContents = new Set();
+      const toolResultMessages = toolCalls.map(tc => {
+        if (tc.function?.name !== "log_activity") {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "알 수 없는 기능" }) };
+        }
+        let args = {};
+        try { args = JSON.parse(tc.function.arguments || "{}"); } catch {}
+        const content = typeof args.content === "string" ? args.content.trim() : "";
+        if (!content) {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: "기록할 내용이 없습니다" }) };
+        }
+        // 모델이 같은 요청에 log_activity를 여러 번 호출하는 경우(동일 내용) 중복 기록 방지
+        if (seenContents.has(content)) {
+          return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: true, skipped: true, reason: "이미 기록됨(중복)" }) };
+        }
+        seenContents.add(content);
+        const type = AI_ACTIVITY_TYPES.includes(args.type) ? args.type : "기타";
+        const date = typeof args.date === "string" && /^\d{4}\.\d{2}\.\d{2}$/.test(args.date) ? args.date : todayDot;
+        const entry = {
+          id: `HIST${Date.now()}${Math.floor(100 + Math.random() * 900)}`,
+          date, content, type,
+          createdBy: userName && userName !== "알수없음" ? `${userName} (AI)` : "AI 챗봇",
+        };
+        appendDebtorHistory(debtorId, entry);
+        loggedAny = true;
+        return { role: "tool", tool_call_id: tc.id, content: JSON.stringify({ ok: true, ...entry }) };
+      });
+
+      const follow = await openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [...baseMessages, assistantMsg, ...toolResultMessages],
+        max_tokens: 500,
+        temperature: 0.3,
+      });
+      return res.json({ answer: follow.choices[0].message.content, activityLogged: loggedAny });
+    }
+
+    res.json({ answer: assistantMsg.content });
+  } catch (err) {
+    console.error("AI chat error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── 문건 분석: PDF 텍스트 추출 + 채팅 ────────────────
+app.post("/api/ai/extract-pdf-text", express.raw({ type: "application/pdf", limit: "20mb" }), async (req, res) => {
+  try {
+    if (!pdfParse) return res.status(503).json({ error: "PDF 처리 모듈(pdf-parse)이 설치되어 있지 않습니다" });
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).json({ error: "PDF 파일이 비어 있습니다" });
+    }
+    const data = await pdfParse(req.body);
+    const text = (data.text || "").trim();
+    if (text) {
+      return res.json({ text, pages: data.numpages || 0 });
+    }
+
+    // 텍스트가 없으면 스캔본(이미지) PDF일 가능성이 높다 — 기존 초본/CB 서류에 쓰던
+    // Windows OCR 파이프라인을 그대로 재사용해 이미지에서 전체 텍스트를 뽑아본다.
+    const tmpPath = path.join(os.tmpdir(), `docanalysis_${Date.now()}_${Math.round(Math.random() * 1e6)}.pdf`);
+    fs.writeFileSync(tmpPath, req.body);
+    try {
+      const ocrResult = await ocrPdfForDocument(tmpPath, "high");
+      if (ocrResult.ok && ocrResult.text && ocrResult.text.trim()) {
+        return res.json({
+          text: ocrResult.text,
+          pages: ocrResult.pages || data.numpages || 0,
+          ocr: true,
+          warning: ocrResult.truncated ? `문서가 길어 앞 ${ocrResult.pages}페이지만 OCR로 인식했습니다.` : undefined,
+        });
+      }
+      return res.json({
+        text: "", pages: data.numpages || 0,
+        warning: "텍스트를 추출할 수 없습니다 — OCR로도 인식하지 못했습니다" + (ocrResult.error ? ` (${ocrResult.error})` : ""),
+      });
+    } finally {
+      try { fs.unlinkSync(tmpPath); } catch (e) {}
+    }
+  } catch (err) {
+    res.status(500).json({ error: "PDF 처리 실패: " + err.message });
+  }
+});
+
+app.post("/api/ai/doc-chat", async (req, res) => {
+  const openaiClient = getOpenAIClient();
+  if (!openaiClient) return res.status(503).json({ error: "OPENAI_API_KEY 미설정" });
+  const { query, docText, docFileName, history } = req.body || {};
+  if (!query) return res.status(400).json({ error: "query 필요" });
+  if (!docText) return res.status(400).json({ error: "docText 필요 — 먼저 문서를 업로드하세요" });
+
+  try {
+    const MAX_CHARS = 60000; // 대략 30페이지 분량 — gpt-4o-mini 컨텍스트 내에서 충분히 여유있게 통째로 넘김
+    const truncated = docText.length > MAX_CHARS;
+    const docContext = docText.slice(0, MAX_CHARS);
+
+    const systemPrompt = `당신은 법률/채권 문서 분석 전문가입니다. 담당자가 업로드한 문서(판결문, 결정문,
+답변서, 화의안 등)의 내용을 바탕으로 질문에 답합니다.
+- 문서에 실제로 있는 내용만 근거로 답하고, 문서에 없는 내용은 추측하지 마세요.
+- 판결문/결정문이면 요지·핵심 쟁점·결과(주문)를 명확히 구분해서, 법률 지식이 없어도 이해할 수 있게
+  쉬운 말로 설명하세요.
+- 금액이 나오면 원화(원) 단위, 천단위 콤마로 표시하세요.
+- 날짜·금액·당사자명 등 문서 안의 구체적인 근거를 인용하세요.
+- 한국어로 답변하세요.`;
+
+    const clientHistory = Array.isArray(history)
+      ? history.filter(h => h && h.role && h.content).slice(-10).map(h => ({ role: h.role, content: h.content }))
+      : [];
+
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: `[문서: ${docFileName || "업로드된 문서"}]${truncated ? " (문서가 길어 앞부분만 발췌되었습니다)" : ""}\n${docContext}` },
+      ...clientHistory,
+      { role: "user", content: query },
+    ];
+
+    const completion = await openaiClient.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      max_tokens: 1500,
       temperature: 0.3,
     });
 
     res.json({ answer: completion.choices[0].message.content });
   } catch (err) {
-    console.error("AI chat error:", err.message);
+    console.error("AI doc-chat error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -3502,20 +4055,12 @@ async function generateDebtorAnalysisText(debtorId, priority) {
     const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
 
     // 연대보증인 신용점수 — CB보고서에서 라이브 OCR (best-effort, 못 찾아도 무시)
+    // /api/debtor/:id/credit-score와 같은 findCreditScoreForName을 공유해서, 두 화면이
+    // 서로 다른 파일을 골라 서로 다른 점수를 보여주는 일이 없도록 한다.
     const guarantorScores = [];
     for (const gName of guarantorNames) {
-      const kor = korName3(gName);
-      if (!kor) continue;
-      const rows = db.prepare(
-        `SELECT file_path FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 3`
-      ).all(`%${kor}%`, `%${kor}%`);
-      for (const r of rows) {
-        const result = await ocrPdfForCreditScore(r.file_path, priority);
-        if (result.ok && result.score) { guarantorScores.push(`${gName}: ${result.score}점`); break; }
-      }
+      const result = await findCreditScoreForName(gName, 3, priority);
+      if (result) guarantorScores.push(`${gName}: ${result.score}점`);
     }
 
     const contextText = `
