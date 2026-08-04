@@ -11361,7 +11361,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>상세 내역을 찾을 수 없습니다</div>
               )}
               {!statsDetailLoading && totalCount > 0 && (
-                <div style={{ maxHeight: 460, overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ maxHeight: "65vh", overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
                   {detail.debtorEdits.length > 0 && (
                     <div style={{ fontSize: 11, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "6px 10px" }}>
                       실질 입력량(통계표 반영분): <b style={{ color: "var(--tp)" }}>{detail.debtorEditsNetChars.toLocaleString()}자</b>
@@ -11396,24 +11396,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         이 기능 적용 이전에 저장된 기록이라 요청 크기(구조적 JSON 포함)를 대신 쓴 것 — 실제 입력량보다 부풀려질 수 있습니다.
                       </div>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
-                        <colgroup><col style={{ width: 100 }} /><col /><col style={{ width: 70 }} /></colgroup>
+                        <colgroup><col style={{ width: 84 }} /><col /><col style={{ width: 70 }} /></colgroup>
                         <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "내용", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
                         <tbody>
-                          {detail.otherActivity.map((a, ii) => (
+                          {detail.otherActivity.map((a, ii) => {
+                            const [aDate, aTime] = (a.ts || "").split(" ");
+                            return (
                             <tr key={ii} onClick={() => goToActivity(a)}
                               style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
                               onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                              <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap", verticalAlign: "top" }}>{a.ts}</td>
-                              <td style={{ padding: "6px 10px" }}>
+                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top", overflow: "hidden" }}>
+                                <div>{aDate}</div>
+                                <div style={{ color: "var(--tm)", fontSize: 10 }}>{aTime}</div>
+                              </td>
+                              <td style={{ padding: "6px 10px", overflow: "hidden" }}>
                                 {a.detail
                                   ? <div style={{ color: "var(--acc)", fontWeight: 600, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.detail}</div>
                                   : <div style={{ color: "var(--tm)", fontStyle: "italic" }}>(세부 내용 미기록 — 이 기능 적용 전 저장이라 글자수는 참고용 크기 값)</div>}
                                 <div className="mono" style={{ color: "var(--tm)", fontSize: 10, marginTop: 2, wordBreak: "break-all" }}>{a.path}</div>
                               </td>
-                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top", color: a.detail ? "var(--tp)" : "var(--tm)" }}>{(a.bytes || 0).toLocaleString()}자</td>
+                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top", color: a.detail ? "var(--tp)" : "var(--tm)", overflow: "hidden" }}>{(a.bytes || 0).toLocaleString()}자</td>
                             </tr>
-                          ))}
+                          );})}
                         </tbody>
                       </table>
                     </div>
