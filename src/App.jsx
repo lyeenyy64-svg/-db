@@ -11486,23 +11486,23 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <ModalHeader title={`${statsAccessDetailCell.user} · ${statsAccessDetailCell.period} 접속 내역`} onClose={() => { setStatsAccessDetailCell(null); setStatsAccessDetail(null); }} />
             {statsAccessDetailLoading && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중…</div>}
             {!statsAccessDetailLoading && statsAccessDetail && (
-              statsAccessDetail.sessions.length === 0 ? (
+              (statsAccessDetail.sessions || []).length === 0 ? (
                 <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>접속 기록을 찾을 수 없습니다</div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ fontSize: 11, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "6px 10px" }}>
                     60초 간격 접속 확인 신호(하트비트)를 기준으로, 간격이 2분 이내로 이어진 구간을 하나로 묶은 것입니다 —
-                    총합 <b style={{ color: "var(--tp)" }}>{fmtSeconds(statsAccessDetail.totalMinutes * 60)}</b>으로 표 안의 숫자와 같습니다.
+                    총합 <b style={{ color: "var(--tp)" }}>{fmtSeconds((statsAccessDetail.totalMinutes || 0) * 60)}</b>으로 표 안의 숫자와 같습니다.
                   </div>
                   <div style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead><tr style={{ background: "var(--bg2)" }}>{["시작", "종료", "시간"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
                       <tbody>
-                        {statsAccessDetail.sessions.map((s, ii) => (
+                        {(statsAccessDetail.sessions || []).map((s, ii) => (
                           <tr key={ii} style={{ borderBottom: "1px solid var(--brd)" }}>
-                            <td className="mono" style={{ padding: "6px 10px" }}>{s.start.slice(11)}</td>
-                            <td className="mono" style={{ padding: "6px 10px" }}>{s.end.slice(11)}</td>
-                            <td className="mono" style={{ padding: "6px 10px", color: "var(--acc)", fontWeight: 600 }}>{fmtSeconds(s.minutes * 60)}</td>
+                            <td className="mono" style={{ padding: "6px 10px" }}>{(s?.start || "").slice(11) || "-"}</td>
+                            <td className="mono" style={{ padding: "6px 10px" }}>{(s?.end || "").slice(11) || "-"}</td>
+                            <td className="mono" style={{ padding: "6px 10px", color: "var(--acc)", fontWeight: 600 }}>{fmtSeconds((s?.minutes || 0) * 60)}</td>
                           </tr>
                         ))}
                       </tbody>
