@@ -13,6 +13,22 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+// 한 분할상환 일정이 여러 번 이월됐을 수 있어(예: 7/1 → 7/15 → 8/7), rolledOverFrom을
+// 계속 따라가며 원래 납부일들을 전부 모은다 (사이클 방지용 seen 가드).
+// 결과는 [최초 납부일, ..., 현재 납부일] 순서. allSchedules는 data.installmentSchedules처럼
+// 플랜 여러 개를 통틀어 id로 찾을 수 있는 평평한 배열이어야 한다.
+const getRolloverChainDates = (sched, allSchedules) => {
+  const chain = [];
+  let cur = sched;
+  const seen = new Set();
+  while (cur) {
+    chain.unshift(cur.dueDate || cur.dueMonth || "?");
+    if (!cur.rolledOverFrom || seen.has(cur.rolledOverFrom)) break;
+    seen.add(cur.rolledOverFrom);
+    cur = (allSchedules || []).find(x => x.id === cur.rolledOverFrom);
+  }
+  return chain;
+};
 // 채무자 목록 화면에서 같은 사람의 여러 채무 항목을 한 행으로 묶어 보여주는 것과 동일한
 // 기준(이름+브랜드 또는 유사 코드)으로 "몇 명"인지 센다 — "건수"(원장 행 개수)와는 다른 단위.
 const countDistinctPeople = (arr) => {
@@ -1305,27 +1321,48 @@ const BulkEditModal = ({ type, count, options, onConfirm, onClose }) => {
 };
 
 // ─── RolloverModal ────────────────────────────────────────
+// 900,000원 전체를 한 날짜로 미루는 게 기본이지만, "8/7 45만 + 8/8 45만"처럼 여러 날짜로
+// 나눠 이월하는 경우가 있어 날짜/금액 행을 여러 개 추가할 수 있게 한다.
 const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
-  const [newDate, setNewDate] = useState("");
+  const [splits, setSplits] = useState([{ date: "", amount: sched?.scheduledAmount ? String(sched.scheduledAmount) : "" }]);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const updateSplit = (i, patch) => setSplits(prev => prev.map((s, idx) => idx === i ? { ...s, ...patch } : s));
+  const addSplit = () => setSplits(prev => [...prev, { date: "", amount: "" }]);
+  const removeSplit = (i) => setSplits(prev => prev.filter((_, idx) => idx !== i));
+  const parsedAmt = (s) => parseInt(String(s.amount || "").replace(/,/g, ""), 10) || 0;
+  const filledSplits = splits.filter(s => s.date);
+  const totalSplitAmt = splits.reduce((sum, s) => sum + parsedAmt(s), 0);
+  const amountMismatch = filledSplits.length > 1 && sched?.scheduledAmount > 0 && totalSplitAmt !== sched.scheduledAmount;
+
   const doRollover = async () => {
-    if (!newDate) { showToast("이월 날짜를 선택하세요"); return; }
+    if (filledSplits.length === 0) { showToast("이월 날짜를 1개 이상 입력하세요"); return; }
+    if (filledSplits.length > 1 && filledSplits.some(s => parsedAmt(s) <= 0)) {
+      showToast("2개 이상 날짜로 나눠 이월할 때는 각 날짜의 금액을 입력하세요");
+      return;
+    }
     setSaving(true);
     try {
+      const payload = filledSplits.map(s => ({ date: s.date, amount: parsedAmt(s) > 0 ? parsedAmt(s) : null }));
       const r = await fetch(`/api/installments/schedules/${sched.id}/rollover`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ newDate, memo, userName: "관리자" }),
+        body: JSON.stringify({ splits: payload, memo, userName: "관리자" }),
       });
       const result = await r.json();
       if (!result.ok) { showToast(result.error || "이월 실패"); setSaving(false); return; }
       await onReload();
-      const [, m, d] = newDate.split("-");
-      showToast(`이월 완료 → ${parseInt(m)}월 ${parseInt(d)}일`);
+      if (filledSplits.length > 1) {
+        showToast(`이월 완료 → ${filledSplits.length}개 날짜로 분할`);
+      } else {
+        const [, m, d] = filledSplits[0].date.split("-");
+        showToast(`이월 완료 → ${parseInt(m)}월 ${parseInt(d)}일`);
+      }
       onClose();
     } catch(e) { showToast("이월 실패: " + (e.message || "네트워크 오류")); setSaving(false); }
   };
-  const todayStr = new Date().toISOString().slice(0, 10);
+
   return (
     <Overlay onClose={onClose}>
       <ModalHeader title="납부일 이월" onClose={onClose} />
@@ -1338,15 +1375,42 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
             <span><span style={{ color: "var(--tm)" }}>금액:</span> <b className="mono" style={{ color: "var(--acc)" }}>{fmt(sched?.scheduledAmount)}</b></span>
           </div>
         </div>
-        <Field label="이월 날짜 (필수)">
-          <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} min={todayStr} style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
-        </Field>
+        <div>
+          <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 600, marginBottom: 6 }}>이월 날짜 (필수 — 여러 날짜로 나눠서 이월할 수 있습니다)</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {splits.map((s, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="date" value={s.date} min={todayStr} onChange={e => updateSplit(i, { date: e.target.value })}
+                  style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
+                <MoneyInput value={s.amount} onChange={v => updateSplit(i, { amount: v })}
+                  placeholder={splits.length === 1 ? "비우면 전체 금액" : "이 날짜 금액"}
+                  style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
+                {splits.length > 1 && (
+                  <button onClick={() => removeSplit(i)} title="이 날짜 삭제"
+                    style={{ padding: "6px 8px", borderRadius: 6, background: "none", border: "1px solid var(--brd)", color: "var(--tm)", cursor: "pointer", flexShrink: 0 }}>
+                    <I name="trash" size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <button onClick={addSplit} style={{ marginTop: 8, padding: "5px 12px", borderRadius: 6, background: "var(--acc)12", color: "var(--acc)", border: "1px solid var(--acc)40", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            + 날짜 추가 (분할 이월)
+          </button>
+          {amountMismatch && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "#b45309" }}>
+              분할 금액 합계 {fmt(totalSplitAmt)}이 기존 예정 금액 {fmt(sched.scheduledAmount)}과 다릅니다.
+            </div>
+          )}
+        </div>
         <Field label="메모 (채무자와 통화 내용 등)">
           <KoreanInput value={memo} onChange={e => setMemo(e.target.value)} placeholder="예: 월급 후 3일 뒤 입금하겠다고 함" style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
         </Field>
-        {newDate && (
+        {filledSplits.length > 0 && (
           <div style={{ background: "#8b5cf610", border: "1px solid #8b5cf640", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7c3aed" }}>
-            기존 일정은 <b>이월</b> 처리되고, <b>{newDate}</b>에 새 납부 일정이 생성됩니다.
+            기존 일정은 <b>이월</b> 처리되고, {filledSplits.length > 1
+              ? <>아래 <b>{filledSplits.length}개 날짜</b>에 새 납부 일정이 각각 생성됩니다.</>
+              : <><b>{filledSplits[0].date}</b>에 새 납부 일정이 생성됩니다.</>}
           </div>
         )}
       </div>
@@ -5185,7 +5249,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <span className="mono" style={{ fontWeight: 700 }}>{fmt(s.scheduledAmount)}</span>
                         {s.debtSource && <span style={{ fontSize: 11, color: "var(--ts)" }}>{s.debtSource}</span>}
                         <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span>
-                        {s.rolledOverFrom && <span title="이월로 생성된 일정" style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 10, fontSize: 10, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>↩ 이월됨</span>}
+                        {s.rolledOverFrom && (() => {
+                          const chain = getRolloverChainDates(s, data.installmentSchedules);
+                          const shortChain = chain.map(dt => dt.slice(5).replace("-", "/")).join("→");
+                          return (
+                            <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 10, fontSize: 10, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>
+                              ↩ 이월됨 ({shortChain})
+                            </span>
+                          );
+                        })()}
                         {canEdit && s.status !== "완납" && s.status !== "이월" && (
                           <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
                             <button onClick={async () => { await fetch(`/api/installments/schedules/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완납", userName: "관리자" }) }); await reloadInstallments(); showToast("완납 처리됨"); }} style={{ padding: "2px 10px", borderRadius: 5, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>
@@ -5711,6 +5783,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#8b5cf610", t: "#6d28d9", b: "#8b5cf640" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
+    // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 검정 배경/흰 글자로 항상 눈에 띄게 표시한다.
+    const rolloverColor = { bg: "#111827", t: "#fff", b: "#111827" };
 
     const calCells = useMemo(() => {
       const [y, m] = viewMonth.split("-").map(Number);
@@ -6205,7 +6279,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         {s.debtorName} ↗
                       </button>
                       {s.assignee && <span style={{ fontSize: 11, color: "var(--tm)" }}>{s.assignee}</span>}
-                      {s.rolledOverFrom && <span title="이월로 생성된 일정" style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>↩ 이월됨</span>}
+                      {s.rolledOverFrom && (() => {
+                        const chain = getRolloverChainDates(s, data.installmentSchedules);
+                        const shortChain = chain.map(dt => dt.slice(5).replace("-", "/")).join("→");
+                        return (
+                          <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>
+                            ↩ 이월됨 ({shortChain})
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       {canEdit && editingId !== s.id && (
@@ -6409,13 +6491,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           )}
                         </div>
                         {dayScheds.map((s) => {
-                          const c = scColor(s.status);
+                          const c = s.rolledOverFrom ? rolloverColor : scColor(s.status);
                           return (
                             <div key={s.id}
                               draggable={canEdit}
                               onDragStart={e => { e.stopPropagation(); setDragSchedId(s.id); e.dataTransfer.effectAllowed = "move"; }}
                               onDragEnd={() => { setDragSchedId(null); setDragOverDate(null); }}
                               onClick={e => { e.stopPropagation(); setDayPopup(ds); }}
+                              title={s.rolledOverFrom ? `이월: ${getRolloverChainDates(s, data.installmentSchedules).join(" → ")}` : undefined}
                               style={{
                                 fontSize: 9, lineHeight: "14px", padding: "0 4px",
                                 borderRadius: 3, marginBottom: 2,
@@ -6425,7 +6508,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                                 cursor: canEdit ? "grab" : "pointer",
                                 opacity: dragSchedId === s.id ? 0.4 : 1,
                               }}>
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.rolledOverFrom && <span title="이월로 생성된 일정">↩</span>}{s.debtorName}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.debtorName}</span>
                               <span style={{ flexShrink: 0, opacity: 0.8 }}>{(s.scheduledAmount / 10000).toFixed(0)}만</span>
                             </div>
                           );

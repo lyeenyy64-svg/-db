@@ -643,7 +643,9 @@ function resolveInstallmentActivity(req) {
       };
     }
     if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)\/rollover$/))) {
-      return { debtorId: schedDebtor(m[1]), detail: `이월 → ${body.newDate || "?"}${body.memo ? " · " + body.memo : ""}` };
+      const splitDates = (Array.isArray(body.splits) ? body.splits : []).filter(s => s && s.date).map(s => s.date);
+      const dest = splitDates.length ? splitDates.join(", ") : (body.newDate || "?");
+      return { debtorId: schedDebtor(m[1]), detail: `이월 → ${dest}${body.memo ? " · " + body.memo : ""}` };
     }
     if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)\/memo$/))) {
       return { debtorId: schedDebtor(m[1]), detail: `메모: ${body.memo || ""}` };
@@ -1666,29 +1668,45 @@ app.delete("/api/installments/:id", (req, res) => {
 });
 
 // POST /api/installments/schedules/:id/rollover - 이월 처리
+// 이월은 한 건을 그대로 미래 날짜로 미루는 게 기본이지만, 실제로는 "900,000원을 8/7 45만 +
+// 8/8 45만으로 나눠서 받기로 했다"처럼 여러 날짜로 쪼개 이월하는 경우가 있어 splits 배열로
+// 받는다. 하위 호환을 위해 예전 방식(newDate 단일 필드)도 그대로 지원한다.
 app.post("/api/installments/schedules/:id/rollover", (req, res) => {
-  const { newDate, memo, userName } = req.body || {};
-  if (!newDate) return res.status(400).json({ ok: false, error: "newDate 필요" });
+  const { newDate, splits, memo, userName } = req.body || {};
+  const items = (Array.isArray(splits) ? splits : [])
+    .filter(s => s && s.date)
+    .map(s => ({ date: s.date, amount: parseInt(s.amount, 10) || 0 }));
+  if (items.length === 0 && newDate) items.push({ date: newDate, amount: 0 });
+  if (items.length === 0) return res.status(400).json({ ok: false, error: "이월 날짜가 필요합니다" });
+
   const sched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
   if (!sched) return res.status(404).json({ ok: false, error: "일정 없음" });
-  const newId = "ISS" + Date.now();
-  const newMonth = newDate.slice(0, 7);
+
   try {
-    db.transaction(() => {
-      db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(newId, req.params.id);
-      // 이월로 새로 만드는 일정은 아직 다가올 예정 납부일이지 이미 밀린 미납이 아니므로 '예정'으로
-      // 시작해야 한다 — 예전엔 '미납'으로 박아서 새 날짜가 오기도 전에 연체로 표시되는 버그가 있었다.
-      db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo, rolled_over_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '예정', ?, ?)").run(
-        newId, sched.plan_id, sched.debt_source, sched.institution, sched.loan_amount, sched.interest_rate,
-        newDate, newMonth, sched.scheduled_amount, memo || null, req.params.id
-      );
-      db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
-        req.params.id, sched.plan_id, sched.debtor_id,
-        sched.due_date || sched.due_month, newDate,
-        sched.scheduled_amount, memo || null, userName || '관리자'
-      );
+    const newIds = db.transaction(() => {
+      const ids = [];
+      items.forEach((item, i) => {
+        // Date.now()만 쓰면 같은 요청에서 여러 건을 만들 때 밀리초가 겹쳐 id가 충돌할 수 있어 인덱스를 더한다.
+        const newId = "ISS" + (Date.now() + i) + Math.random().toString(36).slice(2, 6).toUpperCase();
+        const newMonth = item.date.slice(0, 7);
+        const amt = item.amount > 0 ? item.amount : sched.scheduled_amount;
+        // 이월로 새로 만드는 일정은 아직 다가올 예정 납부일이지 이미 밀린 미납이 아니므로 '예정'으로
+        // 시작해야 한다 — 예전엔 '미납'으로 박아서 새 날짜가 오기도 전에 연체로 표시되는 버그가 있었다.
+        db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo, rolled_over_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '예정', ?, ?)").run(
+          newId, sched.plan_id, sched.debt_source, sched.institution, sched.loan_amount, sched.interest_rate,
+          item.date, newMonth, amt, memo || null, req.params.id
+        );
+        db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
+          req.params.id, sched.plan_id, sched.debtor_id,
+          sched.due_date || sched.due_month, item.date,
+          amt, memo || null, userName || '관리자'
+        );
+        ids.push(newId);
+      });
+      db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(ids.join(","), req.params.id);
+      return ids;
     })();
-    res.json({ ok: true, newScheduleId: newId });
+    res.json({ ok: true, newScheduleIds: newIds, newScheduleId: newIds[0] });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
