@@ -5701,12 +5701,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       );
     }, [data.installmentSchedules, viewMonth]);
 
-    // 이월된 원래 일정은 전체/기타 필터에서는 계속 숨긴다(같은 건이 새 날짜에 또 뜨는 걸
-    // 막기 위해서인데, 이러면 "이월된 목록"을 볼 방법이 없어져 별도로 모아둔다 —
-    // "이월" 필터를 선택했을 때만 이 목록을 보여준다.
+    // "이월" 통계/목록은 도착월(=이월되어 새로 생성된 일정 자신의 예정월) 기준으로 센다 —
+    // 원본월 기준으로 셌더니 달력에 검게 표시되는(rolledOverFrom 있는) 도착 건들과 숫자가
+    // 안 맞아 헷갈렸다("8월에 검게 보이는 게 6개인데 왜 이월이 2로 나오냐"). 원본은 대부분
+    // 다른 달(주로 이전 달)에 예정돼 있었으므로 원본월 기준으로 세면 이 달 화면에 보이는
+    // 것과 다른 숫자가 나온다.
     const thisMonthRolledOver = useMemo(() => {
       return (data.installmentSchedules || []).filter(s =>
-        (s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))) && s.status === "이월"
+        (s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))) && s.rolledOverFrom
       );
     }, [data.installmentSchedules, viewMonth]);
 
@@ -6630,13 +6632,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   )}
                   {datedScheds.map(s => {
                     const c = scColor(s.status);
-                    const isRolledOver = s.status === "이월";
-                    // 이월 목록에서는 "이게 어디로 넘어갔는지"가 안 보여서 중복인지 판단이 안 됐다 —
-                    // rolledOverTo(쉼표로 여러 개일 수 있음, 분할 이월)를 실제 날짜로 풀어서 보여준다.
-                    // 그 대상도 또 이월됐다면(=이 행은 중간에 거쳐간 것) 화살표를 한 번 더 이어 보여준다.
-                    const rolloverTargets = isRolledOver && s.rolledOverTo
-                      ? s.rolledOverTo.split(",").map(id => data.installmentSchedules.find(x => x.id === id)).filter(Boolean)
-                      : [];
+                    // "이월" 필터에서 보이는 항목은 이월로 새로 생성된(도착) 일정들이라 rolledOverFrom이
+                    // 항상 있다 — 어디서(며칠에서) 넘어왔는지 원본 이력을 보여준다(여러 번 이월됐으면 체인 전체).
+                    const isRolledOver = !!s.rolledOverFrom;
+                    const rolloverChain = isRolledOver ? getRolloverChainDates(s, data.installmentSchedules) : [];
                     return (
                       <div key={s.id}
                         draggable={canEdit}
@@ -6664,14 +6663,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         </div>
                         {isRolledOver && (
                           <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {rolloverTargets.length > 0
-                              ? <>→ {rolloverTargets.map(t => `${fmtDate(t.dueDate)}${t.status === "이월" ? "(추가 이월됨)" : ""}`).join(", ")}</>
-                              : "대상 일정 없음(삭제됨)"}
+                            ← {rolloverChain.slice(0, -1).map(d => fmtDate(d)).join(" → ") || "원본 삭제됨"}
                           </div>
                         )}
                         <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
                           {isRolledOver && canEdit && (
-                            <button onClick={e => { e.stopPropagation(); deleteSchedule(s.id); }} title="이 이월 기록 삭제"
+                            <button onClick={e => { e.stopPropagation(); deleteSchedule(s.id); }} title="이 일정 삭제"
                               style={{ padding: 3, borderRadius: 4, background: "none", border: "1px solid var(--brd)", color: "var(--tm)", cursor: "pointer", display: "flex" }}>
                               <I name="trash" size={10} />
                             </button>
