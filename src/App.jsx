@@ -9598,12 +9598,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   .to{font-weight:bold;text-decoration:underline;margin-bottom:20px}
   p{margin:0 0 14px;text-align:justify}
   .center{text-align:center;margin:20px 0}
-  ol{padding-left:0;margin:0 0 14px}
+  ol{list-style:none;padding-left:0;margin:0 0 14px}
   ol>li{margin-bottom:10px;text-align:justify}
   .sub{margin:0 0 4px 24px}
-  .sig{margin-top:50px}
+  .sig{margin-top:50px;display:flex;justify-content:flex-end}
+  .sig-inner{text-align:right}
   .sig-title{font-weight:bold;margin-bottom:20px}
-  .sig-block{margin-left:60px;line-height:2.2}
+  .sig-block{line-height:2.2}
   @media print{body{margin:0}.page{margin:0;padding:18mm}}
 </style></head><body>
 <div class="page">
@@ -9626,11 +9627,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   </ol>
   <div class="center">${fmtDateDot(acContractDate)}</div>
   <div class="sig">
-    <div class="sig-title">위 "승낙자"&nbsp;&nbsp;&nbsp;&nbsp;${acCompany}</div>
-    <div class="sig-block">
-      대표이사&nbsp;&nbsp;${repSpaced}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(인)<br/>
-      ${acAddr1}<br/>
-      ${acAddr2}
+    <div class="sig-inner">
+      <div class="sig-title">위 "승낙자"&nbsp;&nbsp;&nbsp;&nbsp;${acCompany}</div>
+      <div class="sig-block">
+        대표이사&nbsp;&nbsp;${repSpaced}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(인)<br/>
+        ${acAddr1}<br/>
+        ${acAddr2}
+      </div>
     </div>
   </div>
 </div>
