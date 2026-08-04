@@ -6645,20 +6645,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           borderRadius: 10, border: `1px solid ${c.b}`, padding: "8px 12px", flexShrink: 0,
                           cursor: canEdit ? "grab" : "pointer",
                           opacity: dragSchedId === s.id ? 0.4 : 1,
-                          display: "grid", gridTemplateColumns: "28px 1fr 64px 88px 108px 62px 20px", alignItems: "center", gap: 8,
+                          display: "grid", gridTemplateColumns: "24px minmax(64px,1fr) 44px 80px 86px 54px 16px", alignItems: "center", gap: 6,
                         }}>
                         <div style={{ textAlign: "center" }}><BrandBadge code={s.brand} brands={config.brands} /></div>
-                        <div style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <div style={{ textAlign: "center", overflow: "hidden" }} title={`${s.debtorName}${s.debtSource ? " " + s.debtSource : ""}${s.institution ? " " + s.institution : ""}`}>
                           <span style={{ fontWeight: 700, fontSize: 13, color: "var(--tp)" }}>{s.debtorName}</span>
                           {s.debtSource && <span style={{ fontSize: 11, color: "var(--tm)", marginLeft: 4 }}>{s.debtSource}</span>}
                           {s.institution && <span style={{ fontSize: 11, color: "var(--tm)", marginLeft: 4 }}>{s.institution}</span>}
                         </div>
-                        <div style={{ textAlign: "center", fontSize: 11, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.assignee || "-"}</div>
+                        <div style={{ textAlign: "center", fontSize: 11, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.assignee || "-"}>{s.assignee || "-"}</div>
                         <div className="mono" style={{ textAlign: "center", fontSize: 11, color: "var(--ts)" }}>{fmtDate(s.dueDate)}</div>
-                        <div className="mono" style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</div>
+                        <div className="mono" style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis" }} title={fmt(s.scheduledAmount)}>{fmt(s.scheduledAmount)}</div>
                         <div style={{ textAlign: "center" }}>
                           <span title={isRolledOver ? `이월: ${getRolloverChainDates(s, data.installmentSchedules).join(" → ")}` : undefined}
-                            style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{displayStatus}</span>
+                            style={{ padding: "2px 6px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}`, whiteSpace: "nowrap" }}>{displayStatus}</span>
                         </div>
                         <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>{canEdit ? "⠿" : ""}</div>
                       </div>
