@@ -1873,16 +1873,19 @@ function runInstallmentAutoSync(opts = {}) {
             if (allocated >= needed)      newStatus = "완납";
             else if (allocated > 0)       newStatus = "일부납";
             else if (isPastDue)           newStatus = "미납";
-            else                          continue; // 아직 예정일 전이고 배분할 돈도 없음 — 그대로 "예정" 유지
+            // 아직 예정일 전이고 배분할 돈도 없으면 "예정"이어야 한다 — 예전 버그로 이미
+            // 미납/일부납으로 잘못 찍혀 있던 건도 여기서 다시 예정으로 되돌려야 하므로
+            // continue로 건너뛰지 않고 명시적으로 "예정"을 지정해 아래에서 되돌린다.
+            else                          newStatus = "예정";
             pool -= allocated;
           } else {
             // scheduled_amount 없는 경우
             if (pool > 0)            newStatus = "완납";
             else if (isPastDue)      newStatus = "미납";
-            else                     continue;
+            else                     newStatus = "예정";
           }
 
-          const paidAmtToStore = allocated > 0 ? allocated : (s.paid_amount || 0);
+          const paidAmtToStore = allocated > 0 ? allocated : (newStatus === "예정" ? 0 : (s.paid_amount || 0));
           const statusChanged   = newStatus !== s.status;
           const amountChanged   = newStatus === "일부납" && allocated !== (s.paid_amount || 0);
 
