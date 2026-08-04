@@ -3159,6 +3159,51 @@ app.get("/api/admin/stats", (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// 어드민 통계: 특정 사용자·기간의 접속시간이 "언제부터 언제까지"였는지 상세 조회
+// (사용자별 접속시간 표의 칸 하나를 클릭했을 때 실제 구간을 보여주기 위함)
+// 하트비트는 60초 간격 핑이라 실제 세션 시작/종료를 직접 기록하진 않는다 — 연속된
+// 핑(간격 120초 이내) 묶음을 하나의 구간으로 보고, 그 구간의 길이는 (핑 개수 × 60초)로
+// 계산한다. 이렇게 해야 여러 구간의 합이 표에 보이는 총 접속시간과 정확히 일치한다.
+app.get("/api/admin/stats/access-detail", (req, res) => {
+  try {
+    const { user, period } = req.query;
+    if (!user || !period) return res.status(400).json({ ok: false, error: "user, period가 필요합니다" });
+    const len = String(period).length;
+    const pings = db.prepare(`
+      SELECT ts FROM user_activity_log
+      WHERE type='heartbeat' AND user_name = ? AND substr(ts,1,${len}) = ?
+      ORDER BY ts ASC
+    `).all(user, period);
+
+    const GAP_MS = 120 * 1000;
+    const sessions = [];
+    let cur = null;
+    for (const { ts } of pings) {
+      const t = new Date(ts.replace(" ", "T")).getTime();
+      if (cur && t - cur.lastTs <= GAP_MS) {
+        cur.count++;
+        cur.lastTs = t;
+      } else {
+        if (cur) sessions.push(cur);
+        cur = { startTs: t, lastTs: t, count: 1 };
+      }
+    }
+    if (cur) sessions.push(cur);
+
+    const fmt = (ms) => {
+      const d = new Date(ms);
+      const p2 = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+    };
+    const result = sessions.map(s => {
+      const durationSec = s.count * 60;
+      return { start: fmt(s.startTs), end: fmt(s.startTs + durationSec * 1000), minutes: Math.round(durationSec / 60) };
+    }).sort((a, b) => b.start.localeCompare(a.start));
+
+    res.json({ ok: true, sessions: result, totalMinutes: result.reduce((sum, s) => sum + s.minutes, 0) });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // 어드민 통계: 특정 사용자·기간의 입력량이 "무엇"이었는지 상세 조회
 // (사용자별 데이터 입력량 표의 칸 하나를 클릭했을 때 실제 입력 내용을 보여주기 위함)
 // period 길이로 일/월/연 단위를 판단한다: "YYYY-MM-DD"(10)/"YYYY-MM"(7)/"YYYY"(4).

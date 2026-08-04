@@ -2400,6 +2400,9 @@ export default function App() {
   const [statsDetailCell, setStatsDetailCell] = useState(null); // {user, period} | null — 입력량 표 셀 클릭 시 상세보기
   const [statsDetail, setStatsDetail] = useState(null); // {debtorEdits, otherActivity} | null
   const [statsDetailLoading, setStatsDetailLoading] = useState(false);
+  const [statsAccessDetailCell, setStatsAccessDetailCell] = useState(null); // {user, period} | null — 접속시간 표 셀 클릭 시 상세보기
+  const [statsAccessDetail, setStatsAccessDetail] = useState(null); // {sessions, totalMinutes} | null
+  const [statsAccessDetailLoading, setStatsAccessDetailLoading] = useState(false);
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   // 법적절차 화면은 이제 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 통합 조회하므로
   // legalTypeFilter는 탭 전환이 아니라 "유형" 드롭다운 값이다 (SSE 재렌더링에도 유지되도록 최상위에 둔다)
@@ -11310,7 +11313,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   {adminStatsLoading ? "불러오는 중…" : "통계 새로고침"}
                 </button>
               </div>
-              {renderStatTable(stats.access, statsAccessGran, setStatsAccessGran, "seconds", fmtSeconds, "사용자별 접속시간", "접속시간", "오늘부터 접속시간을 수집합니다. 잠시 후 새로고침해 주세요.")}
+              {renderStatTable(stats.access, statsAccessGran, setStatsAccessGran, "seconds", fmtSeconds, "사용자별 접속시간 (칸을 클릭하면 몇 시부터 몇 시까지인지 볼 수 있습니다)", "접속시간", "오늘부터 접속시간을 수집합니다. 잠시 후 새로고침해 주세요.",
+                (user, period) => {
+                  setStatsAccessDetailCell({ user, period });
+                  setStatsAccessDetail(null);
+                  setStatsAccessDetailLoading(true);
+                  fetch(`/api/admin/stats/access-detail?user=${encodeURIComponent(user)}&period=${encodeURIComponent(period)}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => { setStatsAccessDetail(d && d.ok ? d : { sessions: [], totalMinutes: 0 }); setStatsAccessDetailLoading(false); })
+                    .catch(() => { setStatsAccessDetail({ sessions: [], totalMinutes: 0 }); setStatsAccessDetailLoading(false); });
+                })}
               {renderStatTable(stats.volume, statsVolumeGran, setStatsVolumeGran, "bytes", fmtChars, "사용자별 데이터 입력량 (글자 1개 = 1바이트 가정, 칸을 클릭하면 상세 내용을 볼 수 있습니다)", "데이터입력량", "표시할 데이터가 없습니다",
                 (user, period) => {
                   setStatsDetailCell({ user, period });
@@ -11465,6 +11477,38 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </Overlay>
           );
         })()}
+        {statsAccessDetailCell && (
+          <Overlay onClose={() => { setStatsAccessDetailCell(null); setStatsAccessDetail(null); }} wide>
+            <ModalHeader title={`${statsAccessDetailCell.user} · ${statsAccessDetailCell.period} 접속 내역`} onClose={() => { setStatsAccessDetailCell(null); setStatsAccessDetail(null); }} />
+            {statsAccessDetailLoading && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중…</div>}
+            {!statsAccessDetailLoading && statsAccessDetail && (
+              statsAccessDetail.sessions.length === 0 ? (
+                <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>접속 기록을 찾을 수 없습니다</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ fontSize: 11, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "6px 10px" }}>
+                    60초 간격 접속 확인 신호(하트비트)를 기준으로, 간격이 2분 이내로 이어진 구간을 하나로 묶은 것입니다 —
+                    총합 <b style={{ color: "var(--tp)" }}>{fmtSeconds(statsAccessDetail.totalMinutes * 60)}</b>으로 표 안의 숫자와 같습니다.
+                  </div>
+                  <div style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--bg2)" }}>{["시작", "종료", "시간"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {statsAccessDetail.sessions.map((s, ii) => (
+                          <tr key={ii} style={{ borderBottom: "1px solid var(--brd)" }}>
+                            <td className="mono" style={{ padding: "6px 10px" }}>{s.start.slice(11)}</td>
+                            <td className="mono" style={{ padding: "6px 10px" }}>{s.end.slice(11)}</td>
+                            <td className="mono" style={{ padding: "6px 10px", color: "var(--acc)", fontWeight: 600 }}>{fmtSeconds(s.minutes * 60)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            )}
+          </Overlay>
+        )}
       </div>
     );
   })();
