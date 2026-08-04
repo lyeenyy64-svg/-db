@@ -357,6 +357,18 @@ const getHistE = (id) => { try { return JSON.parse(localStorage.getItem(`hist_e_
 const saveHistE = (id, obj) => { localStorage.setItem(`hist_e_${id}`, JSON.stringify(obj)); kvPut(`hist_e_${id}`, obj); };
 const getHistD = (id) => { try { return JSON.parse(localStorage.getItem(`hist_d_${id}`) || "[]"); } catch { return []; } };
 const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.stringify(arr)); kvPut(`hist_d_${id}`, arr); };
+// 분할상환 일정에 "특이사항 메모"를 남기면 그 채무자의 "히스토리" 탭(hist_m_)에도 같은
+// 내용을 자동으로 추가한다 — 메모는 installment_schedule_history에도 남지만 그건 분할상환
+// 탭 안쪽 "납부 히스토리"라 눈에 잘 안 띄어서, 채무자 상세를 열면 바로 보이는 히스토리
+// 탭에도 남기는 게 낫다는 요청.
+const addInstallmentMemoToDebtorHistory = (debtorId, dueDate, amount, text, userName) => {
+  if (!debtorId) return;
+  const hist = getHistM(debtorId);
+  const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+  const context = [dueDate ? fmtDate(dueDate) : "", amount ? fmt(amount) : ""].filter(Boolean).join(" ");
+  const content = `[분할상환${context ? " " + context : ""}] ${text}`;
+  saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자" }, ...hist]);
+};
 // 검색용: 채무자 히스토리(엑셀 원본 + 수동 추가, 수정/삭제 반영)를 한 문자열로 합친다
 const getDebtorHistoryText = (d) => {
   const deletedSet = new Set(getHistD(d.id));
@@ -2812,10 +2824,14 @@ export default function App() {
     } catch(e) { showToast("분할상환 로드 실패"); }
   };
   const addInstallmentMemo = async (schedId, memo, eventType = "메모") => {
+    const sched = (data.installmentSchedules || []).find(s => s.id === schedId);
     await fetch(`/api/installments/schedules/${schedId}/memo`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ memo, eventType, userName: "관리자" }),
+      body: JSON.stringify({ memo, eventType, userName: currentUser?.name || "관리자" }),
     });
+    if (eventType === "메모" && sched) {
+      addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, memo, currentUser?.name);
+    }
     await reloadInstallments();
   };
 
@@ -6258,14 +6274,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const text = (cardMemos[schedId] || "").trim();
         if (!text) return;
         setSavingMemoId(schedId);
+        const sched = scheds.find(x => x.id === schedId);
         await fetch(`/api/installments/schedules/${schedId}/memo`, {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ memo: text, eventType: "메모", userName: "관리자" }),
+          body: JSON.stringify({ memo: text, eventType: "메모", userName: currentUser?.name || "관리자" }),
         });
+        if (sched) addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, text, currentUser?.name);
         setCardMemos(prev => ({ ...prev, [schedId]: "" }));
         // 메모에서 금액 자동 감지
         const detectedAmt = parseAmountFromText(text);
-        const sched = scheds.find(x => x.id === schedId);
         if (detectedAmt && detectedAmt > 0 && sched && detectedAmt !== sched.scheduledAmount) {
           await fetch(`/api/installments/schedules/${schedId}`, {
             method: "PATCH", headers: { "Content-Type": "application/json" },

@@ -1734,6 +1734,7 @@ app.post("/api/installments/schedules/:id/memo", (req, res) => {
     eventType || '메모', sched.due_date || sched.due_month,
     sched.scheduled_amount, memo, userName || '관리자'
   );
+  db.prepare("UPDATE installment_schedules SET memo = ? WHERE id = ?").run(memo, req.params.id);
   res.json({ ok: true });
 });
 
