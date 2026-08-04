@@ -2782,13 +2782,23 @@ function diffByteEstimate(oldVal, newVal) {
 // diffByteEstimate와 같은 방식으로 "무엇이 추가/변경됐는지" 실제 내용을 뽑아낸다 —
 // 예전엔 kv 저장은 항목 크기(byte)만 세고 내용은 전혀 남기지 않아서, 관리자 통계 화면에서
 // hist_m_(채무자 히스토리) 등의 저장 내역이 전부 "세부 내용 미기록"으로만 보였다.
-// 레코드 배열이면 content/text/memo/note 필드 중 있는 걸 미리보기로 쓴다.
+// 레코드 배열이면 content/text/memo/note 필드나(히스토리류), task/result(To Do List·
+// 강제집행 등 업무현안 표) 조합 중 있는 걸 미리보기로 쓴다 — 둘 다 없으면 JSON 그대로.
 function diffDetailText(oldVal, newVal) {
   const pickText = (item) => {
     if (item == null) return "";
     if (typeof item !== "object") return String(item);
     const v = item.content ?? item.text ?? item.memo ?? item.note;
-    return v != null ? String(v) : JSON.stringify(item);
+    if (v != null) return String(v);
+    if (item.task != null) {
+      const parts = [String(item.task)];
+      if (item.result) parts.push(`→ ${item.result}`);
+      if (item.status) parts.push(`[${item.status}]`);
+      if (item.assignee) parts.push(`(${item.assignee})`);
+      return parts.join(" ");
+    }
+    if (item.debtorName != null) return String(item.debtorName) + (item.result ? ` — ${item.result}` : "");
+    return JSON.stringify(item);
   };
   let changed = null;
   if (Array.isArray(newVal)) {
@@ -2810,7 +2820,7 @@ function diffDetailText(oldVal, newVal) {
     changed = t ? [t] : [];
   }
   if (!changed || changed.length === 0) return null;
-  const CAP = 300;
+  const CAP = 2000; // 목록형 kv(To Do List 등)는 여러 항목이 한 번에 바뀔 수 있어 여유 있게 잡음
   const joined = changed.join(" / ");
   return joined.length > CAP ? joined.slice(0, CAP) + "…" : joined;
 }

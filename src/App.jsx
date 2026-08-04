@@ -1440,9 +1440,9 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
 };
 
 // ─── Modal Overlay ────────────────────────────────────────
-const Overlay = ({ children, onClose, wide }) => (
+const Overlay = ({ children, onClose, wide, xwide }) => (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1e3 }} onClick={onClose}>
-    <div className="anim" onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, width: wide ? 720 : 560, maxHeight: "85vh", overflow: "auto", padding: 24, border: "1px solid var(--brd)" }}>{children}</div>
+    <div className="anim" onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, width: xwide ? 1040 : wide ? 720 : 560, maxHeight: "85vh", overflow: "auto", padding: 24, border: "1px solid var(--brd)" }}>{children}</div>
   </div>
 );
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -11354,7 +11354,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               .catch(() => showToast("이동할 수 있는 화면을 찾을 수 없습니다"));
           };
           return (
-            <Overlay onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} wide>
+            <Overlay onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} xwide>
               <ModalHeader title={`${statsDetailCell.user} · ${statsDetailCell.period} 입력 내용`} onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} />
               {statsDetailLoading && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중…</div>}
               {!statsDetailLoading && totalCount === 0 && (
@@ -11395,7 +11395,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         내용이 채워진 행은 <b>보이는 글자 수 그대로</b>를 센 것이라 신뢰할 수 있습니다. "세부 내용 미기록"으로 표시된 행은
                         이 기능 적용 이전에 저장된 기록이라 요청 크기(구조적 JSON 포함)를 대신 쓴 것 — 실제 입력량보다 부풀려질 수 있습니다.
                       </div>
-                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
+                        <colgroup><col style={{ width: 100 }} /><col /><col style={{ width: 70 }} /></colgroup>
                         <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "내용", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
                         <tbody>
                           {detail.otherActivity.map((a, ii) => (
@@ -11406,9 +11407,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                               <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap", verticalAlign: "top" }}>{a.ts}</td>
                               <td style={{ padding: "6px 10px" }}>
                                 {a.detail
-                                  ? <div style={{ color: "var(--acc)", fontWeight: 600 }}>{a.detail}</div>
+                                  ? <div style={{ color: "var(--acc)", fontWeight: 600, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.detail}</div>
                                   : <div style={{ color: "var(--tm)", fontStyle: "italic" }}>(세부 내용 미기록 — 이 기능 적용 전 저장이라 글자수는 참고용 크기 값)</div>}
-                                <div className="mono" style={{ color: "var(--tm)", fontSize: 10, marginTop: 2 }}>{a.path}</div>
+                                <div className="mono" style={{ color: "var(--tm)", fontSize: 10, marginTop: 2, wordBreak: "break-all" }}>{a.path}</div>
                               </td>
                               <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top", color: a.detail ? "var(--tp)" : "var(--tm)" }}>{(a.bytes || 0).toLocaleString()}자</td>
                             </tr>
