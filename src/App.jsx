@@ -13,6 +13,7 @@ const fmtDate = (d) => {
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
 const today = () => new Date().toISOString().split("T")[0];
+const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
 // 한 분할상환 일정이 여러 번 이월됐을 수 있어(예: 7/1 → 7/15 → 8/7), rolledOverFrom을
 // 계속 따라가며 원래 납부일들을 전부 모은다 (사이클 방지용 seen 가드).
 // 결과는 [최초 납부일, ..., 현재 납부일] 순서. allSchedules는 data.installmentSchedules처럼
@@ -11240,7 +11241,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           };
           const knownNames = users.map(u => u.name);
           const GRAN = [{ k: "daily", l: "일별", limit: 30 }, { k: "monthly", l: "월별", limit: 12 }, { k: "yearly", l: "연간", limit: 5 }];
-          const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
           const fmtChars = (n) => { if (!n) return "-"; return `${n.toLocaleString()}자`; };
 
           const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint, onCellClick) => {
