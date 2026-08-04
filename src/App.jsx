@@ -9309,7 +9309,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
   const AI_TEMPLATES = [
     { id: "압류별지", label: "[압류][별지] 압류 및 추심할 채권의 표시", active: true },
     { id: "정산채권양도승낙서", label: "정산채권 양도 승낙서", active: true },
-    { id: "강제집행", label: "강제집행 신청서", active: false },
   ];
 
   const EXEC_TITLE_TYPES = [
