@@ -6630,6 +6630,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   )}
                   {datedScheds.map(s => {
                     const c = scColor(s.status);
+                    const isRolledOver = s.status === "이월";
+                    // 이월 목록에서는 "이게 어디로 넘어갔는지"가 안 보여서 중복인지 판단이 안 됐다 —
+                    // rolledOverTo(쉼표로 여러 개일 수 있음, 분할 이월)를 실제 날짜로 풀어서 보여준다.
+                    // 그 대상도 또 이월됐다면(=이 행은 중간에 거쳐간 것) 화살표를 한 번 더 이어 보여준다.
+                    const rolloverTargets = isRolledOver && s.rolledOverTo
+                      ? s.rolledOverTo.split(",").map(id => data.installmentSchedules.find(x => x.id === id)).filter(Boolean)
+                      : [];
                     return (
                       <div key={s.id}
                         draggable={canEdit}
@@ -6641,7 +6648,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           borderRadius: 10, border: `1px solid ${c.b}`, padding: "8px 12px", flexShrink: 0,
                           cursor: canEdit ? "grab" : "pointer",
                           opacity: dragSchedId === s.id ? 0.4 : 1,
-                          display: "grid", gridTemplateColumns: "28px 1fr 64px 88px 108px 62px 20px", alignItems: "center", gap: 8,
+                          display: "grid", gridTemplateColumns: isRolledOver ? "28px 1fr 64px 88px 108px 62px 120px 24px" : "28px 1fr 64px 88px 108px 62px 20px", alignItems: "center", gap: 8,
                         }}>
                         <div style={{ textAlign: "center" }}><BrandBadge code={s.brand} brands={config.brands} /></div>
                         <div style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -6655,7 +6662,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div style={{ textAlign: "center" }}>
                           <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
                         </div>
-                        <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>{canEdit ? "⠿" : ""}</div>
+                        {isRolledOver && (
+                          <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {rolloverTargets.length > 0
+                              ? <>→ {rolloverTargets.map(t => `${fmtDate(t.dueDate)}${t.status === "이월" ? "(추가 이월됨)" : ""}`).join(", ")}</>
+                              : "대상 일정 없음(삭제됨)"}
+                          </div>
+                        )}
+                        <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                          {isRolledOver && canEdit && (
+                            <button onClick={e => { e.stopPropagation(); deleteSchedule(s.id); }} title="이 이월 기록 삭제"
+                              style={{ padding: 3, borderRadius: 4, background: "none", border: "1px solid var(--brd)", color: "var(--tm)", cursor: "pointer", display: "flex" }}>
+                              <I name="trash" size={10} />
+                            </button>
+                          )}
+                          {!isRolledOver && canEdit ? "⠿" : ""}
+                        </div>
                       </div>
                     );
                   })}
