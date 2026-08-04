@@ -896,6 +896,9 @@ function ingestPayment(b) {
     return { payId, balanceAfter: after?.final_balance_legal ?? null };
   })();
 
+  // 새 입금이 분할상환 일정과 즉시 매칭되도록 재평가 (기존엔 30분 주기 자동동기화만 있어 반영 지연)
+  try { runInstallmentAutoSync({ forceDebtorIds: [resolvedId] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
+
   // "신규 입금" 알림 규칙 즉시 평가 (동기 함수이므로 await 없이 fire-and-forget)
   fireEventAlert("new_payment", { debtorName: debtor.name, hubName: debtor.hub_name, amount: total }).catch(() => {});
 
