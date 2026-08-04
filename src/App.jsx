@@ -9308,6 +9308,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   const AI_TEMPLATES = [
     { id: "압류별지", label: "[압류][별지] 압류 및 추심할 채권의 표시", active: true },
+    { id: "정산채권양도승낙서", label: "정산채권 양도 승낙서", active: true },
     { id: "강제집행", label: "강제집행 신청서", active: false },
   ];
 
@@ -9340,6 +9341,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [showPreview, setShowPreview] = useState(false);
     const [dlLoading,  setDlLoading]  = useState(false);
     const [dlError,    setDlError]    = useState("");
+
+    // ── 정산채권 양도 승낙서 전용 필드 — 원본 양식에서 노란색으로 표시된(건마다 바뀌는) 부분만
+    // 입력란으로 뺐다. "승낙자"(바로고) 쪽 회사명/대표이사/주소는 원본에도 노란색이지만
+    // 평소엔 안 바뀌므로 기본값을 채워두고 필요할 때만 고치도록 함.
+    const [acAssignorQ,   setAcAssignorQ]   = useState("");
+    const [acAssignorSel, setAcAssignorSel] = useState(null);
+    const [acContractDate, setAcContractDate] = useState(""); // 계약체결일 = 승낙서 작성일
+    const [acAmount,       setAcAmount]       = useState(""); // 설정금액
+    const [acMaturityDate, setAcMaturityDate] = useState(""); // 만기일
+    const [acCompany,  setAcCompany]  = useState("주식회사 바로고");
+    const [acRepName,  setAcRepName]  = useState("이태권");
+    const [acAddr1,    setAcAddr1]    = useState("서울 강남구 언주로 134길 32");
+    const [acAddr2,    setAcAddr2]    = useState("(논현동, 씨앤에스빌딩)");
+    const acAssignorName = () => acAssignorSel?._asGuarantor || acAssignorSel?.name || acAssignorQ.trim();
 
     // 대상자(별지 1, 별지 2, ...) — 공정증서/판결문 하나로 채무자 본인+연대보증인 등
     // 여러 명에게 각각 별지를 작성해야 하는 경우를 위해, 대상자 수를 늘리면 그만큼
@@ -9523,9 +9538,66 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 </style></head><body>${pages}</body></html>`;
     };
 
+    // "YYYY-MM-DD" → "YYYY년 M월 D일" / "YYYY. M. D."로 표기 — 미입력이면 원본 양식처럼 빈칸으로 둔다
+    const fmtDateKr  = (iso) => { if (!iso) return "____년 __월 __일"; const [y, m, d] = iso.split("-").map(Number); return `${y}년 ${m}월 ${d}일`; };
+    const fmtDateDot = (iso) => { if (!iso) return "____. __. __."; const [y, m, d] = iso.split("-"); return `${y}. ${m}. ${d}.`; };
+
+    const generateAssignmentConsentHtml = () => {
+      const assignorName = acAssignorName() || "________";
+      const companyShort = acCompany.replace(/^주식회사\s*/, "") || "바로고";
+      const amountNum = parseInt(String(acAmount).replace(/,/g, ""), 10) || 0;
+      const repSpaced = acRepName.trim().split("").join(" ");
+      return `<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8"/>
+<style>
+  body{font-family:"맑은 고딕","Malgun Gothic",sans-serif;font-size:10.5pt;line-height:1.9;margin:0;padding:0;background:#fff;color:#000}
+  .page{width:210mm;margin:0 auto;padding:25mm 25mm;box-sizing:border-box}
+  h1{text-align:center;font-size:16pt;font-weight:bold;text-decoration:underline;margin:0 0 30px}
+  .to{font-weight:bold;text-decoration:underline;margin-bottom:20px}
+  p{margin:0 0 14px;text-align:justify}
+  .center{text-align:center;margin:20px 0}
+  ol{padding-left:0;margin:0 0 14px}
+  ol>li{margin-bottom:10px;text-align:justify}
+  .sub{margin:0 0 4px 24px}
+  .sig{margin-top:50px}
+  .sig-title{font-weight:bold;margin-bottom:20px}
+  .sig-block{margin-left:60px;line-height:2.2}
+  @media print{body{margin:0}.page{margin:0;padding:18mm}}
+</style></head><body>
+<div class="page">
+  <h1>${companyShort}&nbsp;&nbsp;정산채권&nbsp;&nbsp;양도&nbsp;&nbsp;승낙서</h1>
+  <div class="to">웰컴저축은행 주식회사 귀중</div>
+  <p>${acCompany}(이하 "승낙자")는 웰컴저축은행(주)(이하 "양수인")과 ${assignorName}(이하 "양도인") 사이에서 ${fmtDateKr(acContractDate)} 체결한 매출정산채권 양수도 계약(이하 "계약")과 관련하여, 다음과 같이 이의를 유보하고 "계약"의 채권 양도를 승낙합니다.</p>
+  <div class="center">- 다&nbsp;&nbsp;&nbsp;&nbsp;음 -</div>
+  <ol>
+    <li>1. "승낙자"는 "양도인"과 "양수인" 간에 체결한 "계약"의 내용에 따라, "양도인"이 "양수인"에게 ${companyShort} 매출정산채권을 양도함을 승낙합니다.</li>
+    <li>2. 제1항과 관련하여, "승낙자"는 "승낙자"가 "양도인"에게 가지는 모든 채권을 우선 선정산하고 남은 채권을 매출정산채권으로 하여 이의를 유보한 상태로 위 매출정산채권 양도를 승낙합니다.</li>
+    <li>3. "양도인" 및 "양수인"의 요청과 같이 "계약"의 내용에 따라 매출정산채권을 캐쉬로 정립하도록 합니다.</li>
+    <li>4. "양도인"과 "양수인" 사이의 "계약"의 내용은 아래와 같음을 확인합니다.
+      <div class="sub">- 양수인: 웰컴저축은행 주식회사</div>
+      <div class="sub">- 양도인: ${assignorName}</div>
+      <div class="sub">- 정산채권 양도 승낙자: ${acCompany}</div>
+      <div class="sub">- 설정금액: ${fmt(amountNum)}</div>
+      <div class="sub">- 만기일: ${fmtDateDot(acMaturityDate)}</div>
+    </li>
+    <li>5. "승낙자"는 "양수인"과 기타 제3채무자간에 채권이 경합되어 선후를 알 수 없을 경우 관할 법원에 담보목적물을 공탁하여 채무를 면할 수 있습니다.</li>
+  </ol>
+  <div class="center">${fmtDateDot(acContractDate)}</div>
+  <div class="sig">
+    <div class="sig-title">위 "승낙자"&nbsp;&nbsp;&nbsp;&nbsp;${acCompany}</div>
+    <div class="sig-block">
+      대표이사&nbsp;&nbsp;${repSpaced}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(인)<br/>
+      ${acAddr1}<br/>
+      ${acAddr2}
+    </div>
+  </div>
+</div>
+</body></html>`;
+    };
+
     const handlePreview = () => {
       setDlError("");
-      setPreviewHtml(generateDocHtml());
+      setPreviewHtml(selTemplate === "정산채권양도승낙서" ? generateAssignmentConsentHtml() : generateDocHtml());
       setShowPreview(true);
     };
 
@@ -9560,7 +9632,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const handlePrintPdf = () => {
-      const html = previewHtml || generateDocHtml();
+      const html = previewHtml || (selTemplate === "정산채권양도승낙서" ? generateAssignmentConsentHtml() : generateDocHtml());
       const w = window.open("", "_blank");
       w.document.write(html);
       w.document.close();
@@ -9600,6 +9672,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
 
+          {selTemplate === "압류별지" && <>
           {/* 대상자 정보 — 하나의 공정증서/판결문으로 여러 명(채무자 본인+연대보증인 등)에게
               각각 별지를 작성해야 할 수 있어, 대상자 수를 늘리면 그만큼 블록이 추가된다. */}
           <div style={sectionStyle}>
@@ -9833,6 +9906,69 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               </div>
             )}
           </div>
+          </>}
+
+          {selTemplate === "정산채권양도승낙서" && (
+            <div style={sectionStyle}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>승낙서 내용 (노란색 표시 부분)</div>
+
+              <label style={labelStyle}>양도인 (채무자명)</label>
+              <div style={{ position: "relative", marginBottom: 10 }}>
+                <KoreanInput value={acAssignorQ}
+                  onChange={e => { setAcAssignorQ(e.target.value); setAcAssignorSel(null); }}
+                  placeholder="채무자명 또는 허브코드 입력..." style={inputStyle} />
+                {!acAssignorSel && acAssignorQ.trim() && searchTargets(acAssignorQ).length > 0 && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
+                    border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
+                    {searchTargets(acAssignorQ).map((d, i) => (
+                      <div key={`${d.id}-${d._asGuarantor || "main"}-${i}`}
+                        onClick={() => { setAcAssignorSel(d); setAcAssignorQ(d._asGuarantor || d.name); }}
+                        style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <span style={{ fontWeight: 600 }}>{d._asGuarantor || d.name}</span>
+                        {d._asGuarantor && <span style={{ fontSize: 10, color: "var(--acc)", marginLeft: 6 }}>연대보증인 · {d.name}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                <div>
+                  <label style={labelStyle}>계약체결일 (= 승낙서 작성일)</label>
+                  <input type="date" value={acContractDate} onChange={e => setAcContractDate(e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>만기일</label>
+                  <input type="date" value={acMaturityDate} onChange={e => setAcMaturityDate(e.target.value)} style={inputStyle} />
+                </div>
+              </div>
+
+              <label style={labelStyle}>설정금액</label>
+              <KoreanInput value={acAmount ? Number(acAmount).toLocaleString("ko-KR") : ""}
+                onChange={e => setAcAmount(e.target.value.replace(/,/g, ""))}
+                placeholder="24,000,000" style={{ ...inputStyle, marginBottom: 10 }} />
+
+              <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, margin: "12px 0 8px" }}>
+                승낙자(바로고) 정보 — 평소엔 그대로 두면 됩니다
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                <div>
+                  <label style={labelStyle}>회사명</label>
+                  <KoreanInput value={acCompany} onChange={e => setAcCompany(e.target.value)} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>대표이사</label>
+                  <KoreanInput value={acRepName} onChange={e => setAcRepName(e.target.value)} style={inputStyle} />
+                </div>
+              </div>
+              <label style={labelStyle}>주소</label>
+              <KoreanInput value={acAddr1} onChange={e => setAcAddr1(e.target.value)} style={{ ...inputStyle, marginBottom: 8 }} />
+              <label style={labelStyle}>주소 상세</label>
+              <KoreanInput value={acAddr2} onChange={e => setAcAddr2(e.target.value)} style={inputStyle} />
+            </div>
+          )}
 
           {/* 버튼 */}
           {dlError && <div style={{ color: "var(--err)", fontSize: 11, marginBottom: 8 }}>{dlError}</div>}
@@ -9843,14 +9979,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <I name="eye" size={15} /> 미리보기
             </button>
-            <button onClick={handleDownloadHwpx} disabled={dlLoading || targets.length > 1}
-              title={targets.length > 1 ? "대상자가 여러 명이면 HWPX 다운로드는 지원하지 않습니다 — PDF 출력을 이용하세요" : ""}
-              style={{ flex: 1, padding: "10px 0", borderRadius: 8,
-                background: (dlLoading || targets.length > 1) ? "var(--bg2)" : "#6366f1", color: (dlLoading || targets.length > 1) ? "var(--tm)" : "#fff",
-                fontSize: 13, fontWeight: 600, border: "none", cursor: (dlLoading || targets.length > 1) ? "default" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <I name="download" size={15} /> {dlLoading ? "생성 중..." : "HWPX 다운"}
-            </button>
+            {selTemplate === "압류별지" && (
+              <button onClick={handleDownloadHwpx} disabled={dlLoading || targets.length > 1}
+                title={targets.length > 1 ? "대상자가 여러 명이면 HWPX 다운로드는 지원하지 않습니다 — PDF 출력을 이용하세요" : ""}
+                style={{ flex: 1, padding: "10px 0", borderRadius: 8,
+                  background: (dlLoading || targets.length > 1) ? "var(--bg2)" : "#6366f1", color: (dlLoading || targets.length > 1) ? "var(--tm)" : "#fff",
+                  fontSize: 13, fontWeight: 600, border: "none", cursor: (dlLoading || targets.length > 1) ? "default" : "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <I name="download" size={15} /> {dlLoading ? "생성 중..." : "HWPX 다운"}
+              </button>
+            )}
             <button onClick={handlePrintPdf}
               style={{ flex: 1, padding: "10px 0", borderRadius: 8, background: "#ef4444", color: "#fff",
                 fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer",
