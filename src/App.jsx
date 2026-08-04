@@ -10847,6 +10847,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           }
           const groups = [...editsByDebtor.values()];
           const totalCount = detail.debtorEdits.length + detail.otherActivity.length;
+          const goToPath = (path) => {
+            fetch(`/api/admin/resolve-path?path=${encodeURIComponent(path)}`)
+              .then(r => r.ok ? r.json() : null)
+              .then(d => {
+                const debtor = d && d.ok ? data.debtors.find(x => x.id === d.debtorId) : null;
+                if (!debtor) { showToast("이동할 수 있는 화면을 찾을 수 없습니다 (일괄 처리 또는 삭제된 항목)"); return; }
+                setStatsDetailCell(null);
+                setStatsDetail(null);
+                navigateToDebtor(debtor, d.tab || "히스토리");
+              })
+              .catch(() => showToast("이동할 수 있는 화면을 찾을 수 없습니다"));
+          };
           return (
             <Overlay onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} wide>
               <ModalHeader title={`${statsDetailCell.user} · ${statsDetailCell.period} 입력 내용`} onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} />
@@ -10883,7 +10895,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           {detail.otherActivity.map((a, ii) => (
                             <tr key={ii} style={{ borderBottom: "1px solid var(--brd)" }}>
                               <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{a.ts}</td>
-                              <td className="mono" style={{ padding: "6px 10px", color: "var(--ts)" }}>{a.path}</td>
+                              <td className="mono" style={{ padding: "6px 10px", color: "var(--acc)", cursor: "pointer", textDecoration: "underline" }} onClick={() => goToPath(a.path)}>{a.path}</td>
                               <td className="mono" style={{ padding: "6px 10px" }}>{(a.bytes || 0).toLocaleString()}자</td>
                             </tr>
                           ))}

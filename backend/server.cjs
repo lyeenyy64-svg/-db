@@ -2854,6 +2854,35 @@ app.get("/api/admin/stats/detail", (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// 어드민 통계: "기타 저장" 목록의 저장 위치(API 경로)를 실제 화면(채무자 상세)으로 역추적
+// path에 분할상환 일정/플랜 id가 들어있는 경우만 해당 id로 소유 채무자를 찾아 이동시킨다 —
+// batch/일괄 처리처럼 경로에 개별 id가 없는 요청은 어느 채무자 것인지 특정할 수 없어 대상에서 제외.
+app.get("/api/admin/resolve-path", (req, res) => {
+  try {
+    const p = String(req.query.path || "");
+    let row = null;
+    let m;
+    if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)(?:\/(?:rollover|memo))?$/))) {
+      row = db.prepare(`
+        SELECT d.id AS debtorId, d.name AS debtorName
+        FROM installment_schedules s
+        JOIN installment_plans ip ON s.plan_id = ip.id
+        JOIN debtors d ON d.id = ip.debtor_id
+        WHERE s.id = ?
+      `).get(m[1]);
+    } else if ((m = p.match(/^\/api\/installments\/([^/]+)(?:\/schedules)?$/)) && m[1] !== "schedules") {
+      row = db.prepare(`
+        SELECT d.id AS debtorId, d.name AS debtorName
+        FROM installment_plans ip
+        JOIN debtors d ON d.id = ip.debtor_id
+        WHERE ip.id = ?
+      `).get(m[1]);
+    }
+    if (!row) return res.json({ ok: false });
+    res.json({ ok: true, debtorId: row.debtorId, debtorName: row.debtorName, tab: "분할상환" });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // 어드민 통계 진단용: "알수없음"/특정 사용자로 잡힌 원본 요청을 개별적으로 확인
 // (집계된 합계만으로는 어느 요청이 왜 그 사용자/바이트로 잡혔는지 추적할 수 없어 추가)
 app.get("/api/admin/activity-log", (req, res) => {
