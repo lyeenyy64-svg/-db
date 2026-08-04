@@ -1734,6 +1734,10 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
       db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(ids.join(","), req.params.id);
       return ids;
     })();
+    // 이월로 그 달의 일정 구성이 바뀌었으니, 같은 채무자의 이미 '완납'으로 확정된 일정도
+    // 다시 계산한다 — 예: 과거 놓친 달을 뒤늦게 이월하면서 실제 입금일로 되돌리면, 그동안
+    // 다른 달로 잘못 매칭돼 있던 완납이 다시 열려서 원래 달로 재배분돼야 한다.
+    try { runInstallmentAutoSync({ forceDebtorIds: [sched.debtor_id] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
     res.json({ ok: true, newScheduleIds: newIds, newScheduleId: newIds[0] });
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });

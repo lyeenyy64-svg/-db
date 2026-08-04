@@ -1348,7 +1348,6 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
   const [splits, setSplits] = useState([{ date: "", amount: sched?.scheduledAmount ? String(sched.scheduledAmount) : "" }]);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
-  const todayStr = new Date().toISOString().slice(0, 10);
 
   const updateSplit = (i, patch) => setSplits(prev => prev.map((s, idx) => idx === i ? { ...s, ...patch } : s));
   const addSplit = () => setSplits(prev => [...prev, { date: "", amount: "" }]);
@@ -1401,7 +1400,7 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {splits.map((s, i) => (
               <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input type="date" value={s.date} min={todayStr} onChange={e => updateSplit(i, { date: e.target.value })}
+                <input type="date" value={s.date} onChange={e => updateSplit(i, { date: e.target.value })}
                   style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
                 <MoneyInput value={s.amount} onChange={v => updateSplit(i, { amount: v })}
                   placeholder={splits.length === 1 ? "비우면 전체 금액" : "이 날짜 금액"}
