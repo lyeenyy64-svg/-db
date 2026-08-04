@@ -9345,16 +9345,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // ── 정산채권 양도 승낙서 전용 필드 — 원본 양식에서 노란색으로 표시된(건마다 바뀌는) 부분만
     // 입력란으로 뺐다. "승낙자"(바로고) 쪽 회사명/대표이사/주소는 원본에도 노란색이지만
     // 평소엔 안 바뀌므로 기본값을 채워두고 필요할 때만 고치도록 함.
-    const [acAssignorQ,   setAcAssignorQ]   = useState("");
-    const [acAssignorSel, setAcAssignorSel] = useState(null);
+    const [acAssignorName, setAcAssignorName] = useState(""); // 양도인 (자유 텍스트)
     const [acContractDate, setAcContractDate] = useState(""); // 계약체결일 = 승낙서 작성일
-    const [acAmount,       setAcAmount]       = useState(""); // 설정금액
+    const [acAmount,       setAcAmount]       = useState(""); // 기준금액 — 문서엔 이 금액의 120%가 설정금액으로 표시됨
     const [acMaturityDate, setAcMaturityDate] = useState(""); // 만기일
     const [acCompany,  setAcCompany]  = useState("주식회사 바로고");
     const [acRepName,  setAcRepName]  = useState("이태권");
     const [acAddr1,    setAcAddr1]    = useState("서울 강남구 언주로 134길 32");
     const [acAddr2,    setAcAddr2]    = useState("(논현동, 씨앤에스빌딩)");
-    const acAssignorName = () => acAssignorSel?._asGuarantor || acAssignorSel?.name || acAssignorQ.trim();
 
     // 대상자(별지 1, 별지 2, ...) — 공정증서/판결문 하나로 채무자 본인+연대보증인 등
     // 여러 명에게 각각 별지를 작성해야 하는 경우를 위해, 대상자 수를 늘리면 그만큼
@@ -9542,10 +9540,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const fmtDateKr  = (iso) => { if (!iso) return "____년 __월 __일"; const [y, m, d] = iso.split("-").map(Number); return `${y}년 ${m}월 ${d}일`; };
     const fmtDateDot = (iso) => { if (!iso) return "____. __. __."; const [y, m, d] = iso.split("-"); return `${y}. ${m}. ${d}.`; };
 
+    const acSettingAmount = () => Math.round((parseInt(String(acAmount).replace(/,/g, ""), 10) || 0) * 1.2);
+
     const generateAssignmentConsentHtml = () => {
-      const assignorName = acAssignorName() || "________";
+      const assignorName = acAssignorName.trim() || "________";
       const companyShort = acCompany.replace(/^주식회사\s*/, "") || "바로고";
-      const amountNum = parseInt(String(acAmount).replace(/,/g, ""), 10) || 0;
+      const amountNum = acSettingAmount();
       const repSpaced = acRepName.trim().split("").join(" ");
       return `<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8"/>
@@ -9913,26 +9913,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>승낙서 내용 (노란색 표시 부분)</div>
 
               <label style={labelStyle}>양도인 (채무자명)</label>
-              <div style={{ position: "relative", marginBottom: 10 }}>
-                <KoreanInput value={acAssignorQ}
-                  onChange={e => { setAcAssignorQ(e.target.value); setAcAssignorSel(null); }}
-                  placeholder="채무자명 또는 허브코드 입력..." style={inputStyle} />
-                {!acAssignorSel && acAssignorQ.trim() && searchTargets(acAssignorQ).length > 0 && (
-                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "var(--card)",
-                    border: "1px solid var(--brd)", borderRadius: 6, zIndex: 10, boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
-                    {searchTargets(acAssignorQ).map((d, i) => (
-                      <div key={`${d.id}-${d._asGuarantor || "main"}-${i}`}
-                        onClick={() => { setAcAssignorSel(d); setAcAssignorQ(d._asGuarantor || d.name); }}
-                        style={{ padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--brd)" }}
-                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        <span style={{ fontWeight: 600 }}>{d._asGuarantor || d.name}</span>
-                        {d._asGuarantor && <span style={{ fontSize: 10, color: "var(--acc)", marginLeft: 6 }}>연대보증인 · {d.name}</span>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <KoreanInput value={acAssignorName} onChange={e => setAcAssignorName(e.target.value)}
+                placeholder="이재우" style={{ ...inputStyle, marginBottom: 10 }} />
 
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
                 <div>
@@ -9945,10 +9927,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
               </div>
 
-              <label style={labelStyle}>설정금액</label>
+              <label style={labelStyle}>기준금액</label>
               <KoreanInput value={acAmount ? Number(acAmount).toLocaleString("ko-KR") : ""}
                 onChange={e => setAcAmount(e.target.value.replace(/,/g, ""))}
-                placeholder="24,000,000" style={{ ...inputStyle, marginBottom: 10 }} />
+                placeholder="20,000,000" style={inputStyle} />
+              <div style={{ fontSize: 11, color: "var(--acc)", marginTop: 4, marginBottom: 10 }}>
+                문서에는 이 금액의 120% — <strong>{acSettingAmount().toLocaleString("ko-KR")}원</strong> — 이 설정금액으로 표시됩니다
+              </div>
 
               <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, margin: "12px 0 8px" }}>
                 승낙자(바로고) 정보 — 평소엔 그대로 두면 됩니다
