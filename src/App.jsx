@@ -6434,42 +6434,44 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {!loading && dg && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   <div style={{ fontSize: 12, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "8px 12px", lineHeight: 1.6 }}>
-                    플랜 시작일(<b className="mono">{dg.planStartDate}</b>) 이후 이 채무자의 총 입금액은 <b className="mono" style={{ color: "var(--acc)" }}>{fmt(dg.totalPaidSincePlanStart)}</b>이며,
-                    아래처럼 <b>오래된 일정부터 순서대로</b> 배분됩니다 — 같은 입금이 두 일정에 이중으로 잡히지 않도록, 이미 앞선 일정이 다 가져가면 뒤 일정은 입금이 있어도 미납으로 남습니다.
+                    입금은 <b>그 입금이 들어온 달과 같은 달에 예정된 일정</b>에만 배분됩니다 — 다른 달로 넘어가지 않으므로,
+                    어떤 달의 입금을 못 받으면 그 달은 나중에 다른 달에 입금이 들어와도 자동으로 채워지지 않고 계속 미납으로 남습니다 (이월은 수동으로만 처리).
                   </div>
-                  {dg.payments.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 6 }}>이 기간 입금 내역 ({dg.payments.length}건)</div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {dg.payments.map(p => (
-                          <div key={p.id} style={{ display: "flex", gap: 10, fontSize: 12, background: "var(--bg2)", borderRadius: 6, padding: "5px 10px" }}>
-                            <span className="mono">{p.payment_date}</span>
-                            <span className="mono" style={{ fontWeight: 600, color: "#047857" }}>{fmt(p.total_amount)}</span>
-                            {p.payer_name && <span style={{ color: "var(--tm)" }}>{p.payer_name}</span>}
-                          </div>
-                        ))}
+                  {dg.months.map(mo => (
+                    <div key={mo.month} style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+                        <span>{mo.month}</span>
+                        <span className="mono" style={{ color: mo.monthPaid > 0 ? "#047857" : "var(--tm)" }}>이 달 입금액: {fmt(mo.monthPaid)}</span>
                       </div>
+                      {mo.payments.length > 0 && (
+                        <div style={{ padding: "8px 12px 0 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+                          {mo.payments.map(p => (
+                            <div key={p.id} style={{ display: "flex", gap: 10, fontSize: 11, color: "var(--tm)" }}>
+                              <span className="mono">{p.payment_date}</span>
+                              <span className="mono" style={{ fontWeight: 600, color: "#047857" }}>{fmt(p.total_amount)}</span>
+                              {p.payer_name && <span>{p.payer_name}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 6 }}>
+                        <thead><tr style={{ background: "var(--bg2)" }}>{["납부일", "예정금액", "현재상태", "배분 전 잔여풀", "이 일정에 배분", "배분 후 잔여풀", "설명"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {mo.schedules.map(row => (
+                            <tr key={row.scheduleId} style={{ background: row.isTarget ? "#3b82f612" : "transparent", borderBottom: "1px solid var(--brd)" }}>
+                              <td className="mono" style={{ padding: "6px 8px", whiteSpace: "nowrap", fontWeight: row.isTarget ? 700 : 400 }}>{row.dueDate || row.dueMonth}{row.isTarget && " ←"}</td>
+                              <td className="mono" style={{ padding: "6px 8px" }}>{fmt(row.scheduledAmount)}</td>
+                              <td style={{ padding: "6px 8px" }}>{row.currentStatus}</td>
+                              <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolBefore)}</td>
+                              <td className="mono" style={{ padding: "6px 8px", fontWeight: 600, color: row.allocated > 0 ? "#047857" : "var(--tm)" }}>{fmt(row.allocated)}</td>
+                              <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolAfter)}</td>
+                              <td style={{ padding: "6px 8px", color: "var(--tm)", fontSize: 11 }}>{row.note}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  )}
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 6 }}>일정별 배분 순서</div>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead><tr style={{ background: "var(--bg2)" }}>{["납부일", "예정금액", "현재상태", "배분 전 잔여풀", "이 일정에 배분", "배분 후 잔여풀", "설명"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {dg.schedules.map(row => (
-                          <tr key={row.scheduleId} style={{ background: row.isTarget ? "#3b82f612" : "transparent", borderBottom: "1px solid var(--brd)" }}>
-                            <td className="mono" style={{ padding: "6px 8px", whiteSpace: "nowrap", fontWeight: row.isTarget ? 700 : 400 }}>{row.dueDate || row.dueMonth}{row.isTarget && " ←"}</td>
-                            <td className="mono" style={{ padding: "6px 8px" }}>{fmt(row.scheduledAmount)}</td>
-                            <td style={{ padding: "6px 8px" }}>{row.currentStatus}</td>
-                            <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolBefore)}</td>
-                            <td className="mono" style={{ padding: "6px 8px", fontWeight: 600, color: row.allocated > 0 ? "#047857" : "var(--tm)" }}>{fmt(row.allocated)}</td>
-                            <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolAfter)}</td>
-                            <td style={{ padding: "6px 8px", color: "var(--tm)", fontSize: 11 }}>{row.note}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  ))}
                 </div>
               )}
             </Overlay>

@@ -1749,9 +1749,12 @@ app.post("/api/installments/schedules/sync-memo-amounts", (req, res) => {
   res.json({ ok: true, updated, total: schedules.length });
 });
 
-// ── 분할상환 자동 동기화 함수 (워터폴 배분 방식) ──
-// 같은 채무자의 여러 일정에 동일 입금액이 중복 매칭되는 것을 방지.
-// 플랜 시작일부터 총 입금합 계산 후 오래된 일정부터 순서대로 배분.
+// ── 분할상환 자동 동기화 함수 (예정월 = 입금월 매칭 방식) ──
+// 예정일이 속한 달과 같은 달에 들어온 입금만 그 달 일정에 배분한다(달을 넘어서는 워터폴
+// 없음) — 이번 달 입금이 지난달 밀린 일정부터 채워지는 걸 막고, 특정 달을 놓치면 그 달은
+// 계속 미납으로 남는다(자동 이월 없음, 이월은 수동으로만). 같은 달에 일정이 여러 개면
+// (일괄 등록 등) 같은 채무자의 동일 입금액이 그 달 안에서 중복 매칭되지 않도록 그 달 안에서만
+// 오래된 순서대로 배분한다.
 // opts.forceDebtorIds: 이 채무자들의 일정은 이미 '완납'이어도 재계산한다
 // (입금 삭제/재매칭으로 완납의 근거가 사라졌을 때 상태를 다시 열기 위함).
 function runInstallmentAutoSync(opts = {}) {
@@ -1783,106 +1786,115 @@ function runInstallmentAutoSync(opts = {}) {
 
       if (allScheds.length === 0) continue;
 
-      // 플랜 시작일 = 첫 일정 해당 월의 1일
-      const firstSched = allScheds[0];
-      const planStartDate = firstSched.due_date
-        ? firstSched.due_date.slice(0, 7) + "-01"
-        : (firstSched.due_month || today.slice(0, 7)) + "-01";
-
-      // 플랜 시작일 이후 이 채무자의 총 입금액
-      const { total: totalPaid } = db.prepare(`
-        SELECT COALESCE(SUM(total_amount), 0) AS total
-        FROM payments
-        WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
-      `).get(plan.debtor_id, planStartDate, today);
-
-      // 최근 입금 목록 (메모 생성용)
-      const recentPayments = db.prepare(`
-        SELECT payment_date, total_amount FROM payments
-        WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
-        ORDER BY payment_date ASC
-      `).all(plan.debtor_id, planStartDate, today);
-
-      // 워터폴 배분
-      let pool = totalPaid || 0;
-      const changes = [];
-
+      // 예정일(due_date/due_month) 기준 월별로 나눠서, 그 달에 들어온 입금만 그 달 일정에
+      // 배분한다 — 예전엔 플랜 시작일부터의 입금 전체를 하나의 풀로 모아 오래된 일정부터
+      // 순서대로 채웠지만("워터폴"), 이러면 이번 달에 입금해도 지난달 밀린 일정부터 채워져서
+      // "이번 달 걸 냈는데 왜 이번 달이 미납이냐"는 문의가 생겼다. 이제는 입금월과 예정월을
+      // 그대로 맞춰서 매칭하고, 특정 달을 놓치면 그 달은 다른 달 입금으로 자동으로 채워지지
+      // 않고 계속 미납으로 남는다(자동 이월 없음 — 이월은 여전히 수동으로만 처리).
+      const schedsByMonth = new Map();
       for (const s of allScheds) {
-        const isDue = (s.due_date && s.due_date <= today) ||
-                      (!s.due_date && s.due_month && s.due_month <= todayMonth);
-
-        if (!isDue) continue;
-
-        const needed = s.scheduled_amount || 0;
-
-        if (s.status === "완납" && !forceDebtorIds.has(plan.debtor_id)) {
-          // 이미 완납 → 예약된 금액만 풀에서 차감, 재처리 안 함
-          pool = Math.max(0, pool - needed);
-          continue;
-        }
-
-        let allocated = 0;
-        let newStatus;
-
-        if (needed > 0) {
-          allocated = Math.min(pool, needed);
-          pool -= allocated;
-          if (allocated >= needed)      newStatus = "완납";
-          else if (allocated > 0)       newStatus = "일부납";
-          else                          newStatus = "미납";
-        } else {
-          // scheduled_amount 없는 경우
-          newStatus = pool > 0 ? "완납" : "미납";
-        }
-
-        const paidAmtToStore = allocated > 0 ? allocated : (s.paid_amount || 0);
-        const statusChanged   = newStatus !== s.status;
-        const amountChanged   = newStatus === "일부납" && allocated !== (s.paid_amount || 0);
-
-        if (statusChanged || amountChanged) {
-          db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?")
-            .run(newStatus, paidAmtToStore, s.id);
-          if (statusChanged) {
-            changes.push({ sched: s, newStatus, allocated });
-            updated++;
-          }
-        }
+        const month = s.due_date ? s.due_date.slice(0, 7) : (s.due_month || todayMonth);
+        if (!schedsByMonth.has(month)) schedsByMonth.set(month, []);
+        schedsByMonth.get(month).push(s);
       }
 
-      // 입금 관련 변경(완납/일부납)만 자동 메모 생성
-      const payChanges = changes.filter(c => c.newStatus === "완납" || c.newStatus === "일부납");
-      if (payChanges.length > 0 && recentPayments.length > 0) {
-        const lastPay = recentPayments[recentPayments.length - 1];
-        const payDateStr = lastPay.payment_date.slice(5).replace("-", "/");
-        const payAmtStr  = fmtAmt(lastPay.total_amount);
+      for (const [month, monthScheds] of schedsByMonth) {
+        const monthPrefix = `${month}%`;
 
-        const parts = payChanges.map(c => {
-          const d = (c.sched.due_date || c.sched.due_month || "").slice(5).replace("-", "/");
-          if (c.newStatus === "완납")   return `${d} 완납처리`;
-          if (c.newStatus === "일부납") return `${d} ${fmtAmt(c.sched.scheduled_amount)} 중 ${fmtAmt(c.allocated)} 일부납 처리`;
-          return null;
-        }).filter(Boolean);
+        // 그 달에 들어온 입금만 (다른 달 입금은 이 달로 넘어오지 않음)
+        const { total: monthPaid } = db.prepare(`
+          SELECT COALESCE(SUM(total_amount), 0) AS total
+          FROM payments WHERE debtor_id = ? AND payment_date LIKE ?
+        `).get(plan.debtor_id, monthPrefix);
 
-        const memoText = `${payDateStr} ${payAmtStr} 입금. ${parts.join(", ")}`;
+        const monthPayments = db.prepare(`
+          SELECT payment_date, total_amount FROM payments
+          WHERE debtor_id = ? AND payment_date LIKE ?
+          ORDER BY payment_date ASC
+        `).all(plan.debtor_id, monthPrefix);
 
-        for (const c of payChanges) {
-          db.prepare(`
-            INSERT INTO installment_schedule_history
-            (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
-            VALUES (?, ?, ?, '자동동기화', ?, ?, ?, '시스템')
-          `).run(c.sched.id, plan.id, plan.debtor_id,
-            c.sched.due_date || c.sched.due_month,
-            lastPay.total_amount, memoText);
+        // 같은 달에 일정이 여러 개면(예: 일괄 등록) 그 달 안에서만 오래된 순서대로 배분
+        let pool = monthPaid || 0;
+        const changes = [];
+
+        for (const s of monthScheds) {
+          const isDue = (s.due_date && s.due_date <= today) ||
+                        (!s.due_date && s.due_month && s.due_month <= todayMonth);
+
+          if (!isDue) continue;
+
+          const needed = s.scheduled_amount || 0;
+
+          if (s.status === "완납" && !forceDebtorIds.has(plan.debtor_id)) {
+            // 이미 완납 → 예약된 금액만 풀에서 차감, 재처리 안 함
+            pool = Math.max(0, pool - needed);
+            continue;
+          }
+
+          let allocated = 0;
+          let newStatus;
+
+          if (needed > 0) {
+            allocated = Math.min(pool, needed);
+            pool -= allocated;
+            if (allocated >= needed)      newStatus = "완납";
+            else if (allocated > 0)       newStatus = "일부납";
+            else                          newStatus = "미납";
+          } else {
+            // scheduled_amount 없는 경우
+            newStatus = pool > 0 ? "완납" : "미납";
+          }
+
+          const paidAmtToStore = allocated > 0 ? allocated : (s.paid_amount || 0);
+          const statusChanged   = newStatus !== s.status;
+          const amountChanged   = newStatus === "일부납" && allocated !== (s.paid_amount || 0);
+
+          if (statusChanged || amountChanged) {
+            db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?")
+              .run(newStatus, paidAmtToStore, s.id);
+            if (statusChanged) {
+              changes.push({ sched: s, newStatus, allocated });
+              updated++;
+            }
+          }
         }
-      } else if (changes.filter(c => c.newStatus === "미납").length > 0) {
-        // 미납 처리 기록 (입금 없음)
-        for (const c of changes.filter(ch => ch.newStatus === "미납")) {
-          db.prepare(`
-            INSERT INTO installment_schedule_history
-            (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
-            VALUES (?, ?, ?, '자동동기화', ?, NULL, '입금 미확인으로 미납 처리', '시스템')
-          `).run(c.sched.id, plan.id, plan.debtor_id,
-            c.sched.due_date || c.sched.due_month);
+
+        // 입금 관련 변경(완납/일부납)만 자동 메모 생성
+        const payChanges = changes.filter(c => c.newStatus === "완납" || c.newStatus === "일부납");
+        if (payChanges.length > 0 && monthPayments.length > 0) {
+          const lastPay = monthPayments[monthPayments.length - 1];
+          const payDateStr = lastPay.payment_date.slice(5).replace("-", "/");
+          const payAmtStr  = fmtAmt(lastPay.total_amount);
+
+          const parts = payChanges.map(c => {
+            const d = (c.sched.due_date || c.sched.due_month || "").slice(5).replace("-", "/");
+            if (c.newStatus === "완납")   return `${d} 완납처리`;
+            if (c.newStatus === "일부납") return `${d} ${fmtAmt(c.sched.scheduled_amount)} 중 ${fmtAmt(c.allocated)} 일부납 처리`;
+            return null;
+          }).filter(Boolean);
+
+          const memoText = `${payDateStr} ${payAmtStr} 입금. ${parts.join(", ")}`;
+
+          for (const c of payChanges) {
+            db.prepare(`
+              INSERT INTO installment_schedule_history
+              (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
+              VALUES (?, ?, ?, '자동동기화', ?, ?, ?, '시스템')
+            `).run(c.sched.id, plan.id, plan.debtor_id,
+              c.sched.due_date || c.sched.due_month,
+              lastPay.total_amount, memoText);
+          }
+        } else if (changes.filter(c => c.newStatus === "미납").length > 0) {
+          // 미납 처리 기록 (입금 없음)
+          for (const c of changes.filter(ch => ch.newStatus === "미납")) {
+            db.prepare(`
+              INSERT INTO installment_schedule_history
+              (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name)
+              VALUES (?, ?, ?, '자동동기화', ?, NULL, '입금 미확인으로 미납 처리', '시스템')
+            `).run(c.sched.id, plan.id, plan.debtor_id,
+              c.sched.due_date || c.sched.due_month);
+          }
         }
       }
     }
@@ -1904,9 +1916,9 @@ app.post("/api/installments/auto-sync", (req, res) => {
 });
 
 // GET /api/installments/schedules/:id/diagnose - 이 일정이 왜 완납/일부납/미납으로 판정됐는지
-// runInstallmentAutoSync()와 동일한 워터폴 배분 과정을 읽기 전용으로 그대로 재현해 보여준다.
-// "입금은 됐는데 왜 미납인지" 문의가 있을 때, DB를 직접 열어보지 않고도 화면에서 바로
-// (같은 플랜의 더 이른 일정이 입금을 먼저 가져갔는지 등) 원인을 확인할 수 있게 한다.
+// runInstallmentAutoSync()와 동일한(예정월 = 입금월 매칭) 배분 과정을 읽기 전용으로 그대로
+// 재현해 보여준다. "입금은 됐는데 왜 미납인지" 문의가 있을 때, DB를 직접 열어보지 않고도
+// 화면에서 바로(다른 달로 넘어가지 않고 그 달 안에서만 배분되는지 등) 원인을 확인할 수 있게 한다.
 app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
   try {
     const target = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
@@ -1922,53 +1934,61 @@ app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
       ORDER BY COALESCE(due_date, due_month || '-28') ASC
     `).all(target.plan_id);
 
-    const firstSched = allScheds[0];
-    const planStartDate = firstSched.due_date
-      ? firstSched.due_date.slice(0, 7) + "-01"
-      : (firstSched.due_month || today.slice(0, 7)) + "-01";
-
-    const { total: totalPaid } = db.prepare(`
-      SELECT COALESCE(SUM(total_amount), 0) AS total
-      FROM payments WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
-    `).get(target.debtor_id, planStartDate, today);
-
-    const payments = db.prepare(`
-      SELECT id, payment_date, total_amount, payer_name FROM payments
-      WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
-      ORDER BY payment_date ASC
-    `).all(target.debtor_id, planStartDate, today);
-
-    let pool = totalPaid || 0;
-    const rows = [];
+    const schedsByMonth = new Map();
     for (const s of allScheds) {
-      const isDue = (s.due_date && s.due_date <= today) || (!s.due_date && s.due_month && s.due_month <= todayMonth);
-      const needed = s.scheduled_amount || 0;
-      const poolBefore = pool;
-      let allocated = 0, note;
-
-      if (!isDue) {
-        note = "아직 납부일이 되지 않아 배분 대상이 아님";
-      } else if (s.status === "완납") {
-        allocated = needed;
-        pool = Math.max(0, pool - needed);
-        note = "이미 완납 처리됨 — 예정금액만큼 풀에서 차감";
-      } else if (needed > 0) {
-        allocated = Math.min(pool, needed);
-        pool -= allocated;
-        note = allocated >= needed ? "전액 배분됨" : allocated > 0 ? "일부만 배분됨 (풀 부족)" : "배분할 금액 없음 — 이 시점까지 앞선 일정들이 입금을 먼저 가져감";
-      } else {
-        note = "예정금액이 설정되지 않음";
-      }
-
-      rows.push({
-        scheduleId: s.id, dueDate: s.due_date, dueMonth: s.due_month,
-        scheduledAmount: needed, currentStatus: s.status, isDue,
-        poolBefore, allocated, poolAfter: pool,
-        note, isTarget: s.id === target.id,
-      });
+      const month = s.due_date ? s.due_date.slice(0, 7) : (s.due_month || todayMonth);
+      if (!schedsByMonth.has(month)) schedsByMonth.set(month, []);
+      schedsByMonth.get(month).push(s);
     }
 
-    res.json({ ok: true, planStartDate, today, totalPaidSincePlanStart: totalPaid, payments, schedules: rows });
+    const months = [];
+    for (const [month, monthScheds] of schedsByMonth) {
+      const monthPrefix = `${month}%`;
+      const { total: monthPaid } = db.prepare(`
+        SELECT COALESCE(SUM(total_amount), 0) AS total
+        FROM payments WHERE debtor_id = ? AND payment_date LIKE ?
+      `).get(target.debtor_id, monthPrefix);
+
+      const monthPayments = db.prepare(`
+        SELECT id, payment_date, total_amount, payer_name FROM payments
+        WHERE debtor_id = ? AND payment_date LIKE ?
+        ORDER BY payment_date ASC
+      `).all(target.debtor_id, monthPrefix);
+
+      let pool = monthPaid || 0;
+      const rows = [];
+      for (const s of monthScheds) {
+        const isDue = (s.due_date && s.due_date <= today) || (!s.due_date && s.due_month && s.due_month <= todayMonth);
+        const needed = s.scheduled_amount || 0;
+        const poolBefore = pool;
+        let allocated = 0, note;
+
+        if (!isDue) {
+          note = "아직 납부일이 되지 않아 배분 대상이 아님";
+        } else if (s.status === "완납") {
+          allocated = needed;
+          pool = Math.max(0, pool - needed);
+          note = "이미 완납 처리됨 — 예정금액만큼 이 달 풀에서 차감";
+        } else if (needed > 0) {
+          allocated = Math.min(pool, needed);
+          pool -= allocated;
+          note = allocated >= needed ? "전액 배분됨" : allocated > 0 ? "일부만 배분됨 (이 달 입금 부족)" : "이 달에 입금이 없거나, 같은 달 앞선 일정이 먼저 가져감 — 다른 달 입금은 자동으로 넘어오지 않음";
+        } else {
+          note = "예정금액이 설정되지 않음";
+        }
+
+        rows.push({
+          scheduleId: s.id, dueDate: s.due_date, dueMonth: s.due_month,
+          scheduledAmount: needed, currentStatus: s.status, isDue,
+          poolBefore, allocated, poolAfter: pool,
+          note, isTarget: s.id === target.id,
+        });
+      }
+
+      months.push({ month, monthPaid: monthPaid || 0, payments: monthPayments, schedules: rows });
+    }
+
+    res.json({ ok: true, today, months });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
