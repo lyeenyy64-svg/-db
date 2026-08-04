@@ -6801,11 +6801,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           )}
                         </div>
                         {dayScheds.map((s) => {
-                          // 달력 칸은 이월로 만들어진 일정을 항상 검정 배경/흰 글자로 표시한다(완납/미납
-                          // 등으로 처리가 끝나도 유지) — 이월 여부 자체를 달력에서 한눈에 구분하기
-                          // 위한 표시라 상태와 무관하게 고정. 실제 처리 결과(완납/미납)는 오른쪽 목록의
-                          // 배지로 확인한다.
-                          const c = s.rolledOverFrom ? rolloverColor : scColor(s.status);
+                          // 이월로 만들어진 일정은 아직 입금 전(예정/미납/지연)일 때만 보라색으로 눈에
+                          // 띄게 표시한다 — "이월된 건이라 놓치기 쉬우니 주의해서 보라"는 의미. 실제로
+                          // 입금이 들어와 완납/일부납으로 확정되면 더 이상 주의가 필요 없으니, 다른
+                          // 완납 건과 똑같이 정상 상태색으로 보여준다.
+                          const isUnresolvedRollover = s.rolledOverFrom && s.status !== "완납" && s.status !== "일부납";
+                          const c = isUnresolvedRollover ? rolloverColor : scColor(s.status);
                           return (
                             <div key={s.id}
                               draggable={canEdit}
