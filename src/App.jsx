@@ -2125,7 +2125,15 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const fieldValue = (r, field) => { const key = draftKey(r.id, field); return drafts[key] !== undefined ? drafts[key] : (r[field] || ""); };
   const byMode = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
   const q = searchQ.trim().toLowerCase();
-  const shown = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
+  const filtered = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
+  // 담당자별로 묶어서 보이도록 담당자 기준으로 먼저 정렬하고, 같은 담당자 안에서는
+  // 등록일이 최신인 항목이 위로 오게(등록일 없는 옛 항목은 맨 아래로) 정렬한다.
+  const shown = [...filtered].sort((a, b) => {
+    const an = a.assignee || "", bn = b.assignee || "";
+    if (an !== bn) return an.localeCompare(bn, "ko");
+    const ad = a.createdAt || "", bd = b.createdAt || "";
+    return bd.localeCompare(ad);
+  });
   const emptyMsg = q ? "검색 결과가 없습니다" : viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
 
   // 상태를 "완료"로 바꾸는 순간의 날짜를 완료 처리일로 남기고, 완료에서 다시 다른 상태로
