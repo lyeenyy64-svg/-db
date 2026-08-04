@@ -2211,6 +2211,9 @@ export default function App() {
   const [adminStatsLoading, setAdminStatsLoading] = useState(false);
   const [statsAccessGran, setStatsAccessGran] = useState("daily"); // daily|monthly|yearly
   const [statsVolumeGran, setStatsVolumeGran] = useState("daily");
+  const [statsDetailCell, setStatsDetailCell] = useState(null); // {user, period} | null — 입력량 표 셀 클릭 시 상세보기
+  const [statsDetail, setStatsDetail] = useState(null); // {debtorEdits, otherActivity} | null
+  const [statsDetailLoading, setStatsDetailLoading] = useState(false);
   const [dupConfirm, setDupConfirm] = useState(null); // { payment, existingPaymentId, debtorName, paymentDate, total }
   // 법적절차 화면은 이제 지급명령/압류/재산명시·재산조회/형사고소를 한 화면에서 통합 조회하므로
   // legalTypeFilter는 탭 전환이 아니라 "유형" 드롭다운 값이다 (SSE 재렌더링에도 유지되도록 최상위에 둔다)
@@ -10721,7 +10724,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
           const fmtChars = (n) => { if (!n) return "-"; return `${n.toLocaleString()}자`; };
 
-          const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint) => {
+          const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint, onCellClick) => {
             const g = GRAN.find(x => x.k === gran);
             const rows = rowsByGran[gran] || [];
             const extra = [...new Set(rows.map(r => r.user))].filter(u => !knownNames.includes(u)).sort();
@@ -10764,7 +10767,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       {periods.map(p => (
                         <tr key={p} style={{ borderTop: "1px solid var(--brd)" }}>
                           <td className="mono" style={{ padding: "8px 12px", textAlign: "center", position: "sticky", left: 0, background: "var(--card)", borderRight: "1px solid var(--brd)" }}>{p}</td>
-                          {cols.map(u => <td key={u} style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)" }}>{formatFn(cellVal(p, u))}</td>)}
+                          {cols.map(u => {
+                            const v = cellVal(p, u);
+                            const clickable = onCellClick && v > 0;
+                            return (
+                              <td key={u}
+                                onClick={clickable ? () => onCellClick(u, p) : undefined}
+                                style={{ padding: "8px 12px", textAlign: "center", borderRight: "1px solid var(--brd)", cursor: clickable ? "pointer" : "default", color: clickable ? "var(--acc)" : undefined, textDecoration: clickable ? "underline" : "none" }}>
+                                {formatFn(v)}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -10782,7 +10795,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </button>
               </div>
               {renderStatTable(stats.access, statsAccessGran, setStatsAccessGran, "seconds", fmtSeconds, "사용자별 접속시간", "접속시간", "오늘부터 접속시간을 수집합니다. 잠시 후 새로고침해 주세요.")}
-              {renderStatTable(stats.volume, statsVolumeGran, setStatsVolumeGran, "bytes", fmtChars, "사용자별 데이터 입력량 (글자 1개 = 1바이트 가정)", "데이터입력량", "표시할 데이터가 없습니다")}
+              {renderStatTable(stats.volume, statsVolumeGran, setStatsVolumeGran, "bytes", fmtChars, "사용자별 데이터 입력량 (글자 1개 = 1바이트 가정, 칸을 클릭하면 상세 내용을 볼 수 있습니다)", "데이터입력량", "표시할 데이터가 없습니다",
+                (user, period) => {
+                  setStatsDetailCell({ user, period });
+                  setStatsDetail(null);
+                  setStatsDetailLoading(true);
+                  fetch(`/api/admin/stats/detail?user=${encodeURIComponent(user)}&period=${encodeURIComponent(period)}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => { setStatsDetail(d && d.ok ? d : { debtorEdits: [], otherActivity: [] }); setStatsDetailLoading(false); })
+                    .catch(() => { setStatsDetail({ debtorEdits: [], otherActivity: [] }); setStatsDetailLoading(false); });
+                })}
               <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)" }}>
                   <span style={{ fontSize: 14, fontWeight: 600 }}>사용자별 요약</span>
@@ -10813,6 +10835,65 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </table>
               </div>
             </div>
+          );
+        })()}
+        {statsDetailCell && (() => {
+          const detail = statsDetail || { debtorEdits: [], otherActivity: [] };
+          const editsByDebtor = new Map();
+          for (const e of detail.debtorEdits) {
+            const key = e.debtorId || e.debtorName || "-";
+            if (!editsByDebtor.has(key)) editsByDebtor.set(key, { debtorName: e.debtorName, debtorId: e.debtorId, items: [] });
+            editsByDebtor.get(key).items.push(e);
+          }
+          const groups = [...editsByDebtor.values()];
+          const totalCount = detail.debtorEdits.length + detail.otherActivity.length;
+          return (
+            <Overlay onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} wide>
+              <ModalHeader title={`${statsDetailCell.user} · ${statsDetailCell.period} 입력 내용`} onClose={() => { setStatsDetailCell(null); setStatsDetail(null); }} />
+              {statsDetailLoading && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중…</div>}
+              {!statsDetailLoading && totalCount === 0 && (
+                <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>상세 내역을 찾을 수 없습니다</div>
+              )}
+              {!statsDetailLoading && totalCount > 0 && (
+                <div style={{ maxHeight: 460, overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+                  {groups.map(g => (
+                    <div key={g.debtorId || g.debtorName} style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>
+                        채무자: {g.debtorName || g.debtorId || "-"}
+                      </div>
+                      <div style={{ padding: "6px 12px 8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
+                        {g.items.map((item, ii) => (
+                          <div key={ii} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0", flexWrap: "wrap" }}>
+                            <span style={{ fontWeight: 600, color: "var(--tp)", minWidth: 90, flexShrink: 0 }}>{item.fieldLabel || item.fieldName}</span>
+                            <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.oldValue || "(없음)"}</span>
+                            <span style={{ color: "var(--tm)", flexShrink: 0 }}>→</span>
+                            <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.newValue || "(없음)"}</span>
+                            <span className="mono" style={{ color: "var(--tm)", fontSize: 10, marginLeft: "auto", flexShrink: 0 }}>{item.changedAt}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {detail.otherActivity.length > 0 && (
+                    <div style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
+                      <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>기타 저장 (채무자 정보 외)</div>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "저장 위치", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {detail.otherActivity.map((a, ii) => (
+                            <tr key={ii} style={{ borderBottom: "1px solid var(--brd)" }}>
+                              <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{a.ts}</td>
+                              <td className="mono" style={{ padding: "6px 10px", color: "var(--ts)" }}>{a.path}</td>
+                              <td className="mono" style={{ padding: "6px 10px" }}>{(a.bytes || 0).toLocaleString()}자</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Overlay>
           );
         })()}
       </div>

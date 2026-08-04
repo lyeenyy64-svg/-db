@@ -350,6 +350,16 @@ db.exec(`
     console.log(`[stats_related_data_exclude_v1] 관련 데이터 배치 백필 입력량 기록 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_related_data_exclude_v1', '1')").run();
   }
+  // 헤더를 encodeURIComponent 없이 보낸 요청 등으로 사용자명이 깨진 채(예: "�" 포함) 기록된
+  // user_activity_log 행이 통계 화면에 이상한 사용자 컬럼으로 노출된 적이 있어 한 번만 정리.
+  // 앞으로는 extractUserName/PATCH 핸들러에서 걸러지고, 혹시 남아도 /api/admin/stats 조회 시
+  // 한 번 더 제외되므로 재발하지 않는다.
+  const garbledCleanupDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_garbled_username_cleanup_v1'").get();
+  if (!garbledCleanupDone) {
+    const removed = db.prepare("DELETE FROM user_activity_log WHERE user_name LIKE ?").run("%�%");
+    console.log(`[stats_garbled_username_cleanup_v1] 깨진 사용자명 통계 기록 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_garbled_username_cleanup_v1', '1')").run();
+  }
   // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
   // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
   // 저장 시각) 묶음으로 근사 복원해서 user_activity_log에 한 번만 채워 넣는다 (1회만 실행).
@@ -570,15 +580,22 @@ const insertActivityLog = db.prepare(
   "INSERT INTO user_activity_log (type, user_name, bytes, path) VALUES (?, ?, ?, ?)"
 );
 const USER_FIELD_CANDIDATES = ["_userName", "userName", "createdByName", "createdBy", "changedBy", "changed_by", "author", "actorName"];
+// 헤더/바디 인코딩이 깨진 요청(예: 헤더를 encodeURIComponent 없이 보내 UTF-8 바이트가
+// 손상된 경우)은 복원 불가능한 깨진 글자(U+FFFD)로 남는다 — 통계 화면에 이상한 사용자
+// 컬럼(예: "�?�Ĵ�")으로 노출되므로 "알수없음"과 동일하게 취급해 걸러낸다.
+const hasReplacementChar = (s) => typeof s === "string" && s.includes("�");
 function extractUserName(req) {
   const headerName = req.headers["x-user-name"];
   if (typeof headerName === "string" && headerName.trim()) {
-    try { const decoded = decodeURIComponent(headerName).trim(); if (decoded) return decoded; } catch {}
+    try {
+      const decoded = decodeURIComponent(headerName).trim();
+      if (decoded && !hasReplacementChar(decoded)) return decoded;
+    } catch {}
   }
   const body = req.body;
   if (!body || typeof body !== "object") return "알수없음";
   for (const f of USER_FIELD_CANDIDATES) {
-    if (typeof body[f] === "string" && body[f].trim()) return body[f].trim();
+    if (typeof body[f] === "string" && body[f].trim() && !hasReplacementChar(body[f])) return body[f].trim();
   }
   return "알수없음";
 }
@@ -2082,7 +2099,8 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const _userName = req.body._userName || '관리자';
+    let _userName = req.body._userName || '관리자';
+    if (hasReplacementChar(_userName)) _userName = '알수없음';
 
     if (Object.keys(DEBTOR_FIELD_MAP).some(k => req.body[k] !== undefined)) {
       applyDebtorFieldPatch(id, req.body, _userName, req.path);
@@ -2735,25 +2753,29 @@ const STATS_START_DATE = "2026-07-14 00:00:00";
 app.get("/api/admin/stats", (req, res) => {
   try {
     const BUCKET_LEN = { daily: 10, monthly: 7, yearly: 4 };
+    // 헤더 인코딩이 깨져 들어온 요청이 "�" 섞인 사용자명으로 남는 경우가 있어(예: "�?�Ĵ�"),
+    // 기록 시점에 거르는 것과 별개로 조회 시점에도 한 번 더 막아 화면에 이상 컬럼이 뜨지 않게 한다.
+    const NOT_GARBLED = "user_name NOT LIKE ?";
+    const garbledParam = "%�%";
 
     // 사용자를 식별 못한 요청은 애초에 기록 시점에 걸러내지만, 혹시 남는 게 있어도
     // 성과 통계 화면에는 절대 노출되지 않도록 조회 시점에도 한 번 더 막는다.
     const accessBuckets = (len) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) * 60 AS seconds
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음'
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED}
       GROUP BY period, user
       ORDER BY period DESC
-    `).all(STATS_START_DATE);
+    `).all(STATS_START_DATE, garbledParam);
 
     // 채무자 PATCH도 이제 kv 저장과 동일하게 저장 1건당 user_activity_log에 한 번만
     // 기록되므로(PATCH /api/debtors/:id 핸들러 참고), 입력량은 이 테이블 하나만 보면 된다 —
     // debtor_edit_log(필드별 상세)를 따로 더하면 액션 단위와 필드 단위가 다시 섞여버린다.
     const volumeBuckets = (len) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음'
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED}
       GROUP BY period, user
       ORDER BY period DESC
-    `).all(STATS_START_DATE);
+    `).all(STATS_START_DATE, garbledParam);
 
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
@@ -2763,12 +2785,12 @@ app.get("/api/admin/stats", (req, res) => {
     // 통일되어 있어(PATCH /api/debtors/:id 핸들러 참고) debtor_edit_log를 따로 셀 필요가 없다.
     const dataInputSummary = db.prepare(`
       SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
-    `).all(STATS_START_DATE);
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} GROUP BY user_name
+    `).all(STATS_START_DATE, garbledParam);
     const heartbeatSummary = db.prepare(`
       SELECT user_name AS user, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' GROUP BY user_name
-    `).all(STATS_START_DATE);
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} GROUP BY user_name
+    `).all(STATS_START_DATE, garbledParam);
     const summaryMap = new Map();
     const touch = (user, addCnt, lastAt) => {
       const cur = summaryMap.get(user) || { user, totalEdits: 0, lastActiveAt: null };
@@ -2796,6 +2818,40 @@ app.get("/api/admin/stats", (req, res) => {
 
     res.json({ access, volume, summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// 어드민 통계: 특정 사용자·기간의 입력량이 "무엇"이었는지 상세 조회
+// (사용자별 데이터 입력량 표의 칸 하나를 클릭했을 때 실제 입력 내용을 보여주기 위함)
+// period 길이로 일/월/연 단위를 판단한다: "YYYY-MM-DD"(10)/"YYYY-MM"(7)/"YYYY"(4).
+app.get("/api/admin/stats/detail", (req, res) => {
+  try {
+    const { user, period } = req.query;
+    if (!user || !period) return res.status(400).json({ ok: false, error: "user, period가 필요합니다" });
+    const len = String(period).length;
+
+    // 채무자 정보 수정은 debtor_edit_log에 필드 단위로 실제 변경 전/후 값이 남아있으므로
+    // user_activity_log(액션 단위 바이트 합계)보다 이걸 그대로 보여주는 게 훨씬 구체적이다.
+    const debtorEdits = db.prepare(`
+      SELECT debtor_id AS debtorId, debtor_name AS debtorName, field_name AS fieldName,
+             field_label AS fieldLabel, old_value AS oldValue, new_value AS newValue, changed_at AS changedAt
+      FROM debtor_edit_log
+      WHERE changed_by = ? AND substr(changed_at,1,${len}) = ?
+      ORDER BY changed_at DESC
+      LIMIT 500
+    `).all(user, period);
+
+    // 그 외(kv 저장, 협의/추심의뢰/민사소송 등) 저장은 필드별 상세 로그가 없어 요청 경로와
+    // 바이트만 보여준다 — /api/debtors/*로 시작하는 행은 위 debtorEdits로 이미 다뤘으므로 제외.
+    const otherActivity = db.prepare(`
+      SELECT path, bytes, ts
+      FROM user_activity_log
+      WHERE type='data_input' AND user_name = ? AND substr(ts,1,${len}) = ? AND path NOT LIKE '/api/debtors/%'
+      ORDER BY ts DESC
+      LIMIT 500
+    `).all(user, period);
+
+    res.json({ ok: true, debtorEdits, otherActivity });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // 어드민 통계 진단용: "알수없음"/특정 사용자로 잡힌 원본 요청을 개별적으로 확인
