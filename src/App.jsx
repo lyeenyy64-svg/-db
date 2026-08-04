@@ -5701,10 +5701,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       );
     }, [data.installmentSchedules, viewMonth]);
 
+    // 이월된 원래 일정은 전체/기타 필터에서는 계속 숨긴다(같은 건이 새 날짜에 또 뜨는 걸
+    // 막기 위해서인데, 이러면 "이월된 목록"을 볼 방법이 없어져 별도로 모아둔다 —
+    // "이월" 필터를 선택했을 때만 이 목록을 보여준다.
+    const thisMonthRolledOver = useMemo(() => {
+      return (data.installmentSchedules || []).filter(s =>
+        (s.dueMonth === viewMonth || (s.dueDate && s.dueDate.startsWith(viewMonth))) && s.status === "이월"
+      );
+    }, [data.installmentSchedules, viewMonth]);
+
     const thisMonthScheds = useMemo(() => {
       if (stFilter === "전체") return thisMonthSchedsAll;
+      if (stFilter === "이월") return thisMonthRolledOver;
       return thisMonthSchedsAll.filter(s => s.status === stFilter);
-    }, [thisMonthSchedsAll, stFilter]);
+    }, [thisMonthSchedsAll, thisMonthRolledOver, stFilter]);
 
     const monthStats = useMemo(() => ({
       total: thisMonthSchedsAll.length,
@@ -5713,10 +5723,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       unpaid: thisMonthSchedsAll.filter(s => s.status === "미납").length,
       overdue: thisMonthSchedsAll.filter(s => s.status === "지연").length,
       scheduled: thisMonthSchedsAll.filter(s => s.status === "예정").length,
+      rolledOver: thisMonthRolledOver.length,
       totalAmt: thisMonthSchedsAll.reduce((a, s) => a + (s.scheduledAmount || 0), 0),
       doneAmt: thisMonthSchedsAll.filter(s => s.status === "완납").reduce((a, s) => a + (s.scheduledAmount || 0), 0),
       partialAmt: thisMonthSchedsAll.filter(s => s.status === "일부납").reduce((a, s) => a + (s.paidAmount || 0), 0),
-    }), [thisMonthSchedsAll]);
+    }), [thisMonthSchedsAll, thisMonthRolledOver]);
 
     const monthLabel = (ym) => {
       const [y, m] = ym.split("-");
@@ -6605,7 +6616,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {/* 오른쪽: 카드 목록 — 숫자를 누르면 아래 목록이 해당 상태로 필터링됨, 스크롤 없이 전체 표시 */}
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }].map(x => (
+                  {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }, { l: "이월", v: monthStats.rolledOver, c: "#6d28d9" }].map(x => (
                     <button key={x.l} onClick={() => setStFilter(x.l)}
                       style={{ padding: "6px 14px", background: stFilter === x.l ? x.c + "18" : "var(--card)", borderRadius: 8, border: stFilter === x.l ? `1px solid ${x.c}60` : "1px solid var(--brd)", textAlign: "center", cursor: "pointer" }}>
                       <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
