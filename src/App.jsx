@@ -5871,7 +5871,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#8b5cf610", t: "#6d28d9", b: "#8b5cf640" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
     // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 검정 배경/흰 글자로 항상 눈에 띄게 표시한다.
-    const rolloverColor = { bg: "#111827", t: "#fff", b: "#111827" };
+    // "이월" 상태 배지와 같은 보라색 계열로 통일 — 검정이었다가 사용자 요청으로 배지 색과
+    // 맞춤(진한 보라 배경 + 흰 글자, 배지의 옅은 배경과는 대비를 위해 solid로).
+    const rolloverColor = { bg: "#6d28d9", t: "#fff", b: "#6d28d9" };
 
     const calCells = useMemo(() => {
       const [y, m] = viewMonth.split("-").map(Number);
@@ -6741,9 +6743,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   )}
                   {datedScheds.map(s => {
                     const isRolledOver = !!s.rolledOverFrom;
-                    // 완납/일부납 등으로 이미 처리된 이월 건은 "이월" 대신 실제 처리 결과를 보여준다 —
-                    // 계속 "이월"로만 표시하면 입금이 들어와 완납됐는데도 화면엔 그대로 이월로 남는다.
-                    const displayStatus = (isRolledOver && s.status === "예정") ? "이월" : s.status;
+                    // 이월 건은 아직 아무 입금도 안 잡힌 상태(예정/미납/지연)면 계속 "이월"로 보여준다 —
+                    // "미납"이라고 뜨면 마치 정상 예정건이 밀린 것처럼 보여 혼동을 준다. 완납/일부납처럼
+                    // 실제 입금이 잡히면 그 결과를 그대로 보여준다.
+                    const displayStatus = (isRolledOver && s.status !== "완납" && s.status !== "일부납") ? "이월" : s.status;
                     const c = scColor(displayStatus);
                     return (
                       <div key={s.id}
