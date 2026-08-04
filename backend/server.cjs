@@ -1852,6 +1852,12 @@ function runInstallmentAutoSync(opts = {}) {
         for (const s of monthScheds) {
 
           const needed = s.scheduled_amount || 0;
+          // 이 특정 일정의 예정일이 실제로 지났는지(날짜 단위) — 위의 달 단위 게이트와는 별개로,
+          // "아직 예정일이 안 된 건을 돈이 없다고 미납으로 찍어버리는" 걸 막기 위한 것.
+          // 돈이 이미 들어와 있으면(allocated>0) 예정일 전이라도 완납/일부납으로 앞당겨 반영하되,
+          // 배분할 돈이 하나도 없을 때는 예정일이 지나기 전까지는 상태를 건드리지 않고 "예정"을 유지한다.
+          const isPastDue = (s.due_date && s.due_date <= today) ||
+                             (!s.due_date && s.due_month && s.due_month <= todayMonth);
 
           if (s.status === "완납" && !forceDebtorIds.has(plan.debtor_id)) {
             // 이미 완납 → 예약된 금액만 풀에서 차감, 재처리 안 함
@@ -1864,13 +1870,16 @@ function runInstallmentAutoSync(opts = {}) {
 
           if (needed > 0) {
             allocated = Math.min(pool, needed);
-            pool -= allocated;
             if (allocated >= needed)      newStatus = "완납";
             else if (allocated > 0)       newStatus = "일부납";
-            else                          newStatus = "미납";
+            else if (isPastDue)           newStatus = "미납";
+            else                          continue; // 아직 예정일 전이고 배분할 돈도 없음 — 그대로 "예정" 유지
+            pool -= allocated;
           } else {
             // scheduled_amount 없는 경우
-            newStatus = pool > 0 ? "완납" : "미납";
+            if (pool > 0)            newStatus = "완납";
+            else if (isPastDue)      newStatus = "미납";
+            else                     continue;
           }
 
           const paidAmtToStore = allocated > 0 ? allocated : (s.paid_amount || 0);
@@ -1984,29 +1993,36 @@ app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
 
       let pool = monthPaid || 0;
       const rows = [];
-      const isDue = month <= todayMonth; // runInstallmentAutoSync과 동일한 달 단위 게이트
+      const monthDue = month <= todayMonth; // 이 달 자체가 이미 시작됐는지 — runInstallmentAutoSync의 달 단위 게이트
       for (const s of monthScheds) {
         const needed = s.scheduled_amount || 0;
+        // 이 일정 하나의 예정일이 실제로 지났는지(날짜 단위) — runInstallmentAutoSync과 동일하게,
+        // 돈이 이미 들어와 있으면 예정일 전이라도 앞당겨 반영하지만, 배분할 돈이 없을 때 미납으로
+        // 넘기는 건 예정일이 지난 뒤부터만 한다.
+        const isPastDue = monthDue && ((s.due_date && s.due_date <= today) || (!s.due_date && s.due_month && s.due_month <= todayMonth));
         const poolBefore = pool;
         let allocated = 0, note;
 
-        if (!isDue) {
-          note = "아직 납부일이 되지 않아 배분 대상이 아님";
+        if (!monthDue) {
+          note = "아직 이 달이 되지 않아 배분 대상이 아님";
         } else if (s.status === "완납") {
           allocated = needed;
           pool = Math.max(0, pool - needed);
           note = "이미 완납 처리됨 — 예정금액만큼 이 달 풀에서 차감";
         } else if (needed > 0) {
           allocated = Math.min(pool, needed);
-          pool -= allocated;
-          note = allocated >= needed ? "전액 배분됨" : allocated > 0 ? "일부만 배분됨 (이 달 입금 부족)" : "이 달에 입금이 없거나, 같은 달 앞선 일정이 먼저 가져감 — 다른 달 입금은 자동으로 넘어오지 않음";
+          if (allocated > 0) pool -= allocated;
+          note = allocated >= needed ? "전액 배분됨"
+            : allocated > 0 ? "일부만 배분됨 (이 달 입금 부족)"
+            : isPastDue ? "이 달에 입금이 없거나, 같은 달 앞선 일정이 먼저 가져감 — 다른 달 입금은 자동으로 넘어오지 않음"
+            : "아직 예정일 전이라 미납으로 넘기지 않고 예정 상태를 유지함";
         } else {
           note = "예정금액이 설정되지 않음";
         }
 
         rows.push({
           scheduleId: s.id, dueDate: s.due_date, dueMonth: s.due_month,
-          scheduledAmount: needed, currentStatus: s.status, isDue,
+          scheduledAmount: needed, currentStatus: s.status, isDue: isPastDue,
           poolBefore, allocated, poolAfter: pool,
           note, isTarget: s.id === target.id,
         });
