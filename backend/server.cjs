@@ -291,6 +291,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ual_ts        ON user_activity_log(ts);
   CREATE INDEX IF NOT EXISTS idx_ual_user_type ON user_activity_log(user_name, type);
 `);
+// 통계 상세보기에서 "무엇을 입력했는지" 내용을 보여주고, 경로에 id가 없는 요청(예: 일정
+// 일괄생성)도 실제 대상 채무자로 이동할 수 있도록 요청 시점에 미리 계산해 둔다.
+try { db.exec("ALTER TABLE user_activity_log ADD COLUMN ref_debtor_id TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE user_activity_log ADD COLUMN detail TEXT"); } catch(e) {}
 
 // kvPut(/api/kv/:key)이 사용자 이름을 안 보내던 시절에 쌓인 "알수없음" 통계 노이즈를
 // 한 번만 정리 (실제 사용자명이 붙은 기록은 그대로 둔다). 서버 재시작 시 1회만 실행.
@@ -576,8 +580,10 @@ app.use((req, res, next) => {
 });
 
 // 어드민 통계용: 모든 API 쓰기 요청의 본문 크기를 사용자별로 집계
+// ref_debtor_id/detail: 분할상환처럼 경로에 개별 id가 없는 요청(일괄 등록 등)도 실제
+// 대상 채무자로 이동하고 입력 내용을 볼 수 있도록, 해당 모듈에 한해 요청 시점에 채워둔다.
 const insertActivityLog = db.prepare(
-  "INSERT INTO user_activity_log (type, user_name, bytes, path) VALUES (?, ?, ?, ?)"
+  "INSERT INTO user_activity_log (type, user_name, bytes, path, ref_debtor_id, detail) VALUES (?, ?, ?, ?, ?, ?)"
 );
 const USER_FIELD_CANDIDATES = ["_userName", "userName", "createdByName", "createdBy", "changedBy", "changed_by", "author", "actorName"];
 // 헤더/바디 인코딩이 깨진 요청(예: 헤더를 encodeURIComponent 없이 보내 UTF-8 바이트가
@@ -612,6 +618,62 @@ const isDebtorPatch = (req) => req.method === "PATCH" && /^\/api\/debtors\/[^/]+
 // "관련 데이터"(이메일/슬랙/노션 이력) 저장은 배치 백필 등 자동 수집으로 들어오는 경우가 있어
 // 실제 수기 입력이 아니다 — 누가 검색해서 채워넣었든 성과 통계에 포함하지 않는다.
 const isRelatedDataWrite = (req) => req.path.startsWith("/api/related-data/");
+
+// 분할상환(/api/installments/*) 쓰기 요청에서 대상 채무자 id와 "무엇을 입력했는지"를
+// 미리 계산해 둔다. DELETE는 핸들러가 실행되고 나면 대상 행이 이미 지워져 조회가 안 되므로
+// (아래 미들웨어에서 next() 호출 전, 즉 실제 처리 전에) 여기서 먼저 조회해 둬야 한다.
+function resolveInstallmentActivity(req) {
+  const body = req.body || {};
+  const p = req.path;
+  const won = (n) => `${(parseInt(n, 10) || 0).toLocaleString()}원`;
+  const planDebtor = (planId) => { const r = db.prepare("SELECT debtor_id FROM installment_plans WHERE id = ?").get(planId); return r ? r.debtor_id : null; };
+  const schedDebtor = (schedId) => { const r = db.prepare("SELECT p.debtor_id AS debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(schedId); return r ? r.debtor_id : null; };
+  let m;
+  try {
+    if (p === "/api/installments" && req.method === "POST") {
+      return { debtorId: body.debtorId || null, detail: `플랜 생성 (${body.paymentTiming || "월말"}, 월 ${won(body.monthlyAmount)}${body.memo ? " · " + body.memo : ""})` };
+    }
+    if (p === "/api/installments/schedules/batch") {
+      const scheds = Array.isArray(body.schedules) ? body.schedules : [];
+      const dates = scheds.map(s => s.dueDate || s.dueMonth).filter(Boolean).sort();
+      const total = scheds.reduce((s, x) => s + (parseInt(x.scheduledAmount, 10) || 0), 0);
+      return {
+        debtorId: body.planId ? planDebtor(body.planId) : null,
+        detail: `일정 ${scheds.length}건 일괄 추가${dates.length ? ` (${dates[0]}~${dates[dates.length - 1]})` : ""}, 합계 ${won(total)}`,
+      };
+    }
+    if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)\/rollover$/))) {
+      return { debtorId: schedDebtor(m[1]), detail: `이월 → ${body.newDate || "?"}${body.memo ? " · " + body.memo : ""}` };
+    }
+    if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)\/memo$/))) {
+      return { debtorId: schedDebtor(m[1]), detail: `메모: ${body.memo || ""}` };
+    }
+    if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)$/))) {
+      const parts = [];
+      if (body.status !== undefined) parts.push(`상태→${body.status}`);
+      if (body.dueDate !== undefined) parts.push(`납부일→${body.dueDate}`);
+      if (body.dueMonth !== undefined) parts.push(`납부월→${body.dueMonth}`);
+      if (body.scheduledAmount !== undefined) parts.push(`예정금액→${won(body.scheduledAmount)}`);
+      if (body.paidAmount !== undefined) parts.push(`납부금액→${won(body.paidAmount)}`);
+      if (body.memo !== undefined) parts.push(`메모→${body.memo}`);
+      return { debtorId: schedDebtor(m[1]), detail: parts.join(", ") || (req.method === "DELETE" ? "일정 삭제" : null) };
+    }
+    if ((m = p.match(/^\/api\/installments\/([^/]+)\/schedules$/))) {
+      return { debtorId: planDebtor(m[1]), detail: `일정 추가: ${body.dueDate || body.dueMonth || ""} ${won(body.scheduledAmount)}${body.memo ? " · " + body.memo : ""}` };
+    }
+    if ((m = p.match(/^\/api\/installments\/([^/]+)$/))) {
+      const parts = [];
+      if (body.paymentTiming !== undefined) parts.push(`납부주기→${body.paymentTiming}`);
+      if (body.monthlyAmount !== undefined) parts.push(`월분납액→${won(body.monthlyAmount)}`);
+      if (body.startDate !== undefined) parts.push(`시작일→${body.startDate}`);
+      if (body.status !== undefined) parts.push(`상태→${body.status}`);
+      if (body.memo !== undefined) parts.push(`메모→${body.memo}`);
+      return { debtorId: planDebtor(m[1]), detail: parts.join(", ") || (req.method === "DELETE" ? "플랜 삭제" : null) };
+    }
+  } catch { /* 조회 실패해도 통계 자체는 계속 진행 — 이동/내용 표시만 못 하게 됨 */ }
+  return { debtorId: null, detail: null };
+}
+
 app.use((req, res, next) => {
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
@@ -620,9 +682,16 @@ app.use((req, res, next) => {
     if (userName === "알수없음") return next();
     let bytes = 0;
     try { bytes = JSON.stringify(req.body || {}).length; } catch {}
+    // DELETE는 핸들러 실행 후엔 대상이 이미 삭제돼 조회가 안 되므로 next() 호출(=핸들러 실행) 전에 미리 계산.
+    let refDebtorId = null, detail = null;
+    if (req.path.startsWith("/api/installments")) {
+      const r = resolveInstallmentActivity(req);
+      refDebtorId = r.debtorId;
+      detail = r.detail;
+    }
     res.on("finish", () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        try { insertActivityLog.run("data_input", userName, bytes, req.path); } catch {}
+        try { insertActivityLog.run("data_input", userName, bytes, req.path, refDebtorId, detail); } catch {}
       }
     });
   }
@@ -2087,7 +2156,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
   // 어드민 통계용: 필드가 몇 개 바뀌었든 이 저장은 kv 저장과 동일하게
   // "저장 액션 1건"으로 집계한다 (필드별 세부 건수는 debtor_edit_log 자체를 볼 때만 쓴다).
   if (statsBytes > 0 && userName !== '알수없음') {
-    insertActivityLog.run("data_input", userName, statsBytes, statsPath);
+    insertActivityLog.run("data_input", userName, statsBytes, statsPath, null, null);
   }
 
   // "추심상태 변경" 알림 규칙 즉시 평가
@@ -2572,7 +2641,7 @@ app.put("/api/kv/:key", (req, res) => {
       const bytes = diffByteEstimate(oldVal, req.body);
       const userName = extractUserName(req);
       // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다.
-      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path);
+      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path, null, null);
     } catch {}
   }
   db.prepare(`
@@ -2740,7 +2809,7 @@ app.post("/api/admin/heartbeat", (req, res) => {
   try {
     const userName = (req.body && req.body.userName) ? String(req.body.userName).trim() : "";
     // 사용자를 식별할 수 없는 하트비트는 "알수없음"으로 남기지 않고 그냥 무시한다.
-    if (userName) insertActivityLog.run("heartbeat", userName, 0, "/api/admin/heartbeat");
+    if (userName) insertActivityLog.run("heartbeat", userName, 0, "/api/admin/heartbeat", null, null);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -2749,6 +2818,62 @@ app.post("/api/admin/heartbeat", (req, res) => {
 // 통계 집계 시작일 — 이전 테스트/오류 데이터(예: 깨진 사용자명)를 통계에서 배제하기 위한 기준일.
 // 이 날짜 이전 데이터는 화면에 표시하지 않는다 (데이터 자체를 지우지는 않음).
 const STATS_START_DATE = "2026-07-14 00:00:00";
+
+// 채무자 필드 수정은 "썼다가 지운 값"이 그대로 누적되지 않도록, 기간 시작 시점 값과
+// 종료 시점 값을 비교한 순변화량만 그 기간의 실질 입력량으로 센다 — 중간에 여러 번
+// 고쳤어도 최종적으로 원래 값으로 돌아왔으면 0이 된다. 같은 필드를 그 기간 안에서
+// 여러 사람이 건드렸다면, 마지막에 저장해 그 결과를 실제로 남긴 사람에게 순변화량
+// 전체를 귀속한다(중간 편집자는 그 필드로는 0을 받는다 — 이 기간엔 그의 편집이
+// 최종 결과에 남지 않았기 때문).
+function computeNetDebtorVolume(len) {
+  const rows = db.prepare(`
+    SELECT debtor_id, field_name, changed_by, changed_at, old_value, new_value
+    FROM debtor_edit_log
+    ORDER BY debtor_id, field_name, changed_at ASC, id ASC
+  `).all();
+
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.debtor_id + " " + r.field_name;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+
+  const cutoff = STATS_START_DATE.slice(0, len);
+  // 사용자명에 구분자로 쓸 문자가 섞여 있을 수 있어 문자열 결합 대신 배열 키로 안전하게 묶는다.
+  const result = new Map(); // JSON.stringify([user, period]) -> { user, period, netChars }
+
+  for (const seq of groups.values()) {
+    let prevValue = seq[0].old_value ?? "";
+    let curPeriod = null, curStartValue = prevValue, curEndValue = null, curLastEditor = null;
+
+    const flush = () => {
+      if (curPeriod == null || curPeriod < cutoff) return;
+      if (!curLastEditor || curLastEditor === "알수없음" || hasReplacementChar(curLastEditor)) return;
+      const netLen = Math.max(0, (curEndValue ?? "").length - (curStartValue ?? "").length);
+      if (netLen <= 0) return;
+      const key = JSON.stringify([curLastEditor, curPeriod]);
+      const prev = result.get(key);
+      if (prev) prev.netChars += netLen;
+      else result.set(key, { user: curLastEditor, period: curPeriod, netChars: netLen });
+    };
+
+    for (const r of seq) {
+      const period = r.changed_at.slice(0, len);
+      if (period !== curPeriod) {
+        flush();
+        curPeriod = period;
+        curStartValue = prevValue;
+      }
+      curEndValue = r.new_value ?? "";
+      curLastEditor = r.changed_by;
+      prevValue = r.new_value ?? "";
+    }
+    flush();
+  }
+
+  return result;
+}
 
 app.get("/api/admin/stats", (req, res) => {
   try {
@@ -2767,15 +2892,29 @@ app.get("/api/admin/stats", (req, res) => {
       ORDER BY period DESC
     `).all(STATS_START_DATE, garbledParam);
 
-    // 채무자 PATCH도 이제 kv 저장과 동일하게 저장 1건당 user_activity_log에 한 번만
-    // 기록되므로(PATCH /api/debtors/:id 핸들러 참고), 입력량은 이 테이블 하나만 보면 된다 —
-    // debtor_edit_log(필드별 상세)를 따로 더하면 액션 단위와 필드 단위가 다시 섞여버린다.
-    const volumeBuckets = (len) => db.prepare(`
-      SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
-      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED}
-      GROUP BY period, user
-      ORDER BY period DESC
-    `).all(STATS_START_DATE, garbledParam);
+    // 채무자 필드 수정(/api/debtors/*)은 여기서 원본 바이트를 그대로 더하지 않는다 — "썼다가
+    // 지운" 글자가 영구히 누적되는 문제가 있어, 대신 debtor_edit_log를 기간 시작~종료 값으로
+    // 순변화량만 계산하는 computeNetDebtorVolume() 결과를 아래에서 합산한다.
+    const volumeBuckets = (len) => {
+      const rawRows = db.prepare(`
+        SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
+        FROM user_activity_log
+        WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND path NOT LIKE '/api/debtors/%'
+        GROUP BY period, user
+      `).all(STATS_START_DATE, garbledParam);
+
+      const merged = new Map();
+      for (const r of rawRows) merged.set(JSON.stringify([r.period, r.user]), { period: r.period, user: r.user, bytes: r.bytes || 0 });
+
+      for (const { user, period, netChars } of computeNetDebtorVolume(len).values()) {
+        const key = JSON.stringify([period, user]);
+        const prev = merged.get(key);
+        if (prev) prev.bytes += netChars;
+        else merged.set(key, { period, user, bytes: netChars });
+      }
+
+      return [...merged.values()].sort((a, b) => b.period.localeCompare(a.period));
+    };
 
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
@@ -2843,14 +2982,20 @@ app.get("/api/admin/stats/detail", (req, res) => {
     // 그 외(kv 저장, 협의/추심의뢰/민사소송 등) 저장은 필드별 상세 로그가 없어 요청 경로와
     // 바이트만 보여준다 — /api/debtors/*로 시작하는 행은 위 debtorEdits로 이미 다뤘으므로 제외.
     const otherActivity = db.prepare(`
-      SELECT path, bytes, ts
+      SELECT path, bytes, ts, ref_debtor_id AS refDebtorId, detail
       FROM user_activity_log
       WHERE type='data_input' AND user_name = ? AND substr(ts,1,${len}) = ? AND path NOT LIKE '/api/debtors/%'
       ORDER BY ts DESC
       LIMIT 500
     `).all(user, period);
 
-    res.json({ ok: true, debtorEdits, otherActivity });
+    // debtorEdits는 이 사용자가 그 기간에 "시도한" 모든 저장을 그대로 보여주지만, 통계 표의
+    // 칸 숫자는 기간 시작~종료 값을 비교한 순변화량이라 서로 다를 수 있다 — 두 숫자를 같이
+    // 내려줘서 왜 차이가 나는지(썼다가 지운 부분) 화면에서 바로 설명할 수 있게 한다.
+    const netEntry = computeNetDebtorVolume(len).get(JSON.stringify([user, period]));
+    const debtorEditsNetChars = netEntry ? netEntry.netChars : 0;
+
+    res.json({ ok: true, debtorEdits, debtorEditsNetChars, otherActivity });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

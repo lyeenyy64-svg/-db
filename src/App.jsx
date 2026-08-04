@@ -10838,7 +10838,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           );
         })()}
         {statsDetailCell && (() => {
-          const detail = statsDetail || { debtorEdits: [], otherActivity: [] };
+          const detail = statsDetail || { debtorEdits: [], otherActivity: [], debtorEditsNetChars: 0 };
           const editsByDebtor = new Map();
           for (const e of detail.debtorEdits) {
             const key = e.debtorId || e.debtorName || "-";
@@ -10846,17 +10846,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             editsByDebtor.get(key).items.push(e);
           }
           const groups = [...editsByDebtor.values()];
+          const rawDebtorEditChars = detail.debtorEdits.reduce((s, e) => s + (e.newValue || "").length, 0);
           const totalCount = detail.debtorEdits.length + detail.otherActivity.length;
-          const goToPath = (path) => {
-            fetch(`/api/admin/resolve-path?path=${encodeURIComponent(path)}`)
+          const goToActivity = (a) => {
+            const navigate = (debtorId, tab) => {
+              const debtor = debtorId ? data.debtors.find(x => x.id === debtorId) : null;
+              if (!debtor) { showToast("이동할 수 있는 화면을 찾을 수 없습니다 (일괄 처리 또는 삭제된 항목)"); return; }
+              setStatsDetailCell(null);
+              setStatsDetail(null);
+              navigateToDebtor(debtor, tab || "히스토리");
+            };
+            // 최근 기록은 저장 시점에 이미 대상 채무자를 찾아 ref_debtor_id에 남겨뒀으니 그걸 바로 쓰고,
+            // 그게 없는(마이그레이션 이전) 기록만 경로를 다시 분석해서 찾는다.
+            if (a.refDebtorId) { navigate(a.refDebtorId, "분할상환"); return; }
+            fetch(`/api/admin/resolve-path?path=${encodeURIComponent(a.path)}`)
               .then(r => r.ok ? r.json() : null)
-              .then(d => {
-                const debtor = d && d.ok ? data.debtors.find(x => x.id === d.debtorId) : null;
-                if (!debtor) { showToast("이동할 수 있는 화면을 찾을 수 없습니다 (일괄 처리 또는 삭제된 항목)"); return; }
-                setStatsDetailCell(null);
-                setStatsDetail(null);
-                navigateToDebtor(debtor, d.tab || "히스토리");
-              })
+              .then(d => navigate(d && d.ok ? d.debtorId : null, d && d.tab))
               .catch(() => showToast("이동할 수 있는 화면을 찾을 수 없습니다"));
           };
           return (
@@ -10868,6 +10873,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               )}
               {!statsDetailLoading && totalCount > 0 && (
                 <div style={{ maxHeight: 460, overflow: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+                  {detail.debtorEdits.length > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "6px 10px" }}>
+                      실질 입력량(통계표 반영분): <b style={{ color: "var(--tp)" }}>{detail.debtorEditsNetChars.toLocaleString()}자</b>
+                      {rawDebtorEditChars !== detail.debtorEditsNetChars && (
+                        <> — 아래는 이 기간 저장 시도 원본 기록(합계 {rawDebtorEditChars.toLocaleString()}자)이며, 기간 시작~종료 값이 같아지도록 썼다가 지운 부분은 통계에서 제외됨</>
+                      )}
+                    </div>
+                  )}
                   {groups.map(g => (
                     <div key={g.debtorId || g.debtorName} style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
                       <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>
@@ -10890,13 +10903,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <div style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
                       <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>기타 저장 (채무자 정보 외)</div>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                        <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "저장 위치", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
+                        <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "내용", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
                         <tbody>
                           {detail.otherActivity.map((a, ii) => (
-                            <tr key={ii} style={{ borderBottom: "1px solid var(--brd)" }}>
-                              <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap" }}>{a.ts}</td>
-                              <td className="mono" style={{ padding: "6px 10px", color: "var(--acc)", cursor: "pointer", textDecoration: "underline" }} onClick={() => goToPath(a.path)}>{a.path}</td>
-                              <td className="mono" style={{ padding: "6px 10px" }}>{(a.bytes || 0).toLocaleString()}자</td>
+                            <tr key={ii} onClick={() => goToActivity(a)}
+                              style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                              <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap", verticalAlign: "top" }}>{a.ts}</td>
+                              <td style={{ padding: "6px 10px" }}>
+                                <div style={{ color: "var(--acc)", fontWeight: 600 }}>{a.detail || "(내용 없음)"}</div>
+                                <div className="mono" style={{ color: "var(--tm)", fontSize: 10, marginTop: 2 }}>{a.path}</div>
+                              </td>
+                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top" }}>{(a.bytes || 0).toLocaleString()}자</td>
                             </tr>
                           ))}
                         </tbody>
