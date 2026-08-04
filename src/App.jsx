@@ -11088,6 +11088,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   {detail.otherActivity.length > 0 && (
                     <div style={{ border: "1px solid var(--brd)", borderRadius: 10, overflow: "hidden" }}>
                       <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>기타 저장 (채무자 정보 외)</div>
+                      <div style={{ padding: "6px 12px", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>
+                        내용이 채워진 행은 <b>보이는 글자 수 그대로</b>를 센 것이라 신뢰할 수 있습니다. "세부 내용 미기록"으로 표시된 행은
+                        이 기능 적용 이전에 저장된 기록이라 요청 크기(구조적 JSON 포함)를 대신 쓴 것 — 실제 입력량보다 부풀려질 수 있습니다.
+                      </div>
                       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                         <thead><tr style={{ background: "var(--bg2)" }}>{["시각", "내용", "글자수"].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)" }}>{h}</th>)}</tr></thead>
                         <tbody>
@@ -11098,10 +11102,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                               <td className="mono" style={{ padding: "6px 10px", whiteSpace: "nowrap", verticalAlign: "top" }}>{a.ts}</td>
                               <td style={{ padding: "6px 10px" }}>
-                                <div style={{ color: "var(--acc)", fontWeight: 600 }}>{a.detail || "(내용 없음)"}</div>
+                                {a.detail
+                                  ? <div style={{ color: "var(--acc)", fontWeight: 600 }}>{a.detail}</div>
+                                  : <div style={{ color: "var(--tm)", fontStyle: "italic" }}>(세부 내용 미기록 — 이 기능 적용 전 저장이라 글자수는 참고용 크기 값)</div>}
                                 <div className="mono" style={{ color: "var(--tm)", fontSize: 10, marginTop: 2 }}>{a.path}</div>
                               </td>
-                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top" }}>{(a.bytes || 0).toLocaleString()}자</td>
+                              <td className="mono" style={{ padding: "6px 10px", verticalAlign: "top", color: a.detail ? "var(--tp)" : "var(--tm)" }}>{(a.bytes || 0).toLocaleString()}자</td>
                             </tr>
                           ))}
                         </tbody>

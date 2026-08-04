@@ -637,9 +637,14 @@ function resolveInstallmentActivity(req) {
       const scheds = Array.isArray(body.schedules) ? body.schedules : [];
       const dates = scheds.map(s => s.dueDate || s.dueMonth).filter(Boolean).sort();
       const total = scheds.reduce((s, x) => s + (parseInt(x.scheduledAmount, 10) || 0), 0);
+      // 요약(건수·기간·합계)만으로는 "실제로 뭘 넣었는지"가 안 보여서, 실제 만들어진 각 건의
+      // 날짜/금액을 그대로 나열해준다 — 너무 많으면(대량 일괄등록) 앞 20건만 보여주고 나머지는 개수만.
+      const CAP = 20;
+      const lines = scheds.slice(0, CAP).map(s => `${s.dueDate || s.dueMonth || "?"} ${won(s.scheduledAmount)}${s.memo ? "(" + s.memo + ")" : ""}`);
+      const more = scheds.length > CAP ? ` 외 ${scheds.length - CAP}건` : "";
       return {
         debtorId: body.planId ? planDebtor(body.planId) : null,
-        detail: `일정 ${scheds.length}건 일괄 추가${dates.length ? ` (${dates[0]}~${dates[dates.length - 1]})` : ""}, 합계 ${won(total)}`,
+        detail: `일정 ${scheds.length}건 일괄 추가${dates.length ? ` (${dates[0]}~${dates[dates.length - 1]})` : ""}, 합계 ${won(total)} — ${lines.join(", ")}${more}`,
       };
     }
     if ((m = p.match(/^\/api\/installments\/schedules\/([^/]+)\/rollover$/))) {
@@ -682,14 +687,22 @@ app.use((req, res, next) => {
     // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다 —
     // 누구의 성과에도 귀속시킬 수 없는 기록이라 어차피 평가에 쓸 수 없고, 화면에 노이즈만 남긴다.
     if (userName === "알수없음") return next();
-    let bytes = 0;
-    try { bytes = JSON.stringify(req.body || {}).length; } catch {}
     // DELETE는 핸들러 실행 후엔 대상이 이미 삭제돼 조회가 안 되므로 next() 호출(=핸들러 실행) 전에 미리 계산.
     let refDebtorId = null, detail = null;
     if (req.path.startsWith("/api/installments")) {
       const r = resolveInstallmentActivity(req);
       refDebtorId = r.debtorId;
       detail = r.detail;
+    }
+    // 요청 본문 전체 크기(JSON.stringify(req.body).length)로 세면 id/구조적 JSON까지 다 잡혀서
+    // "이 사람이 실제로 입력한 양"과 안 맞는다(예: 일정 12건 일괄등록 1번이 수천 자로 잡힘) —
+    // 화면에 보여줄 내용(detail)이 있으면 그 글자수를 그대로 쓴다. 보이는 텍스트 = 세는 글자수
+    // 라서 숫자를 신뢰할 수 있고, detail이 없는(아직 이 방식으로 안 옮긴) 경로만 예전 방식으로 폴백.
+    let bytes = 0;
+    if (detail) {
+      bytes = detail.length;
+    } else {
+      try { bytes = JSON.stringify(req.body || {}).length; } catch {}
     }
     res.on("finish", () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
