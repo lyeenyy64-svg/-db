@@ -2614,6 +2614,7 @@ app.get("/api/pending-payments", (req, res) => {
 // 클라이언트, 일괄연결 등 하위호환) pending 테이블에 저장된 값을 그대로 쓴다.
 function splitChannelAmount(pending, channel) {
   const total = pending.total_amount;
+  if (channel === "본사계좌") return { companyAccount: total, cashCharge: 0, welcomeDirect: 0 };
   if (channel === "캐쉬충전") return { companyAccount: 0, cashCharge: total, welcomeDirect: 0 };
   if (channel === "웰컴직접상환") return { companyAccount: 0, cashCharge: 0, welcomeDirect: total };
   return { companyAccount: pending.company_account, cashCharge: pending.cash_charge, welcomeDirect: pending.welcome_direct };

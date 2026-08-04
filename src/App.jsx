@@ -9094,7 +9094,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const dId = selectedDebtor[item.id];
       if (!dId) { showToast("채무자를 선택하세요"); return; }
       const channel = channelSel[item.id];
-      if (!channel) { showToast("캐쉬충전 / 웰컴직접 중 입금 채널을 선택하세요"); return; }
+      if (!channel) { showToast("본사계좌 / 캐쉬충전 / 웰컴직접 중 입금 채널을 선택하세요"); return; }
       const d = data.debtors.find(x => x.id === dId);
       if (!forceOverride && !confirm(`"${item.payer_name}" 입금 ${fmt(item.total_amount)}(${channel})을\n${d?.name}(${dId})에 연결합니까?\n잔액이 자동 차감되고, 이 입금자명은 기억됩니다.`)) return;
       setResolving(item.id);
@@ -9165,10 +9165,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const doResolveAll = async () => {
       if (learnedPendingItems.length === 0) return;
-      // 각 항목의 캐쉬충전/웰컴직접 채널을 먼저 골라야 함 — 안 고른 건은 일괄 연결에서 제외
+      // 각 항목의 입금 채널을 먼저 골라야 함 — 안 고른 건은 일괄 연결에서 제외
       const ready = learnedPendingItems.filter(item => channelSel[item.id]);
       const skipped = learnedPendingItems.length - ready.length;
-      if (ready.length === 0) { showToast("먼저 각 항목의 입금 채널(캐쉬충전/웰컴직접)을 선택하세요"); return; }
+      if (ready.length === 0) { showToast("먼저 각 항목의 입금 채널(본사계좌/캐쉬충전/웰컴직접)을 선택하세요"); return; }
       if (!confirm(`학습 매핑된 ${ready.length}건을 일괄 연결할까요?${skipped > 0 ? ` (채널 미선택 ${skipped}건 제외)` : ""}`)) return;
       let ok = 0;
       for (const item of ready) {
@@ -9187,11 +9187,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       await reloadFromBackend();
     };
 
-    // 캐쉬충전/웰컴직접 중 어느 채널로 들어온 입금인지 명시적으로 고르게 하는 토글.
+    // 본사계좌/캐쉬충전/웰컴직접 중 어느 채널로 들어온 입금인지 명시적으로 고르게 하는 토글.
     // 두 대기열(미매칭 대기열, 학습 매핑 대기)에서 공유해서 쓴다.
     const renderChannelToggle = (item) => {
       const sel = channelSel[item.id];
-      const options = [config.paymentChannels[1], config.paymentChannels[2]]; // "캐쉬충전", "웰컴직접상환"
+      const options = config.paymentChannels; // "본사계좌", "캐쉬충전", "웰컴직접상환"
       return (
         <div style={{ display: "flex", gap: 4 }}>
           {options.map(ch => (
