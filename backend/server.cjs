@@ -3226,6 +3226,9 @@ app.get("/api/admin/stats/detail", (req, res) => {
 
     // 그 외(kv 저장, 협의/추심의뢰/민사소송 등) 저장은 필드별 상세 로그가 없어 요청 경로와
     // 바이트만 보여준다 — /api/debtors/*로 시작하는 행은 위 debtorEdits로 이미 다뤘으므로 제외.
+    // 목록은 500건까지만 보여주지만, 합계(otherActivityBytesTotal)는 전체를 다시 SUM해서 구한다 —
+    // 안 그러면 500건 넘게 저장한 기간엔 목록에서 보이는 것만 더한 합계가 실제 표 숫자보다
+    // 작게 나와서 "왜 숫자가 안 맞냐"는 혼동이 생긴다.
     const otherActivity = db.prepare(`
       SELECT path, bytes, ts, ref_debtor_id AS refDebtorId, detail
       FROM user_activity_log
@@ -3233,14 +3236,22 @@ app.get("/api/admin/stats/detail", (req, res) => {
       ORDER BY ts DESC
       LIMIT 500
     `).all(user, period);
+    const { total: otherActivityBytesTotal, cnt: otherActivityCount } = db.prepare(`
+      SELECT COALESCE(SUM(bytes),0) AS total, COUNT(*) AS cnt
+      FROM user_activity_log
+      WHERE type='data_input' AND user_name = ? AND substr(ts,1,${len}) = ? AND path NOT LIKE '/api/debtors/%'
+    `).get(user, period);
 
     // debtorEdits는 이 사용자가 그 기간에 "시도한" 모든 저장을 그대로 보여주지만, 통계 표의
     // 칸 숫자는 기간 시작~종료 값을 비교한 순변화량이라 서로 다를 수 있다 — 두 숫자를 같이
     // 내려줘서 왜 차이가 나는지(썼다가 지운 부분) 화면에서 바로 설명할 수 있게 한다.
     const netEntry = computeNetDebtorVolume(len).get(JSON.stringify([user, period]));
     const debtorEditsNetChars = netEntry ? netEntry.netChars : 0;
+    // 통계 표 칸에 실제로 보이는 숫자와 정확히 같은 값 — volumeBuckets()가 계산하는 것과
+    // 동일한 두 항목(순변화량 + 기타 저장 합계)의 합.
+    const totalNetChars = debtorEditsNetChars + (otherActivityBytesTotal || 0);
 
-    res.json({ ok: true, debtorEdits, debtorEditsNetChars, otherActivity });
+    res.json({ ok: true, debtorEdits, debtorEditsNetChars, otherActivity, otherActivityBytesTotal: otherActivityBytesTotal || 0, otherActivityCount, totalNetChars });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 

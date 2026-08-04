@@ -11411,11 +11411,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 // maxHeight를 걸면 두 스크롤 영역이 겹쳐서 마우스 위치에 따라 스크롤이 안 먹는
                 // 것처럼 보이는 문제가 있었다. 스크롤은 바깥 하나로만 처리하도록 통일.
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {detail.debtorEdits.length > 0 && (
+                  {(detail.debtorEdits.length > 0 || detail.otherActivity.length > 0) && (
                     <div style={{ fontSize: 11, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "6px 10px" }}>
-                      실질 입력량(통계표 반영분): <b style={{ color: "var(--tp)" }}>{detail.debtorEditsNetChars.toLocaleString()}자</b>
+                      실질 입력량(통계표 칸의 숫자와 동일): <b style={{ color: "var(--tp)" }}>{(detail.totalNetChars ?? detail.debtorEditsNetChars).toLocaleString()}자</b>
+                      {" "}= 채무자 정보 순변화량 {detail.debtorEditsNetChars.toLocaleString()}자 + 기타 저장 {(detail.otherActivityBytesTotal || 0).toLocaleString()}자
                       {rawDebtorEditChars !== detail.debtorEditsNetChars && (
-                        <> — 아래는 이 기간 저장 시도 원본 기록(합계 {rawDebtorEditChars.toLocaleString()}자)이며, 기간 시작~종료 값이 같아지도록 썼다가 지운 부분은 통계에서 제외됨</>
+                        <> — 채무자 정보 쪽은 이 기간 저장 시도 원본 기록(합계 {rawDebtorEditChars.toLocaleString()}자)이며, 기간 시작~종료 값이 같아지도록 썼다가 지운 부분은 제외됨</>
+                      )}
+                      {detail.otherActivityCount > detail.otherActivity.length && (
+                        <> — 기타 저장은 총 {detail.otherActivityCount.toLocaleString()}건 중 최근 {detail.otherActivity.length}건만 아래 목록에 표시(합계는 전체 기준)</>
                       )}
                     </div>
                   )}
