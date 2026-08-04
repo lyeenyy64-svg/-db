@@ -4768,6 +4768,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [scanning, setScanning] = useState(false);
     const [docModal, setDocModal] = useState(null); // { url, filename, candidates }
     const [relatedData, setRelatedData] = useState(null);
+    // "관련 데이터" 탭: 노션/슬랙/이메일을 한꺼번에 다 보여주지 않고, 버튼을 눌러야
+    // 그 출처의 데이터가 펼쳐지도록 함(여러 개 동시에 펼쳐놓을 수 있음).
+    const [openRelSrc, setOpenRelSrc] = useState({});
 
     const openDocModal = async (debtorId, keywords, debtorName) => {
       setDocModal({ searching: true, keywords, debtorName });
@@ -4802,6 +4805,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         fetch(`/api/documents/${d.id}`).then(r => r.json()).then(rows => setLinkedDocs(rows)).catch(() => setLinkedDocs([]));
       }
       if (detailTab === "관련 데이터") {
+        setOpenRelSrc({});
         fetch(`/api/related-data/${d.id}?viewer=${encodeURIComponent(currentUser?.name || "")}`).then(r => r.json()).then(rows => setRelatedData(rows)).catch(() => setRelatedData([]));
       }
     }, [detailTab, d.id]);
@@ -5540,44 +5544,62 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {relatedData && (() => {
             const SRC_LABEL = { notion: "노션", slack: "슬랙", email: "이메일" };
             const colWidths = [90, undefined, 60, 50, 40];
-            return ["notion", "slack", "email"].map(src => {
-              const rows = relatedData.filter(r => r.source === src);
-              return (
-                <div key={src} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <div style={{ flexShrink: 0, width: 70, padding: "8px 0", borderRadius: 8, background: "#f97316", color: "#fff", fontSize: 13, fontWeight: 700, textAlign: "center" }}>
-                    {SRC_LABEL[src]}
-                  </div>
-                  <div style={{ flex: 1, overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                      <thead><tr>
-                        {["년월일", "내용", "출처", "공유", "삭제"].map((h, i) => <th key={h} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}
-                      </tr></thead>
-                      <tbody>
-                        {rows.length === 0 && <tr><td colSpan={5} style={{ ...issueTd, color: "var(--tm)" }}>데이터 없음</td></tr>}
-                        {rows.map(row => (
-                          <tr key={row.id}>
-                            <td style={issueTd}>{row.occurred_at ? row.occurred_at.slice(0, 10) : "-"}</td>
-                            <td style={{ ...issueTd, textAlign: "left" }}>
-                              <div style={{ fontWeight: 600 }}>{row.title}</div>
-                              {row.summary && <div style={{ marginTop: 2, color: "var(--tm)", fontSize: 11 }}>{row.summary}</div>}
-                            </td>
-                            <td style={issueTd}>
-                              <a href={row.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc)" }} title="원본으로 이동">🔗 이동</a>
-                            </td>
-                            <td style={issueTd}>
-                              <input type="checkbox" checked={!!row.shared} disabled={!canEdit} onChange={() => toggleRelatedDataShare(row)} title="법무실 구성원에게 공유" />
-                            </td>
-                            <td style={issueTd}>
-                              {canEdit && <button onClick={() => deleteRelatedData(row.id)} style={{ background: "none", color: "var(--err)", padding: 4 }} title="삭제"><I name="trash" size={13} /></button>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+            return (
+              <>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {["notion", "slack", "email"].map(src => {
+                    const count = relatedData.filter(r => r.source === src).length;
+                    const isOpen = !!openRelSrc[src];
+                    return (
+                      <button key={src} onClick={() => setOpenRelSrc(p => ({ ...p, [src]: !p[src] }))}
+                        style={{ padding: "8px 18px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                          border: `2px solid ${isOpen ? "#f97316" : "var(--brd)"}`,
+                          background: isOpen ? "#f97316" : "var(--bg2)", color: isOpen ? "#fff" : "var(--tp)" }}>
+                        {SRC_LABEL[src]} <span style={{ fontWeight: 400, opacity: 0.85 }}>({count})</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              );
-            });
+                {["notion", "slack", "email"].filter(src => openRelSrc[src]).map(src => {
+                  const rows = relatedData.filter(r => r.source === src);
+                  return (
+                    <div key={src} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                      <div style={{ flexShrink: 0, width: 70, padding: "8px 0", borderRadius: 8, background: "#f97316", color: "#fff", fontSize: 13, fontWeight: 700, textAlign: "center" }}>
+                        {SRC_LABEL[src]}
+                      </div>
+                      <div style={{ flex: 1, overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                          <thead><tr>
+                            {["년월일", "내용", "출처", "공유", "삭제"].map((h, i) => <th key={h} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}
+                          </tr></thead>
+                          <tbody>
+                            {rows.length === 0 && <tr><td colSpan={5} style={{ ...issueTd, color: "var(--tm)" }}>데이터 없음</td></tr>}
+                            {rows.map(row => (
+                              <tr key={row.id}>
+                                <td style={issueTd}>{row.occurred_at ? row.occurred_at.slice(0, 10) : "-"}</td>
+                                <td style={{ ...issueTd, textAlign: "left" }}>
+                                  <div style={{ fontWeight: 600 }}>{row.title}</div>
+                                  {row.summary && <div style={{ marginTop: 2, color: "var(--tm)", fontSize: 11 }}>{row.summary}</div>}
+                                </td>
+                                <td style={issueTd}>
+                                  <a href={row.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--acc)" }} title="원본으로 이동">🔗 이동</a>
+                                </td>
+                                <td style={issueTd}>
+                                  <input type="checkbox" checked={!!row.shared} disabled={!canEdit} onChange={() => toggleRelatedDataShare(row)} title="법무실 구성원에게 공유" />
+                                </td>
+                                <td style={issueTd}>
+                                  {canEdit && <button onClick={() => deleteRelatedData(row.id)} style={{ background: "none", color: "var(--err)", padding: 4 }} title="삭제"><I name="trash" size={13} /></button>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            );
           })()}
         </div>}
       </div>
