@@ -361,13 +361,21 @@ const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.strin
 // 내용을 자동으로 추가한다 — 메모는 installment_schedule_history에도 남지만 그건 분할상환
 // 탭 안쪽 "납부 히스토리"라 눈에 잘 안 띄어서, 채무자 상세를 열면 바로 보이는 히스토리
 // 탭에도 남기는 게 낫다는 요청.
-const addInstallmentMemoToDebtorHistory = (debtorId, dueDate, amount, text, userName) => {
+// sourceHistoryId를 남겨두면 나중에 이 메모를 삭제할 때(deleteInstallmentMemo) 같은 값으로
+// 찾아서 히스토리 탭 항목도 함께 지울 수 있다.
+const addInstallmentMemoToDebtorHistory = (debtorId, dueDate, amount, text, userName, sourceHistoryId) => {
   if (!debtorId) return;
   const hist = getHistM(debtorId);
   const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
   const context = [dueDate ? fmtDate(dueDate) : "", amount ? fmt(amount) : ""].filter(Boolean).join(" ");
   const content = `[분할상환${context ? " " + context : ""}] ${text}`;
-  saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자" }, ...hist]);
+  saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자", sourceHistoryId }, ...hist]);
+};
+// 분할상환 메모 삭제 — 이력 로그 한 줄 + 현재 memo 값을 지우고, 그 메모가 자동으로 만들어둔
+// 채무자 "히스토리" 탭 항목도 sourceHistoryId로 찾아서 함께 지운다.
+const deleteInstallmentMemoEverywhere = async (schedId, historyId, debtorId) => {
+  await fetch(`/api/installments/schedules/${schedId}/memo/${historyId}`, { method: "DELETE" });
+  if (debtorId) saveHistM(debtorId, getHistM(debtorId).filter(h => h.sourceHistoryId !== historyId));
 };
 // 검색용: 채무자 히스토리(엑셀 원본 + 수동 추가, 수정/삭제 반영)를 한 문자열로 합친다
 const getDebtorHistoryText = (d) => {
@@ -2825,12 +2833,12 @@ export default function App() {
   };
   const addInstallmentMemo = async (schedId, memo, eventType = "메모") => {
     const sched = (data.installmentSchedules || []).find(s => s.id === schedId);
-    await fetch(`/api/installments/schedules/${schedId}/memo`, {
+    const r = await fetch(`/api/installments/schedules/${schedId}/memo`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ memo, eventType, userName: currentUser?.name || "관리자" }),
-    });
+    }).then(x => x.json()).catch(() => null);
     if (eventType === "메모" && sched) {
-      addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, memo, currentUser?.name);
+      addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, memo, currentUser?.name, r?.historyId);
     }
     await reloadInstallments();
   };
@@ -6275,11 +6283,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         if (!text) return;
         setSavingMemoId(schedId);
         const sched = scheds.find(x => x.id === schedId);
-        await fetch(`/api/installments/schedules/${schedId}/memo`, {
+        const r = await fetch(`/api/installments/schedules/${schedId}/memo`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ memo: text, eventType: "메모", userName: currentUser?.name || "관리자" }),
-        });
-        if (sched) addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, text, currentUser?.name);
+        }).then(x => x.json()).catch(() => null);
+        if (sched) addInstallmentMemoToDebtorHistory(sched.debtorId, sched.dueDate, sched.scheduledAmount, text, currentUser?.name, r?.historyId);
         setCardMemos(prev => ({ ...prev, [schedId]: "" }));
         // 메모에서 금액 자동 감지
         const detectedAmt = parseAmountFromText(text);
@@ -6296,6 +6304,23 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           await reloadInstallments();
           showToast("특이사항 저장");
         }
+      };
+
+      // 일정의 history(플랜별 history 배열)에서 이 일정에 남긴 "메모" 이벤트 중 가장 최근 것을
+      // 찾는다 — 화면에 보이는 s.memo(단일값)가 누가, 언제 남겼는지 알려주는 용도.
+      const getLatestMemoHistory = (schedId) => {
+        for (const p of data.installmentPlans || []) {
+          const entries = (p.history || []).filter(h => h.scheduleId === schedId && h.eventType === "메모");
+          if (entries.length) return entries[entries.length - 1];
+        }
+        return null;
+      };
+
+      const deleteMemo = async (schedId, historyId, debtorId) => {
+        if (!confirm("이 특이사항을 삭제하시겠습니까? (채무자 히스토리에 남긴 기록도 함께 삭제됩니다)")) return;
+        await deleteInstallmentMemoEverywhere(schedId, historyId, debtorId);
+        await reloadInstallments();
+        showToast("특이사항 삭제됨");
       };
 
       return (
@@ -6383,9 +6408,22 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   {s.memo && (() => {
                     const memoAmt = parseAmountFromText(s.memo);
                     const amtMismatch = canEdit && memoAmt && memoAmt > 0 && memoAmt !== s.scheduledAmount;
+                    const memoH = getLatestMemoHistory(s.id);
+                    const [memoDate, memoTime] = (memoH?.createdAt || "").split(" ");
                     return (
                       <div style={{ marginBottom: 8 }}>
-                        <div style={{ fontSize: 12, color: "var(--tm)", background: "var(--bg)", borderRadius: 6, padding: "6px 10px", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{s.memo.slice(0, 120)}{s.memo.length > 120 ? "…" : ""}</div>
+                        <div style={{ fontSize: 12, color: "var(--tm)", background: "var(--bg)", borderRadius: 6, padding: "6px 10px", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
+                          {memoH && (
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4, fontSize: 10, color: "var(--ts)" }}>
+                              <span>{memoDate} {memoTime?.slice(0, 5)} · {memoH.userName || "관리자"}</span>
+                              {canEdit && (
+                                <button onClick={() => deleteMemo(s.id, memoH.id, s.debtorId)} title="이 특이사항 삭제"
+                                  style={{ background: "none", border: "none", color: "var(--err)", cursor: "pointer", fontSize: 12, padding: "0 4px" }}>×</button>
+                              )}
+                            </div>
+                          )}
+                          {s.memo.slice(0, 120)}{s.memo.length > 120 ? "…" : ""}
+                        </div>
                         {amtMismatch && (
                           <button onClick={async () => {
                             await fetch(`/api/installments/schedules/${s.id}`, {

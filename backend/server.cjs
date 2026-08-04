@@ -1729,12 +1729,23 @@ app.post("/api/installments/schedules/:id/memo", (req, res) => {
   if (!memo) return res.status(400).json({ ok: false, error: "memo 필요" });
   const sched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
   if (!sched) return res.status(404).json({ ok: false, error: "일정 없음" });
-  db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+  const info = db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     req.params.id, sched.plan_id, sched.debtor_id,
     eventType || '메모', sched.due_date || sched.due_month,
     sched.scheduled_amount, memo, userName || '관리자'
   );
   db.prepare("UPDATE installment_schedules SET memo = ? WHERE id = ?").run(memo, req.params.id);
+  res.json({ ok: true, historyId: info.lastInsertRowid });
+});
+
+// DELETE /api/installments/schedules/:id/memo/:historyId - 특이사항 메모 삭제
+// (해당 일정에 지금 표시 중인 "기존 메모"를 지운다 — 이력 로그 한 줄과 현재 memo 값을 함께 지움.
+// 더 이전 메모로 되돌리지 않고 그냥 "현재 특이사항 없음" 상태로 만든다.)
+app.delete("/api/installments/schedules/:id/memo/:historyId", (req, res) => {
+  const hist = db.prepare("SELECT * FROM installment_schedule_history WHERE id = ? AND schedule_id = ? AND event_type = '메모'").get(req.params.historyId, req.params.id);
+  if (!hist) return res.status(404).json({ ok: false, error: "메모 이력 없음" });
+  db.prepare("DELETE FROM installment_schedule_history WHERE id = ?").run(hist.id);
+  db.prepare("UPDATE installment_schedules SET memo = '' WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -1832,11 +1843,13 @@ function runInstallmentAutoSync(opts = {}) {
         let pool = monthPaid || 0;
         const changes = [];
 
-        for (const s of monthScheds) {
-          const isDue = (s.due_date && s.due_date <= today) ||
-                        (!s.due_date && s.due_month && s.due_month <= todayMonth);
+        // 이 달(예정월) 자체가 아직 안 왔으면 처리 안 함 — 날짜 단위(due_date <= today)로
+        // 더 세게 걸면 "이번 달 중 늦은 날짜"(예: 이월로 8/5에 잡힌 건)가 이번 달인데도
+        // 아직 그 날이 안 됐다는 이유로 매칭이 안 되는 문제가 있었다(입금은 이미 들어왔는데
+        // "왜 완납 처리가 안 되냐"는 문의로 이어짐) — 예정월=입금월 정책과 맞게 달 단위로만 게이트.
+        if (month > todayMonth) continue;
 
-          if (!isDue) continue;
+        for (const s of monthScheds) {
 
           const needed = s.scheduled_amount || 0;
 
@@ -1971,8 +1984,8 @@ app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
 
       let pool = monthPaid || 0;
       const rows = [];
+      const isDue = month <= todayMonth; // runInstallmentAutoSync과 동일한 달 단위 게이트
       for (const s of monthScheds) {
-        const isDue = (s.due_date && s.due_date <= today) || (!s.due_date && s.due_month && s.due_month <= todayMonth);
         const needed = s.scheduled_amount || 0;
         const poolBefore = pool;
         let allocated = 0, note;
