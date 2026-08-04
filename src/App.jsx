@@ -2095,6 +2095,33 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const [viewMode, setViewMode] = useState("all");
   const [searchQ, setSearchQ] = useState("");
   const [openMonths, setOpenMonths] = useState({});
+  // 업무 내용/결과는 한 글자 입력할 때마다 즉시 저장돼서, 한 문장을 치는 동안 통계에
+  // "저장 N번"이 그대로 쌓여 실제로는 한 번 고친 걸 여러 번 고친 것처럼 부풀려 보이는
+  // 문제가 있었다(사용자가 직접 지적함). 타이핑 중엔 화면에만 즉시 반영하고, 잠깐
+  // 멈추면(700ms) 그때 한 번만 실제로 저장한다 — 포커스를 벗어나면 즉시 flush.
+  const [drafts, setDrafts] = useState({});
+  const draftTimers = useRef({});
+  const draftKey = (id, field) => `${id}:${field}`;
+  const scheduleFieldSave = (r, field, value) => {
+    const key = draftKey(r.id, field);
+    setDrafts(p => ({ ...p, [key]: value }));
+    clearTimeout(draftTimers.current[key]);
+    draftTimers.current[key] = setTimeout(() => {
+      updateKeyIssue("todoList", r.id, { [field]: value });
+      delete draftTimers.current[key];
+      setDrafts(p => { const n = { ...p }; delete n[key]; return n; });
+    }, 700);
+  };
+  const flushFieldSave = (r, field) => {
+    const key = draftKey(r.id, field);
+    if (draftTimers.current[key] == null) return;
+    clearTimeout(draftTimers.current[key]);
+    delete draftTimers.current[key];
+    const value = drafts[key];
+    if (value !== undefined) updateKeyIssue("todoList", r.id, { [field]: value });
+    setDrafts(p => { const n = { ...p }; delete n[key]; return n; });
+  };
+  const fieldValue = (r, field) => { const key = draftKey(r.id, field); return drafts[key] !== undefined ? drafts[key] : (r[field] || ""); };
   const byMode = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
   const q = searchQ.trim().toLowerCase();
   const shown = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
@@ -2123,8 +2150,8 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
             {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
           </select>
         </td>
-        <td style={strike(r)}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
-        <td style={strike(r, { width: w[3] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
+        <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
+        <td style={strike(r, { width: w[3] })}><KoreanInput value={fieldValue(r, "result")} onChange={e => scheduleFieldSave(r, "result", e.target.value)} onBlur={() => flushFieldSave(r, "result")} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
         {showCompletedCol && <td style={strike(r, { width: w[4] })} className="mono">{r.completedAt ? fmtDate(r.completedAt) : "-"}</td>}
         <td style={strike(r, { width: showCompletedCol ? w[5] : w[4] })}>
           <select value={r.status || "진행중"} onChange={e => onStatusChange(r, e.target.value)} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
