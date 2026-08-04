@@ -2267,6 +2267,7 @@ export default function App() {
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
   const [detailTab, setDetailTab] = useState("히스토리");
+  const [histHighlight, setHistHighlight] = useState(null); // { text, date } — 통계 상세에서 이동 시 강조할 히스토리 행
   const [adminMainTab, setAdminMainTab] = useState("settings");
   const [adminSettingTab, setAdminSettingTab] = useState("담당자");
   const [adminNewItem, setAdminNewItem] = useState("");
@@ -2344,11 +2345,15 @@ export default function App() {
   const PP = 50;
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
-  const navigateToDebtor = (debtor, detailTabName = "히스토리") => {
+  const navigateToDebtor = (debtor, detailTabName = "히스토리", highlight = null) => {
     setPrevTab(tab);
     setSel(debtor);
     setTab("debtors");
     setDetailTab(detailTabName);
+    // "관련 데이터" 통계 상세에서 "이동" 클릭 시, 어느 히스토리 행이 그 저장 건인지
+    // 채무자 화면을 열어놓고 직접 찾아야 하는 문제 — 내용/날짜가 일치하는 행을 찾아
+    // 스크롤하고 강조해준다(1회용 힌트라 소비되면 바로 비워짐).
+    setHistHighlight(highlight);
   };
   const goBack = () => {
     setSel(null);
@@ -4718,6 +4723,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, type: h.type, isManual: true, manualId: h.id, createdBy: h.createdBy })),
     ].sort((a, b) => b.date.localeCompare(a.date));
 
+    // 통계 상세("기타 저장")에서 "이동"을 누르면 이 채무자의 히스토리 탭이 열리는데, 어느
+    // 행이 그 저장 건인지 직접 찾아야 하는 문제가 있었다 — 날짜/내용이 일치하는 행을
+    // 찾아 스크롤하고 잠깐 강조해준다. histHighlight는 1회용이라 매칭 시도 후 바로 비운다.
+    const [highlightedHistKey, setHighlightedHistKey] = useState(null);
+    useEffect(() => {
+      if (!histHighlight || detailTab !== "히스토리") return;
+      const match = allHistory.find(h =>
+        h.date === histHighlight.date && h.content && histHighlight.text &&
+        (h.content.includes(histHighlight.text) || histHighlight.text.includes(h.content))
+      );
+      if (match) {
+        setHighlightedHistKey(match.key);
+        setTimeout(() => { document.getElementById(`hist-row-${match.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 50);
+        setTimeout(() => setHighlightedHistKey(null), 4000);
+      } else {
+        showToast("일치하는 히스토리 행을 찾지 못했습니다");
+      }
+      setHistHighlight(null);
+    }, [histHighlight, detailTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
     const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
     const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "", type: config.activityTypes[0] || "" });
     const openEdit = (h) => setHistForm({ mode: "edit", key: h.key, date: h.date, content: h.content, type: h.type || config.activityTypes[0] || "" });
@@ -5222,7 +5247,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   {allHistory.map((h, i) => (
-                    <tr key={h.key} style={{ borderBottom: i < allHistory.length - 1 ? "1px solid var(--brd)" : "none" }}>
+                    <tr key={h.key} id={`hist-row-${h.key}`}
+                      style={{ borderBottom: i < allHistory.length - 1 ? "1px solid var(--brd)" : "none",
+                        background: highlightedHistKey === h.key ? "#fde68a40" : "transparent",
+                        transition: "background 0.4s" }}>
                       <td style={{ width: 90, padding: "8px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
                         <div className="mono" style={{ fontSize: 11, color: "var(--acc)", fontWeight: 600, lineHeight: 1.4 }}>{h.date}</div>
                         <div style={{ fontSize: 11, color: h.type ? "var(--tp)" : "var(--tm)", marginTop: 2 }}>{h.type || "-"}</div>
@@ -11228,12 +11256,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const rawDebtorEditChars = detail.debtorEdits.reduce((s, e) => s + (e.newValue || "").length, 0);
           const totalCount = detail.debtorEdits.length + detail.otherActivity.length;
           const goToActivity = (a) => {
+            // detail은 "추가: 내용" / "수정: 내용" 형태라 접두어를 떼고, 여러 건이 한 번에
+            // 바뀐 경우("추가: A / 수정: B")는 앞 건 기준으로만 강조 대상을 잡는다.
+            const highlightFromDetail = (tab) => {
+              if (tab !== "히스토리" || !a.detail) return null;
+              const first = a.detail.split(" / ")[0].replace(/^(추가|수정):\s*/, "");
+              return first ? { text: first, date: (a.ts || "").slice(0, 10).replace(/-/g, ".") } : null;
+            };
             const navigate = (debtorId, tab) => {
               const debtor = debtorId ? data.debtors.find(x => x.id === debtorId) : null;
               if (!debtor) { showToast("이동할 수 있는 화면을 찾을 수 없습니다 (일괄 처리 또는 삭제된 항목)"); return; }
               setStatsDetailCell(null);
               setStatsDetail(null);
-              navigateToDebtor(debtor, tab || "히스토리");
+              navigateToDebtor(debtor, tab || "히스토리", highlightFromDetail(tab || "히스토리"));
             };
             // 최근 기록은 저장 시점에 이미 대상 채무자를 찾아 ref_debtor_id에 남겨뒀으니 그걸 바로 쓰고,
             // 그게 없는(마이그레이션 이전) 기록만 경로를 다시 분석해서 찾는다.
