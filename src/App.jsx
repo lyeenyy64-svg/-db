@@ -4729,10 +4729,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [highlightedHistKey, setHighlightedHistKey] = useState(null);
     useEffect(() => {
       if (!histHighlight || detailTab !== "히스토리") return;
-      const match = allHistory.find(h =>
-        h.date === histHighlight.date && h.content && histHighlight.text &&
-        (h.content.includes(histHighlight.text) || histHighlight.text.includes(h.content))
+      // 저장 시각(ts)의 날짜와 히스토리 항목의 date가 항상 같지는 않다 — "히스토리 추가" 폼은
+      // 날짜를 사용자가 자유롭게 고를 수 있어서(예: "이번주 금요일" 약속 메모를 그 날짜로 남김),
+      // 날짜가 저장 시각과 다르면 못 찾을 수 있다. 그래서 내용 일치를 우선으로 찾고, 후보가
+      // 여러 개면 그중 날짜가 일치하는 걸 고른다.
+      const candidates = allHistory.filter(h =>
+        h.content && histHighlight.text && (h.content.includes(histHighlight.text) || histHighlight.text.includes(h.content))
       );
+      const match = candidates.find(h => h.date === histHighlight.date) || candidates[0];
       if (match) {
         setHighlightedHistKey(match.key);
         setTimeout(() => { document.getElementById(`hist-row-${match.key}`)?.scrollIntoView({ behavior: "smooth", block: "center" }); }, 50);
