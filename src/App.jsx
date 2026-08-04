@@ -6195,6 +6195,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const [editingId, setEditingId] = useState(null);
       const [editDate, setEditDate] = useState("");
       const [editAmount, setEditAmount] = useState("");
+      const [diagnoseModal, setDiagnoseModal] = useState(null); // { schedId, data, loading } | null
+
+      const openDiagnose = async (schedId) => {
+        setDiagnoseModal({ schedId, data: null, loading: true });
+        try {
+          const r = await fetch(`/api/installments/schedules/${schedId}/diagnose`);
+          const d = await r.json();
+          setDiagnoseModal({ schedId, data: d.ok ? d : null, loading: false });
+        } catch {
+          setDiagnoseModal({ schedId, data: null, loading: false });
+        }
+      };
 
       const patchStatus = async (schedId, status) => {
         setPatchingId(schedId);
@@ -6257,6 +6269,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       };
 
       return (
+        <>
         <Overlay onClose={onClose}>
           <ModalHeader title={`${parseInt(parts[1])}월 ${parseInt(parts[2])}일 (${dow}) 납부 일정`} onClose={onClose} />
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -6303,6 +6316,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>{fmt(s.scheduledAmount)}</span>
                     {s.paidAmount > 0 && <span style={{ fontSize: 12, color: "#047857" }}>입금 {fmt(s.paidAmount)}</span>}
                     {shortfall > 0 && <span style={{ fontSize: 12, color: "#c2410c" }}>미납 {fmt(shortfall)}</span>}
+                    {(s.status === "미납" || s.status === "일부납") && (
+                      <button onClick={() => openDiagnose(s.id)}
+                        style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 6, background: "#3b82f612", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                        왜 {s.status}?
+                      </button>
+                    )}
                   </div>
                   {/* 날짜/금액 수정 폼 */}
                   {editingId === s.id && (
@@ -6405,6 +6424,58 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             })()}
           </div>
         </Overlay>
+        {diagnoseModal && (() => {
+          const { data: dg, loading } = diagnoseModal;
+          return (
+            <Overlay onClose={() => setDiagnoseModal(null)} wide>
+              <ModalHeader title="입금 배분 진단" onClose={() => setDiagnoseModal(null)} />
+              {loading && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중…</div>}
+              {!loading && !dg && <div style={{ padding: 30, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>진단 정보를 불러오지 못했습니다</div>}
+              {!loading && dg && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <div style={{ fontSize: 12, color: "var(--tm)", background: "var(--bg2)", borderRadius: 8, padding: "8px 12px", lineHeight: 1.6 }}>
+                    플랜 시작일(<b className="mono">{dg.planStartDate}</b>) 이후 이 채무자의 총 입금액은 <b className="mono" style={{ color: "var(--acc)" }}>{fmt(dg.totalPaidSincePlanStart)}</b>이며,
+                    아래처럼 <b>오래된 일정부터 순서대로</b> 배분됩니다 — 같은 입금이 두 일정에 이중으로 잡히지 않도록, 이미 앞선 일정이 다 가져가면 뒤 일정은 입금이 있어도 미납으로 남습니다.
+                  </div>
+                  {dg.payments.length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 6 }}>이 기간 입금 내역 ({dg.payments.length}건)</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {dg.payments.map(p => (
+                          <div key={p.id} style={{ display: "flex", gap: 10, fontSize: 12, background: "var(--bg2)", borderRadius: 6, padding: "5px 10px" }}>
+                            <span className="mono">{p.payment_date}</span>
+                            <span className="mono" style={{ fontWeight: 600, color: "#047857" }}>{fmt(p.total_amount)}</span>
+                            {p.payer_name && <span style={{ color: "var(--tm)" }}>{p.payer_name}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", marginBottom: 6 }}>일정별 배분 순서</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr style={{ background: "var(--bg2)" }}>{["납부일", "예정금액", "현재상태", "배분 전 잔여풀", "이 일정에 배분", "배분 후 잔여풀", "설명"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {dg.schedules.map(row => (
+                          <tr key={row.scheduleId} style={{ background: row.isTarget ? "#3b82f612" : "transparent", borderBottom: "1px solid var(--brd)" }}>
+                            <td className="mono" style={{ padding: "6px 8px", whiteSpace: "nowrap", fontWeight: row.isTarget ? 700 : 400 }}>{row.dueDate || row.dueMonth}{row.isTarget && " ←"}</td>
+                            <td className="mono" style={{ padding: "6px 8px" }}>{fmt(row.scheduledAmount)}</td>
+                            <td style={{ padding: "6px 8px" }}>{row.currentStatus}</td>
+                            <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolBefore)}</td>
+                            <td className="mono" style={{ padding: "6px 8px", fontWeight: 600, color: row.allocated > 0 ? "#047857" : "var(--tm)" }}>{fmt(row.allocated)}</td>
+                            <td className="mono" style={{ padding: "6px 8px", color: "var(--tm)" }}>{fmt(row.poolAfter)}</td>
+                            <td style={{ padding: "6px 8px", color: "var(--tm)", fontSize: 11 }}>{row.note}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </Overlay>
+          );
+        })()}
+        </>
       );
     });
 

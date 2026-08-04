@@ -1903,6 +1903,75 @@ app.post("/api/installments/auto-sync", (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// GET /api/installments/schedules/:id/diagnose - 이 일정이 왜 완납/일부납/미납으로 판정됐는지
+// runInstallmentAutoSync()와 동일한 워터폴 배분 과정을 읽기 전용으로 그대로 재현해 보여준다.
+// "입금은 됐는데 왜 미납인지" 문의가 있을 때, DB를 직접 열어보지 않고도 화면에서 바로
+// (같은 플랜의 더 이른 일정이 입금을 먼저 가져갔는지 등) 원인을 확인할 수 있게 한다.
+app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
+  try {
+    const target = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
+    if (!target) return res.status(404).json({ ok: false, error: "일정 없음" });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayMonth = today.slice(0, 7);
+
+    const allScheds = db.prepare(`
+      SELECT id, due_date, due_month, scheduled_amount, status, paid_amount
+      FROM installment_schedules
+      WHERE plan_id = ? AND status != '이월'
+      ORDER BY COALESCE(due_date, due_month || '-28') ASC
+    `).all(target.plan_id);
+
+    const firstSched = allScheds[0];
+    const planStartDate = firstSched.due_date
+      ? firstSched.due_date.slice(0, 7) + "-01"
+      : (firstSched.due_month || today.slice(0, 7)) + "-01";
+
+    const { total: totalPaid } = db.prepare(`
+      SELECT COALESCE(SUM(total_amount), 0) AS total
+      FROM payments WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
+    `).get(target.debtor_id, planStartDate, today);
+
+    const payments = db.prepare(`
+      SELECT id, payment_date, total_amount, payer_name FROM payments
+      WHERE debtor_id = ? AND payment_date >= ? AND payment_date <= ?
+      ORDER BY payment_date ASC
+    `).all(target.debtor_id, planStartDate, today);
+
+    let pool = totalPaid || 0;
+    const rows = [];
+    for (const s of allScheds) {
+      const isDue = (s.due_date && s.due_date <= today) || (!s.due_date && s.due_month && s.due_month <= todayMonth);
+      const needed = s.scheduled_amount || 0;
+      const poolBefore = pool;
+      let allocated = 0, note;
+
+      if (!isDue) {
+        note = "아직 납부일이 되지 않아 배분 대상이 아님";
+      } else if (s.status === "완납") {
+        allocated = needed;
+        pool = Math.max(0, pool - needed);
+        note = "이미 완납 처리됨 — 예정금액만큼 풀에서 차감";
+      } else if (needed > 0) {
+        allocated = Math.min(pool, needed);
+        pool -= allocated;
+        note = allocated >= needed ? "전액 배분됨" : allocated > 0 ? "일부만 배분됨 (풀 부족)" : "배분할 금액 없음 — 이 시점까지 앞선 일정들이 입금을 먼저 가져감";
+      } else {
+        note = "예정금액이 설정되지 않음";
+      }
+
+      rows.push({
+        scheduleId: s.id, dueDate: s.due_date, dueMonth: s.due_month,
+        scheduledAmount: needed, currentStatus: s.status, isDue,
+        poolBefore, allocated, poolAfter: pool,
+        note, isTarget: s.id === target.id,
+      });
+    }
+
+    res.json({ ok: true, planStartDate, today, totalPaidSincePlanStart: totalPaid, payments, schedules: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // POST /api/installments/:planId/schedules - 일정 추가
 app.post("/api/installments/:planId/schedules", (req, res) => {
   const { id, debtSource, institution, loanAmount, interestRate, dueDate, dueMonth, scheduledAmount, memo } = req.body || {};
