@@ -6632,7 +6632,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           )}
                         </div>
                         {dayScheds.map((s) => {
-                          const c = s.rolledOverFrom ? rolloverColor : scColor(s.status);
+                          // 이월로 만들어진 일정이라도 완납/일부납 등으로 실제 처리가 끝나면 그 결과를
+                          // 우선해서 보여준다 — 계속 검게(이월) 표시하면 입금이 들어와 완납됐는데도
+                          // 화면엔 그대로 "이월"로만 보이는 문제가 있었다.
+                          const c = (s.rolledOverFrom && s.status === "예정") ? rolloverColor : scColor(s.status);
                           return (
                             <div key={s.id}
                               draggable={canEdit}
@@ -6687,7 +6690,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   )}
                   {datedScheds.map(s => {
                     const isRolledOver = !!s.rolledOverFrom;
-                    const displayStatus = isRolledOver ? "이월" : s.status;
+                    // 완납/일부납 등으로 이미 처리된 이월 건은 "이월" 대신 실제 처리 결과를 보여준다 —
+                    // 계속 "이월"로만 표시하면 입금이 들어와 완납됐는데도 화면엔 그대로 이월로 남는다.
+                    const displayStatus = (isRolledOver && s.status === "예정") ? "이월" : s.status;
                     const c = scColor(displayStatus);
                     return (
                       <div key={s.id}
