@@ -1841,7 +1841,9 @@ const issueAuto = { fontSize: 12, color: "var(--tm)" };
 
 // viewMode: "all"(기본, 삭제되지 않은 전체) | "completed"(완료만) | "trash"(삭제된 것만)
 // showComplete=false인 표(주요 협의 대상자)는 완료 개념이 없어 완료 버튼을 숨긴다
-const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, children }) => {
+// filterBar: 헤더 아래 검색창 등 추가 UI(옵션). customBody: 기본 <table>{children} 대신
+// 직접 만든 레이아웃(예: 월별 아코디언)을 넣고 싶을 때 사용 — 지정하면 children은 무시됨.
+const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, filterBar, customBody, children }) => {
   const toggle = (mode) => setViewMode(viewMode === mode ? "all" : mode);
   const btn = (active) => ({ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer", background: active ? "#000" : "var(--bg2)", color: active ? "#fff" : "var(--acc)" });
   // 완료/삭제 화면에서 [등록]을 누르면 곧바로 새 항목을 만들지 않고, 우선 등록현황(전체) 화면으로
@@ -1857,9 +1859,12 @@ const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComple
           <button onClick={() => toggle("trash")} style={btn(viewMode === "trash")}>삭제</button>
         </div>
       </div>
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
-      </div>
+      {filterBar && <div style={{ marginBottom: 10 }}>{filterBar}</div>}
+      {customBody ? customBody : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>{children}</table>
+        </div>
+      )}
     </div>
   );
 };
@@ -2080,54 +2085,116 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
 };
 
 const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
-  const cols = ["담당자", "업무 내용", "결과", "진행상태", "삭제"];
-  const colWidths = [90, undefined, 220, 90, 46];
+  const cols = ["등록일", "담당자", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
+  const colWidths = [84, 90, undefined, 220, 84, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
-  const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
-  return (
-    <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", deleted: false })}>
-      <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>
-      <tbody>
-        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
-        {shown.map(r => {
-          const strike = (extra) => ({ ...issueTd, position: "relative", ...extra });
-          const strikeLine = r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-          const onRestoreClick = () => updateKeyIssue("todoList", r.id, { deleted: false });
-          const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); };
-          const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
+  const [searchQ, setSearchQ] = useState("");
+  const [openMonths, setOpenMonths] = useState({});
+  const byMode = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
+  const q = searchQ.trim().toLowerCase();
+  const shown = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
+  const emptyMsg = q ? "검색 결과가 없습니다" : viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
+
+  // 상태를 "완료"로 바꾸는 순간의 날짜를 완료 처리일로 남기고, 완료에서 다시 다른 상태로
+  // 돌리면 더 이상 유효하지 않으니 비운다 — 나중에 다시 완료로 바꾸면 그때 날짜로 갱신됨.
+  const onStatusChange = (r, newStatus) => {
+    updateKeyIssue("todoList", r.id, { status: newStatus, completedAt: newStatus === "완료" ? today() : null });
+  };
+
+  const strike = (r, extra) => ({ ...issueTd, position: "relative", ...extra });
+  const strikeLine = (r) => r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
+  const renderRow = (r) => {
+    const onRestoreClick = () => updateKeyIssue("todoList", r.id, { deleted: false });
+    const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); };
+    const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
+    return (
+      <tr key={r.id}>
+        <td style={strike(r, { width: colWidths[0] })} className="mono">{r.createdAt ? fmtDate(r.createdAt) : "-"}</td>
+        <td style={strike(r, { width: colWidths[1] })}>
+          <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+            <option value="">-- 선택 --</option>
+            {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
+          </select>
+        </td>
+        <td style={strike(r)}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
+        <td style={strike(r, { width: colWidths[3] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
+        <td style={strike(r, { width: colWidths[4] })} className="mono">{r.completedAt ? fmtDate(r.completedAt) : "-"}</td>
+        <td style={strike(r, { width: colWidths[5] })}>
+          <select value={r.status || "진행중"} onChange={e => onStatusChange(r, e.target.value)} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
+            <option value="진행중">진행중</option>
+            <option value="지속">지속</option>
+            <option value="보류">보류</option>
+            <option value="완료">완료</option>
+          </select>
+        </td>
+        <td style={strike(r, { width: viewMode === "trash" ? 88 : colWidths[6], textAlign: "center" })}>
+          {canDelete && (viewMode === "trash"
+            ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
+                <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+              </div>
+            : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+  const theadEl = <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>;
+
+  const filterBar = (
+    <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="담당자·업무 내용·결과 검색..."
+      style={{ width: "100%", maxWidth: 320, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", boxSizing: "border-box" }} />
+  );
+
+  // "완료" 화면만 완료 처리월 기준으로 묶어서 아코디언으로 보여준다 — 완료 처리일이 없는
+  // (이 기능 적용 전에 완료된) 항목은 "날짜 미기록"으로 따로 묶어 맨 아래에 둔다.
+  let customBody = null;
+  if (viewMode === "completed") {
+    const groups = new Map();
+    for (const r of shown) {
+      const key = r.completedAt ? r.completedAt.slice(0, 7) : "미기록";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    const sortedKeys = [...groups.keys()].filter(k => k !== "미기록").sort((a, b) => b.localeCompare(a));
+    if (groups.has("미기록")) sortedKeys.push("미기록");
+    customBody = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {shown.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{emptyMsg}</div>}
+        {sortedKeys.map(key => {
+          const list = groups.get(key);
+          const label = key === "미기록" ? "완료 처리일 미기록" : `${key.slice(0, 4)}년 ${parseInt(key.slice(5, 7), 10)}월`;
+          const isOpen = !!openMonths[key];
           return (
-            <tr key={r.id}>
-              <td style={strike({ width: colWidths[0] })}>
-                <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
-                  <option value="">-- 선택 --</option>
-                  {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
-                </select>
-              </td>
-              <td style={strike()}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine}</td>
-              <td style={strike({ width: colWidths[2] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine}</td>
-              <td style={strike({ width: colWidths[3] })}>
-                <select value={r.status || "진행중"} onChange={e => updateKeyIssue("todoList", r.id, { status: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
-                  <option value="진행중">진행중</option>
-                  <option value="지속">지속</option>
-                  <option value="보류">보류</option>
-                  <option value="완료">완료</option>
-                </select>
-              </td>
-              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[4], textAlign: "center" })}>
-                {canDelete && (viewMode === "trash"
-                  ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
-                      <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
-                      <button onClick={onPurgeClick} title="영구 삭제" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
-                    </div>
-                  : <button onClick={onDeleteClick} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
-                )}
-              </td>
-            </tr>
+            <div key={key} style={{ border: "1px solid var(--brd)", borderRadius: 8, overflow: "hidden" }}>
+              <button onClick={() => setOpenMonths(p => ({ ...p, [key]: !p[key] }))}
+                style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "var(--bg2)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
+                <span>{label} <span style={{ fontWeight: 400, color: "var(--tm)", fontSize: 12 }}>({list.length}건)</span></span>
+                <span style={{ color: "var(--tm)" }}>{isOpen ? "▲" : "▼"}</span>
+              </button>
+              {isOpen && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    {theadEl}
+                    <tbody>{list.map(renderRow)}</tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           );
         })}
+      </div>
+    );
+  }
+
+  return (
+    <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} filterBar={filterBar} customBody={customBody}
+      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", createdAt: today(), completedAt: null, deleted: false })}>
+      {theadEl}
+      <tbody>
+        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.map(renderRow)}
       </tbody>
     </IssueTableCard>
   );
