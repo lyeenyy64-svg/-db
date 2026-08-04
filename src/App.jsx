@@ -2085,8 +2085,12 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
 };
 
 const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
-  const cols = ["등록일", "담당자", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
-  const colWidths = [84, 90, undefined, 220, 84, 90, 46];
+  // 완료 처리일은 평소 화면(등록현황/삭제)에는 항상 "-"만 보여 불필요하므로 숨기고, "완료" 화면
+  // (월별 아코디언)에서만 보여준다 — 그래서 두 화면이 열 구성이 다르다.
+  const cols = ["등록일", "담당자", "업무 내용", "결과", "진행상태", "삭제"];
+  const colWidths = [84, 90, undefined, 220, 90, 46];
+  const completedCols = ["등록일", "담당자", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
+  const completedColWidths = [84, 90, undefined, 220, 84, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
   const [searchQ, setSearchQ] = useState("");
@@ -2104,23 +2108,25 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
 
   const strike = (r, extra) => ({ ...issueTd, position: "relative", ...extra });
   const strikeLine = (r) => r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
-  const renderRow = (r) => {
+  // showCompletedCol: "완료" 화면(아코디언)에서만 완료 처리일 칸을 끼워 넣는다.
+  const renderRow = (r, showCompletedCol) => {
+    const w = showCompletedCol ? completedColWidths : colWidths;
     const onRestoreClick = () => updateKeyIssue("todoList", r.id, { deleted: false });
     const onPurgeClick = () => { if (confirm("이 항목을 영구 삭제하시겠습니까? 복구할 수 없습니다.")) deleteKeyIssue("todoList", r.id); };
     const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
     return (
       <tr key={r.id}>
-        <td style={strike(r, { width: colWidths[0] })} className="mono">{r.createdAt ? fmtDate(r.createdAt) : "-"}</td>
-        <td style={strike(r, { width: colWidths[1] })}>
+        <td style={strike(r, { width: w[0] })} className="mono">{r.createdAt ? fmtDate(r.createdAt) : "-"}</td>
+        <td style={strike(r, { width: w[1] })}>
           <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
             <option value="">-- 선택 --</option>
             {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
           </select>
         </td>
         <td style={strike(r)}><KoreanInput value={r.task || ""} onChange={e => updateKeyIssue("todoList", r.id, { task: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
-        <td style={strike(r, { width: colWidths[3] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
-        <td style={strike(r, { width: colWidths[4] })} className="mono">{r.completedAt ? fmtDate(r.completedAt) : "-"}</td>
-        <td style={strike(r, { width: colWidths[5] })}>
+        <td style={strike(r, { width: w[3] })}><KoreanInput value={r.result || ""} onChange={e => updateKeyIssue("todoList", r.id, { result: e.target.value })} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
+        {showCompletedCol && <td style={strike(r, { width: w[4] })} className="mono">{r.completedAt ? fmtDate(r.completedAt) : "-"}</td>}
+        <td style={strike(r, { width: showCompletedCol ? w[5] : w[4] })}>
           <select value={r.status || "진행중"} onChange={e => onStatusChange(r, e.target.value)} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
             <option value="진행중">진행중</option>
             <option value="지속">지속</option>
@@ -2128,7 +2134,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
             <option value="완료">완료</option>
           </select>
         </td>
-        <td style={strike(r, { width: viewMode === "trash" ? 88 : colWidths[6], textAlign: "center" })}>
+        <td style={strike(r, { width: viewMode === "trash" ? 88 : (showCompletedCol ? w[6] : w[5]), textAlign: "center" })}>
           {canDelete && (viewMode === "trash"
             ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                 <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
@@ -2141,6 +2147,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
     );
   };
   const theadEl = <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>;
+  const completedTheadEl = <thead><tr>{completedCols.map((h, i) => <th key={i} style={{ ...issueTh, ...(completedColWidths[i] ? { width: completedColWidths[i] } : {}) }}>{h}</th>)}</tr></thead>;
 
   const filterBar = (
     <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="담당자·업무 내용·결과 검색..."
@@ -2176,8 +2183,8 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
               {isOpen && (
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    {theadEl}
-                    <tbody>{list.map(renderRow)}</tbody>
+                    {completedTheadEl}
+                    <tbody>{list.map(r => renderRow(r, true))}</tbody>
                   </table>
                 </div>
               )}
@@ -2194,7 +2201,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
       {theadEl}
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
-        {shown.map(renderRow)}
+        {shown.map(r => renderRow(r, false))}
       </tbody>
     </IssueTableCard>
   );
