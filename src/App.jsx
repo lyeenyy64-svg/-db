@@ -6631,11 +6631,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <div style={{ padding: 40, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", fontSize: 13 }}>{stFilter !== "전체" ? "해당 상태의 일정 없음" : "이번달 예정 없음"}</div>
                   )}
                   {datedScheds.map(s => {
-                    const c = scColor(s.status);
-                    // "이월" 필터에서 보이는 항목은 이월로 새로 생성된(도착) 일정들이라 rolledOverFrom이
-                    // 항상 있다 — 어디서(며칠에서) 넘어왔는지 원본 이력을 보여준다(여러 번 이월됐으면 체인 전체).
                     const isRolledOver = !!s.rolledOverFrom;
-                    const rolloverChain = isRolledOver ? getRolloverChainDates(s, data.installmentSchedules) : [];
+                    const displayStatus = isRolledOver ? "이월" : s.status;
+                    const c = scColor(displayStatus);
                     return (
                       <div key={s.id}
                         draggable={canEdit}
@@ -6647,7 +6645,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           borderRadius: 10, border: `1px solid ${c.b}`, padding: "8px 12px", flexShrink: 0,
                           cursor: canEdit ? "grab" : "pointer",
                           opacity: dragSchedId === s.id ? 0.4 : 1,
-                          display: "grid", gridTemplateColumns: isRolledOver ? "28px 1fr 64px 88px 108px 62px 120px 24px" : "28px 1fr 64px 88px 108px 62px 20px", alignItems: "center", gap: 8,
+                          display: "grid", gridTemplateColumns: "28px 1fr 64px 88px 108px 62px 20px", alignItems: "center", gap: 8,
                         }}>
                         <div style={{ textAlign: "center" }}><BrandBadge code={s.brand} brands={config.brands} /></div>
                         <div style={{ textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -6659,22 +6657,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div className="mono" style={{ textAlign: "center", fontSize: 11, color: "var(--ts)" }}>{fmtDate(s.dueDate)}</div>
                         <div className="mono" style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{fmt(s.scheduledAmount)}</div>
                         <div style={{ textAlign: "center" }}>
-                          <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{s.status}</span>
+                          <span title={isRolledOver ? `이월: ${getRolloverChainDates(s, data.installmentSchedules).join(" → ")}` : undefined}
+                            style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: c.bg, color: c.t, border: `1px solid ${c.b}` }}>{displayStatus}</span>
                         </div>
-                        {isRolledOver && (
-                          <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            ← {rolloverChain.slice(0, -1).map(d => fmtDate(d)).join(" → ") || "원본 삭제됨"}
-                          </div>
-                        )}
-                        <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                          {isRolledOver && canEdit && (
-                            <button onClick={e => { e.stopPropagation(); deleteSchedule(s.id); }} title="이 일정 삭제"
-                              style={{ padding: 3, borderRadius: 4, background: "none", border: "1px solid var(--brd)", color: "var(--tm)", cursor: "pointer", display: "flex" }}>
-                              <I name="trash" size={10} />
-                            </button>
-                          )}
-                          {!isRolledOver && canEdit ? "⠿" : ""}
-                        </div>
+                        <div style={{ textAlign: "center", fontSize: 10, color: "var(--tm)", opacity: 0.6 }}>{canEdit ? "⠿" : ""}</div>
                       </div>
                     );
                   })}
