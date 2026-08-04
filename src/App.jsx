@@ -2398,6 +2398,7 @@ export default function App() {
   const [adminStatsLoading, setAdminStatsLoading] = useState(false);
   const [statsAccessGran, setStatsAccessGran] = useState("daily"); // daily|monthly|yearly
   const [statsVolumeGran, setStatsVolumeGran] = useState("daily");
+  const [statsTodoGran, setStatsTodoGran] = useState("daily");
   const [statsDetailCell, setStatsDetailCell] = useState(null); // {user, period} | null — 입력량 표 셀 클릭 시 상세보기
   const [statsDetail, setStatsDetail] = useState(null); // {debtorEdits, otherActivity} | null
   const [statsDetailLoading, setStatsDetailLoading] = useState(false);
@@ -11231,17 +11232,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {/* 통계 (마스터 전용) */}
         {mainTab === "stats" && isSuperAdmin && (() => {
-          const stats = adminStats || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] };
+          const EMPTY_GRAN = { daily: [], monthly: [], yearly: [] };
+          const EMPTY_STATS = { access: EMPTY_GRAN, volume: EMPTY_GRAN, todo: { register: EMPTY_GRAN, complete: EMPTY_GRAN, remove: EMPTY_GRAN }, summary: [] };
+          const stats = adminStats || EMPTY_STATS;
           const loadStats = () => {
             setAdminStatsLoading(true);
             fetch("/api/admin/stats")
               .then(r => r.ok ? r.json() : null)
-              .then(data => { setAdminStats(data || { access: { daily: [], monthly: [], yearly: [] }, volume: { daily: [], monthly: [], yearly: [] }, summary: [] }); setAdminStatsLoading(false); })
+              .then(data => { setAdminStats(data || EMPTY_STATS); setAdminStatsLoading(false); })
               .catch(() => setAdminStatsLoading(false));
           };
           const knownNames = users.map(u => u.name);
           const GRAN = [{ k: "daily", l: "일별", limit: 30 }, { k: "monthly", l: "월별", limit: 12 }, { k: "yearly", l: "연간", limit: 5 }];
           const fmtChars = (n) => { if (!n) return "-"; return `${n.toLocaleString()}자`; };
+          const fmtCount = (n) => { if (!n) return "-"; return `${n.toLocaleString()}건`; };
 
           const renderStatTable = (rowsByGran, gran, setGran, valueKey, formatFn, title, csvNamePrefix, emptyHint, onCellClick) => {
             const g = GRAN.find(x => x.k === gran);
@@ -11333,6 +11337,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     .then(d => { setStatsDetail(d && d.ok ? d : { debtorEdits: [], otherActivity: [] }); setStatsDetailLoading(false); })
                     .catch(() => { setStatsDetail({ debtorEdits: [], otherActivity: [] }); setStatsDetailLoading(false); });
                 })}
+              {renderStatTable(stats.todo.register, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 등록", "ToDo등록", "표시할 데이터가 없습니다")}
+              {renderStatTable(stats.todo.complete, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 완료", "ToDo완료", "표시할 데이터가 없습니다")}
+              {renderStatTable(stats.todo.remove, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 삭제", "ToDo삭제", "표시할 데이터가 없습니다")}
               <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)" }}>
                   <span style={{ fontSize: 14, fontWeight: 600 }}>사용자별 요약</span>

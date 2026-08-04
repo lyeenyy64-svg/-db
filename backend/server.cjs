@@ -257,6 +257,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_edit_log_changed ON debtor_edit_log(changed_at);
 `);
 
+// To Do List 활동 로그 (등록/완료/삭제 — 어드민 통계 "업무 처리 현황"용)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS todo_activity_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    action     TEXT NOT NULL,
+    todo_id    TEXT,
+    assignee   TEXT,
+    task       TEXT,
+    user_name  TEXT NOT NULL,
+    ts         TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_todo_log_ts          ON todo_activity_log(ts);
+  CREATE INDEX IF NOT EXISTS idx_todo_log_user_action ON todo_activity_log(user_name, action);
+`);
+
 // 담당자 변경 이력 (변경일 기준 실적 귀속용)
 db.exec(`
   CREATE TABLE IF NOT EXISTS assignee_history (
@@ -2847,6 +2862,36 @@ app.put("/api/kv/:key", (req, res) => {
       if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path, null, detail);
     } catch {}
   }
+  // To Do List는 항목 배열 전체를 통째로 PUT하므로, 직전 저장값과 비교해서
+  // 등록/완료/삭제 이벤트만 뽑아 별도 로그에 남긴다 (통계 "업무 처리 현황"용).
+  if (key === "manual_todo_list") {
+    try {
+      const userName = extractUserName(req);
+      if (userName !== "알수없음") {
+        const oldRow2 = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
+        const oldArr = oldRow2 ? JSON.parse(oldRow2.value) : [];
+        const newArr = Array.isArray(req.body) ? req.body : [];
+        const oldById = new Map(oldArr.map(x => [x.id, x]));
+        const insertTodoLog = db.prepare(`INSERT INTO todo_activity_log (action, todo_id, assignee, task, user_name) VALUES (?, ?, ?, ?, ?)`);
+        for (const item of newArr) {
+          const prev = oldById.get(item.id);
+          if (!prev) {
+            insertTodoLog.run("등록", item.id, item.assignee || "", item.task || "", userName);
+            continue;
+          }
+          if (prev.status !== "완료" && item.status === "완료") insertTodoLog.run("완료", item.id, item.assignee || "", item.task || "", userName);
+          if (!prev.deleted && item.deleted) insertTodoLog.run("삭제", item.id, item.assignee || "", item.task || "", userName);
+        }
+        // 트래시(deleted=true)에서 영구 삭제된 항목은 위에서 이미 "삭제"로 집계된 뒤이므로
+        // 배열에서 사라질 때 다시 세지 않는다 — deleted=false인 채로 통째로 사라지는
+        // (정상 플로우에서는 없는) 경우만 방어적으로 "삭제" 1건으로 남긴다.
+        const newIds = new Set(newArr.map(x => x.id));
+        for (const item of oldArr) {
+          if (!newIds.has(item.id) && !item.deleted) insertTodoLog.run("삭제", item.id, item.assignee || "", item.task || "", userName);
+        }
+      }
+    } catch {}
+  }
   db.prepare(`
     INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
@@ -3122,6 +3167,19 @@ app.get("/api/admin/stats", (req, res) => {
     const access = { daily: accessBuckets(BUCKET_LEN.daily), monthly: accessBuckets(BUCKET_LEN.monthly), yearly: accessBuckets(BUCKET_LEN.yearly) };
     const volume = { daily: volumeBuckets(BUCKET_LEN.daily), monthly: volumeBuckets(BUCKET_LEN.monthly), yearly: volumeBuckets(BUCKET_LEN.yearly) };
 
+    // To Do List 사용자별 등록/완료/삭제 건수 (todo_activity_log 기반)
+    const todoBuckets = (len, action) => db.prepare(`
+      SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) AS count
+      FROM todo_activity_log WHERE action = ? AND ts >= ? AND ${NOT_GARBLED}
+      GROUP BY period, user
+      ORDER BY period DESC
+    `).all(action, STATS_START_DATE, garbledParam);
+    const todo = {
+      register: { daily: todoBuckets(BUCKET_LEN.daily, "등록"), monthly: todoBuckets(BUCKET_LEN.monthly, "등록"), yearly: todoBuckets(BUCKET_LEN.yearly, "등록") },
+      complete: { daily: todoBuckets(BUCKET_LEN.daily, "완료"), monthly: todoBuckets(BUCKET_LEN.monthly, "완료"), yearly: todoBuckets(BUCKET_LEN.yearly, "완료") },
+      remove:   { daily: todoBuckets(BUCKET_LEN.daily, "삭제"), monthly: todoBuckets(BUCKET_LEN.monthly, "삭제"), yearly: todoBuckets(BUCKET_LEN.yearly, "삭제") },
+    };
+
     // "총 수정 건수"는 kv 저장(협의/TodoList/신용분석 등)과 채무자 PATCH를 합쳐 하나의
     // user_activity_log(data_input)만 보고 센다 — 두 저장 방식 모두 "저장 액션 1건 = 1행"으로
     // 통일되어 있어(PATCH /api/debtors/:id 핸들러 참고) debtor_edit_log를 따로 셀 필요가 없다.
@@ -3158,7 +3216,7 @@ app.get("/api/admin/stats", (req, res) => {
 
     const summary = [...summaryMap.values()].sort((a, b) => (b.lastActiveAt || "").localeCompare(a.lastActiveAt || ""));
 
-    res.json({ access, volume, summary });
+    res.json({ access, volume, todo, summary });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
