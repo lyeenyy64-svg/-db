@@ -2762,6 +2762,42 @@ function diffByteEstimate(oldVal, newVal) {
   return Math.max(0, len(newVal) - len(oldVal));
 }
 
+// diffByteEstimate와 같은 방식으로 "무엇이 추가/변경됐는지" 실제 내용을 뽑아낸다 —
+// 예전엔 kv 저장은 항목 크기(byte)만 세고 내용은 전혀 남기지 않아서, 관리자 통계 화면에서
+// hist_m_(채무자 히스토리) 등의 저장 내역이 전부 "세부 내용 미기록"으로만 보였다.
+// 레코드 배열이면 content/text/memo/note 필드 중 있는 걸 미리보기로 쓴다.
+function diffDetailText(oldVal, newVal) {
+  const pickText = (item) => {
+    if (item == null) return "";
+    if (typeof item !== "object") return String(item);
+    const v = item.content ?? item.text ?? item.memo ?? item.note;
+    return v != null ? String(v) : JSON.stringify(item);
+  };
+  let changed = null;
+  if (Array.isArray(newVal)) {
+    // 이 키의 첫 저장(oldVal이 아직 없음)이면 전부 새 항목으로 취급 — oldVal이 배열이 아니어도
+    // (null 등) newVal이 배열이면 그 항목들에서 내용을 뽑아내야 첫 저장 때도 미리보기가 나온다.
+    const oldArr = Array.isArray(oldVal) ? oldVal : [];
+    const oldById = new Map();
+    for (const item of oldArr) { if (item && typeof item === "object" && item.id != null) oldById.set(item.id, item); }
+    changed = [];
+    for (const item of newVal) {
+      if (!item || typeof item !== "object" || item.id == null) { changed.push(pickText(item)); continue; }
+      const prev = oldById.get(item.id);
+      if (!prev) changed.push(`추가: ${pickText(item)}`);
+      else if (JSON.stringify(prev) !== JSON.stringify(item)) changed.push(`수정: ${pickText(item)}`);
+    }
+    changed = changed.filter(t => t && t.trim());
+  } else if (newVal != null) {
+    const t = typeof newVal === "string" ? newVal : JSON.stringify(newVal);
+    changed = t ? [t] : [];
+  }
+  if (!changed || changed.length === 0) return null;
+  const CAP = 300;
+  const joined = changed.join(" / ");
+  return joined.length > CAP ? joined.slice(0, CAP) + "…" : joined;
+}
+
 // PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
 app.put("/api/kv/:key", (req, res) => {
   const key = req.params.key;
@@ -2772,10 +2808,13 @@ app.put("/api/kv/:key", (req, res) => {
     try {
       const oldRow = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
       const oldVal = oldRow ? JSON.parse(oldRow.value) : null;
-      const bytes = diffByteEstimate(oldVal, req.body);
+      const detail = diffDetailText(oldVal, req.body);
+      // detail(화면에 보일 실제 내용)이 있으면 그 글자수를 그대로 쓴다 — 보이는 텍스트와
+      // 세는 글자수가 항상 같아야 신뢰할 수 있다. 못 뽑아낸 경우만 예전 크기 추정치로 대체.
+      const bytes = detail ? detail.length : diffByteEstimate(oldVal, req.body);
       const userName = extractUserName(req);
       // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다.
-      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path, null, null);
+      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path, null, detail);
     } catch {}
   }
   db.prepare(`
@@ -3156,6 +3195,11 @@ app.get("/api/admin/resolve-path", (req, res) => {
         JOIN debtors d ON d.id = ip.debtor_id
         WHERE ip.id = ?
       `).get(m[1]);
+    } else if ((m = p.match(/^\/api\/kv\/hist_[med]_(.+)$/))) {
+      // hist_m_/hist_e_/hist_d_{debtorId} — 채무자 "히스토리" 탭 저장 키는 debtorId가 그대로
+      // 키 안에 들어있어 별도 조회 없이 바로 매핑 가능
+      row = db.prepare("SELECT id AS debtorId, name AS debtorName FROM debtors WHERE id = ?").get(m[1]);
+      if (row) return res.json({ ok: true, debtorId: row.debtorId, debtorName: row.debtorName, tab: "히스토리" });
     }
     if (!row) return res.json({ ok: false });
     res.json({ ok: true, debtorId: row.debtorId, debtorName: row.debtorName, tab: "분할상환" });
