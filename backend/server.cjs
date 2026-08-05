@@ -2879,6 +2879,20 @@ function diffDetailText(oldVal, newVal) {
       else if (JSON.stringify(prev) !== JSON.stringify(item)) { changed.push(`수정: ${pickChangedFieldsText(prev, item)}`); touchedIds.push(item.id); }
     }
     changed = changed.filter(t => t && t.trim());
+  } else if (newVal != null && typeof newVal === "object") {
+    // 배열이 아닌 통짜 객체(예: legal_manual_overrides의 "사건번호→채무자id" 매핑)는 그동안
+    // JSON을 그대로 다 세서, 안 바뀐 나머지 항목까지 매번 다시 잡히고("이 사건번호가 어느
+    // 채무자였는지" raw JSON만 남아 사람이 읽고 확인("증빙")할 수도 없었다. 실제로 추가/변경된
+    // 키만 "키→값"으로 뽑아서 보여준다 — 값이 채무자 id로 보이면 이름까지 붙여 읽을 수 있게 한다.
+    const oldObj = (oldVal && typeof oldVal === "object" && !Array.isArray(oldVal)) ? oldVal : {};
+    changed = [];
+    for (const [k, v] of Object.entries(newVal)) {
+      if (JSON.stringify(oldObj[k]) === JSON.stringify(v)) continue;
+      const vStr = typeof v === "string" ? v : JSON.stringify(v);
+      const debtorName = typeof v === "string" ? db.prepare("SELECT name FROM debtors WHERE id = ?").get(v)?.name : null;
+      changed.push(`${k}→${debtorName ? `${debtorName}(${vStr})` : vStr}`);
+      touchedIds.push(k);
+    }
   } else if (newVal != null) {
     const t = typeof newVal === "string" ? newVal : JSON.stringify(newVal);
     changed = t ? [t] : [];
