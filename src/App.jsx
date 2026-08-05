@@ -11443,16 +11443,44 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <div style={{ padding: "8px 12px", background: "var(--bg2)", fontSize: 12, fontWeight: 700 }}>
                         채무자: {g.debtorName || g.debtorId || "-"}
                       </div>
-                      <div style={{ padding: "6px 12px 8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-                        {g.items.map((item, ii) => (
-                          <div key={ii} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "3px 0", flexWrap: "wrap" }}>
-                            <span style={{ fontWeight: 600, color: "var(--tp)", minWidth: 90, flexShrink: 0 }}>{item.fieldLabel || item.fieldName}</span>
-                            <span style={{ color: "var(--err)", background: "#ef444410", padding: "1px 6px", borderRadius: 4, textDecoration: "line-through", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.oldValue || "(없음)"}</span>
-                            <span style={{ color: "var(--tm)", flexShrink: 0 }}>→</span>
-                            <span style={{ color: "var(--ok)", background: "#10b98110", padding: "1px 6px", borderRadius: 4, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.newValue || "(없음)"}</span>
-                            <span className="mono" style={{ color: "var(--tm)", fontSize: 10, marginLeft: "auto", flexShrink: 0 }}>{item.changedAt}</span>
+                      <div style={{ padding: "6px 12px 8px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                        {g.items.map((item, ii) => {
+                          // 앞/뒤가 긴 값에서 극히 일부만 바뀌면(예: 435자 중 5자), 잘라서 보여주던
+                          // 예전 방식은 앞부분만 보이는 old/new가 똑같아 보여 "뭐가 바뀐 건지" 알 수
+                          // 없었다 — 공통 접두/접미를 걷어내고 실제로 달라진 부분만 정확히 하이라이트한다.
+                          const oldStr = item.oldValue || "", newStr = item.newValue || "";
+                          let start = 0;
+                          const maxStart = Math.min(oldStr.length, newStr.length);
+                          while (start < maxStart && oldStr[start] === newStr[start]) start++;
+                          let endOld = oldStr.length, endNew = newStr.length;
+                          while (endOld > start && endNew > start && oldStr[endOld - 1] === newStr[endNew - 1]) { endOld--; endNew--; }
+                          const prefix = oldStr.slice(0, start), removed = oldStr.slice(start, endOld);
+                          const added = newStr.slice(start, endNew), suffix = oldStr.slice(endOld);
+                          const CTX = 20;
+                          const shownPrefix = prefix.length > CTX ? "…" + prefix.slice(-CTX) : prefix;
+                          const shownSuffix = suffix.length > CTX ? suffix.slice(0, CTX) + "…" : suffix;
+                          const noRealChange = !removed && !added;
+                          return (
+                          <div key={ii} style={{ display: "flex", flexDirection: "column", gap: 2, fontSize: 12, padding: "3px 0", borderBottom: ii < g.items.length - 1 ? "1px dashed var(--brd)" : "none" }}>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                              <span style={{ fontWeight: 600, color: "var(--tp)" }}>{item.fieldLabel || item.fieldName}</span>
+                              <span className="mono" style={{ color: "var(--tm)", fontSize: 10, marginLeft: "auto" }}>{item.changedAt}</span>
+                            </div>
+                            {noRealChange ? (
+                              <div style={{ color: "var(--tm)", fontSize: 11 }}>
+                                (겉으로 보이는 실제 글자 변화 없음 — 같은 값을 다시 저장했거나 공백 차이)
+                              </div>
+                            ) : (
+                              <div style={{ color: "var(--tp)", fontSize: 12, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+                                {shownPrefix}
+                                {removed && <span style={{ color: "var(--err)", background: "#ef444425", textDecoration: "line-through", borderRadius: 3, padding: "0 2px" }}>{removed}</span>}
+                                {added && <span style={{ color: "var(--ok)", background: "#10b98125", borderRadius: 3, padding: "0 2px" }}>{added}</span>}
+                                {shownSuffix}
+                              </div>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ))}

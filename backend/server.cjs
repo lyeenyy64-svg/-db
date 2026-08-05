@@ -369,6 +369,25 @@ try { db.exec("ALTER TABLE user_activity_log ADD COLUMN detail TEXT"); } catch(e
     console.log(`[stats_related_data_exclude_v1] 관련 데이터 배치 백필 입력량 기록 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_related_data_exclude_v1', '1')").run();
   }
+  // AI 종합분석 재생성/초본·CB·좌표 재조회처럼 본문 없이 호출하는 트리거성 요청이 "{}"의
+  // 글자수(2자)를 그대로 입력량으로 남겨서, "기타 저장" 목록에 근거 없는 행(사람이 입력한 게
+  // 아무것도 없는데 2자로 잡힌 행)이 쌓여있었다. 미들웨어에서 이제 이런 요청은 기록하지
+  // 않으므로, 이미 쌓인 잔여 기록도 한 번만 정리한다 — 경로를 구체적으로 지정해서, 본문 없이
+  // 호출되는 게 정상인 DELETE 계열(삭제 자체는 실제 행동이라 계속 집계돼야 함)은 건드리지 않는다.
+  const emptyTriggerCleanupDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_empty_trigger_cleanup_v1'").get();
+  if (!emptyTriggerCleanupDone) {
+    const removed = db.prepare(`
+      DELETE FROM user_activity_log WHERE type='data_input' AND detail IS NULL AND bytes <= 2 AND (
+        path LIKE '/api/debtor/%/analysis' OR
+        path LIKE '/api/debtor/%/resident-number/refresh' OR
+        path LIKE '/api/debtor/%/credit-address/refresh' OR
+        path LIKE '/api/debtor/%/geocode' OR
+        path LIKE '/api/debtor/%/extract-address'
+      )
+    `).run();
+    console.log(`[stats_empty_trigger_cleanup_v1] 빈 본문 트리거 호출 입력량 기록 ${removed.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_empty_trigger_cleanup_v1', '1')").run();
+  }
   // 헤더를 encodeURIComponent 없이 보낸 요청 등으로 사용자명이 깨진 채(예: "�" 포함) 기록된
   // user_activity_log 행이 통계 화면에 이상한 사용자 컬럼으로 노출된 적이 있어 한 번만 정리.
   // 앞으로는 extractUserName/PATCH 핸들러에서 걸러지고, 혹시 남아도 /api/admin/stats 조회 시
@@ -719,6 +738,14 @@ app.use((req, res, next) => {
     } else {
       try { bytes = JSON.stringify(req.body || {}).length; } catch {}
     }
+    // 본문 없이 호출하는 트리거성 요청(AI 종합분석 재생성, 초본/CB/좌표 재조회 버튼 등)은
+    // 사용자가 실제로 입력한 내용이 없는데도 "{}"의 글자수(2자)가 그대로 입력량으로 잡혀
+    // "기타 저장" 목록에 근거 없는 행을 남기는 문제가 있었다 — detail도 없고 본문도 비어있으면
+    // 애초에 "입력"이 아니므로 기록하지 않는다. (결과물은 대개 뒤이은 채무자 PATCH로 별도 기록됨)
+    // DELETE는 제외 — 본문이 원래 없는 게 정상이고, 삭제 자체는 실제 사용자 행동이라 건수
+    // 집계(총 수정 건수/마지막 활동)에서 계속 잡혀야 한다.
+    const hasBody = req.body && typeof req.body === "object" && Object.keys(req.body).length > 0;
+    if (req.method !== "DELETE" && !detail && !hasBody) return next();
     res.on("finish", () => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try { insertActivityLog.run("data_input", userName, bytes, req.path, refDebtorId, detail); } catch {}
