@@ -2863,6 +2863,8 @@ function diffDetailText(oldVal, newVal) {
     return parts.length ? parts.join(", ") : pickText(item);
   };
   let changed = null;
+  const touchedIds = []; // 이번 저장에서 실제로 추가/변경된 항목의 id — 짧은 시간 내 같은 항목을
+                          // 반복 저장할 때 새 행을 계속 쌓지 않고 하나로 합치기 위해 호출부에 넘겨준다.
   if (Array.isArray(newVal)) {
     // 이 키의 첫 저장(oldVal이 아직 없음)이면 전부 새 항목으로 취급 — oldVal이 배열이 아니어도
     // (null 등) newVal이 배열이면 그 항목들에서 내용을 뽑아내야 첫 저장 때도 미리보기가 나온다.
@@ -2873,8 +2875,8 @@ function diffDetailText(oldVal, newVal) {
     for (const item of newVal) {
       if (!item || typeof item !== "object" || item.id == null) { changed.push(pickText(item)); continue; }
       const prev = oldById.get(item.id);
-      if (!prev) changed.push(`추가: ${pickText(item)}`);
-      else if (JSON.stringify(prev) !== JSON.stringify(item)) changed.push(`수정: ${pickChangedFieldsText(prev, item)}`);
+      if (!prev) { changed.push(`추가: ${pickText(item)}`); touchedIds.push(item.id); }
+      else if (JSON.stringify(prev) !== JSON.stringify(item)) { changed.push(`수정: ${pickChangedFieldsText(prev, item)}`); touchedIds.push(item.id); }
     }
     changed = changed.filter(t => t && t.trim());
   } else if (newVal != null) {
@@ -2884,7 +2886,38 @@ function diffDetailText(oldVal, newVal) {
   if (!changed || changed.length === 0) return null;
   const CAP = 2000; // 목록형 kv(To Do List 등)는 여러 항목이 한 번에 바뀔 수 있어 여유 있게 잡음
   const joined = changed.join(" / ");
-  return joined.length > CAP ? joined.slice(0, CAP) + "…" : joined;
+  const text = joined.length > CAP ? joined.slice(0, CAP) + "…" : joined;
+  // 이번 저장에서 항목이 정확히 하나만 바뀌었을 때만 그 id를 넘긴다 — 여러 항목이 한 번에
+  // 바뀐 저장(일괄 처리 등)까지 하나로 합치면 서로 다른 항목의 기록이 뒤섞여버린다.
+  return { text, itemId: touchedIds.length === 1 ? touchedIds[0] : null };
+}
+
+// kv 저장 하나가 여러 단계로 나뉘어 들어올 때(새 항목을 만들면서 담당자→업무내용→상태를
+// 순서대로 따로 저장하는 경우 등) 매번 새 행으로 쌓으면 한 번의 실제 작업이 여러 건으로
+// 부풀려진다 — 같은 (사용자, 키, 항목 id)를 짧은 시간 안에 다시 저장하면 새 행을 추가하지
+// 않고 마지막 저장을 갱신한다. 서버 프로세스가 살아있는 동안만 유지되는 메모리 캐시라
+// 재시작되면 그냥 새로 쌓이기 시작할 뿐이라 안전하다 — 서로 다른 항목/사용자/키는 절대 섞이지 않는다.
+const recentKvEdits = new Map(); // "user path itemId" -> { logId, ts }
+const KV_COALESCE_WINDOW_MS = 3 * 60 * 1000;
+function logKvDataInput(userName, path, bytes, detail, itemId) {
+  if (bytes <= 0 || userName === "알수없음") return;
+  const last = db.prepare(
+    "SELECT id, detail FROM user_activity_log WHERE type='data_input' AND user_name = ? AND path = ? ORDER BY id DESC LIMIT 1"
+  ).get(userName, path);
+  // 직전 저장과 내용이 완전히 같으면(예: 실제 변화 없이 같은 값을 다시 저장) 새로 입력한 게
+  // 없으므로 기록하지 않는다 — 항목 단위 구분이 없는 키(예: 통짜 객체)에서도 안전하게 적용됨.
+  if (last && (last.detail ?? null) === (detail ?? null)) return;
+  if (itemId != null) {
+    const cacheKey = `${userName} ${path} ${itemId}`;
+    const cached = recentKvEdits.get(cacheKey);
+    if (cached && last && cached.logId === last.id && Date.now() - cached.ts <= KV_COALESCE_WINDOW_MS) {
+      db.prepare("UPDATE user_activity_log SET bytes = ?, detail = ?, ts = datetime('now','localtime') WHERE id = ?").run(bytes, detail, cached.logId);
+      cached.ts = Date.now();
+      return;
+    }
+  }
+  const info = insertActivityLog.run("data_input", userName, bytes, path, null, detail);
+  if (itemId != null) recentKvEdits.set(`${userName} ${path} ${itemId}`, { logId: info.lastInsertRowid, ts: Date.now() });
 }
 
 // PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
@@ -2897,13 +2930,13 @@ app.put("/api/kv/:key", (req, res) => {
     try {
       const oldRow = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
       const oldVal = oldRow ? JSON.parse(oldRow.value) : null;
-      const detail = diffDetailText(oldVal, req.body);
+      const diffResult = diffDetailText(oldVal, req.body);
       // detail(화면에 보일 실제 내용)이 있으면 그 글자수를 그대로 쓴다 — 보이는 텍스트와
       // 세는 글자수가 항상 같아야 신뢰할 수 있다. 못 뽑아낸 경우만 예전 크기 추정치로 대체.
+      const detail = diffResult ? diffResult.text : null;
       const bytes = detail ? detail.length : diffByteEstimate(oldVal, req.body);
       const userName = extractUserName(req);
-      // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다.
-      if (bytes > 0 && userName !== "알수없음") insertActivityLog.run("data_input", userName, bytes, req.path, null, detail);
+      logKvDataInput(userName, req.path, bytes, detail, diffResult ? diffResult.itemId : null);
     } catch {}
   }
   // To Do List는 항목 배열 전체를 통째로 PUT하므로, 직전 저장값과 비교해서
