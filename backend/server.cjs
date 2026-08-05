@@ -4612,6 +4612,9 @@ async function generateDebtorAnalysisText(debtorId, priority) {
 
     const fmt = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
     const totalPaid = pays.reduce((s, p) => s + (p.total_amount || 0), 0);
+    // 법인 채무자는 개인 CB 신용점수 자체가 없는 게 정상이므로, credit_grade가 비어있어도
+    // "확인 안됨/즉시 조회 필요"로 잘못 플래그되지 않도록 구분한다.
+    const isCorporate = /㈜|주식회사|\(주\)/.test(d.name || "");
 
     // 연대보증인 신용점수 — CB보고서에서 라이브 OCR (best-effort, 못 찾아도 무시)
     // /api/debtor/:id/credit-score와 같은 findCreditScoreForName을 공유해서, 두 화면이
@@ -4627,7 +4630,7 @@ async function generateDebtorAnalysisText(debtorId, priority) {
 이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 담당자: ${d.assignee || "-"} | 수금상태: ${d.collection_status || "-"}
 원금: ${fmt(d.principal_balance)}원 | 회수액: ${fmt(d.collected_amount)}원 | 법무기준잔액: ${fmt(d.final_balance_legal)}원
 채무발생원인: ${d.debt_cause || "-"} | 대여일자: ${d.loan_date || "-"}
-채무자 신용점수: ${d.credit_grade || "확인 안됨"}
+${isCorporate ? "채무자 유형: 법인 (개인 CB 신용점수 대상 아님)" : `채무자 신용점수: ${d.credit_grade || "확인 안됨"}`}
 연대보증인: ${guarantorNames.length ? guarantorNames.join(", ") : "없음"}
 연대보증인 신용점수: ${guarantorScores.length ? guarantorScores.join(" / ") : "확인 안됨"}
 
@@ -4652,6 +4655,8 @@ ${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity
 - 반드시 줄글(서술형 문장)이 아니라, 짧은 핵심 항목들의 목록으로 작성하세요. 각 줄은 "- "로 시작하고,
   완결된 문장이 아니라 명사형/짧은 구 단위로 끝내세요 (예: "- 신용점수 확인 필요", "- 최근 3개월 입금 없음").
 - 신용점수, 법적절차내역, 히스토리(추심 활동 기록)를 근거로 판단하세요.
+- 채무자 유형이 "법인"이면 법인은 개인 CB 신용점수 대상이 아니므로 채무자 신용점수 관련 항목은
+  만들지 마세요(연대보증인 신용점수는 정상적으로 다루세요).
 - 채무자와 연대보증인 항목을 구분해서 각각 나열하세요.
 - 항목 중 특히 긴급하거나 중요하다고 판단되는 것은 그 항목 전체를 **와 ** 사이에 넣어서 표시하세요
   (예: "- **연대보증인 신용점수 확인 안됨, 즉시 조회 필요**"). 모든 항목을 강조하지 말고 정말 중요한 것만 표시하세요.
