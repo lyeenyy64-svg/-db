@@ -2849,6 +2849,19 @@ function diffDetailText(oldVal, newVal) {
     if (item.debtorName != null) return String(item.debtorName) + (item.result ? ` — ${item.result}` : "");
     return JSON.stringify(item);
   };
+  // task/result/status/assignee 조합(To Do List·강제집행 등 업무현안 표)을 "수정"할 때는 실제로
+  // 바뀐 필드만 나열한다 — 상태 드롭다운 클릭 한 번만 해도 매번 pickText()가 task+result+assignee
+  // 전체 문장을 다시 만들어내서, 클릭 1번이 그 항목 전체 글자수(수십 자)로 부풀려지는 문제가 있었다.
+  const pickChangedFieldsText = (prev, item) => {
+    if (item.task == null) return pickText(item);
+    const parts = [];
+    if (String(prev.task ?? "") !== String(item.task ?? "")) parts.push(`업무내용→${item.task || "(비움)"}`);
+    if (String(prev.result ?? "") !== String(item.result ?? "")) parts.push(`결과→${item.result || "(비움)"}`);
+    if (String(prev.status ?? "") !== String(item.status ?? "")) parts.push(`상태 ${prev.status || "-"}→${item.status || "-"}`);
+    if (String(prev.assignee ?? "") !== String(item.assignee ?? "")) parts.push(`담당자 ${prev.assignee || "-"}→${item.assignee || "-"}`);
+    if (String(prev.deleted ?? "") !== String(item.deleted ?? "")) parts.push(item.deleted ? "삭제 처리" : "복구");
+    return parts.length ? parts.join(", ") : pickText(item);
+  };
   let changed = null;
   if (Array.isArray(newVal)) {
     // 이 키의 첫 저장(oldVal이 아직 없음)이면 전부 새 항목으로 취급 — oldVal이 배열이 아니어도
@@ -2861,7 +2874,7 @@ function diffDetailText(oldVal, newVal) {
       if (!item || typeof item !== "object" || item.id == null) { changed.push(pickText(item)); continue; }
       const prev = oldById.get(item.id);
       if (!prev) changed.push(`추가: ${pickText(item)}`);
-      else if (JSON.stringify(prev) !== JSON.stringify(item)) changed.push(`수정: ${pickText(item)}`);
+      else if (JSON.stringify(prev) !== JSON.stringify(item)) changed.push(`수정: ${pickChangedFieldsText(prev, item)}`);
     }
     changed = changed.filter(t => t && t.trim());
   } else if (newVal != null) {
