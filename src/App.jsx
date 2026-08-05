@@ -2560,6 +2560,34 @@ export default function App() {
   const PP = 50;
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  // 채무자 상세 화면 "수정" 버튼과 채무자 위치 지도의 리스트 클릭에서 공통으로 쓰는
+  // 수정 모달 오픈 로직 — OCR로 추출된 값이 있으면 채워서 보여주되, 이미 수동으로
+  // 입력된 값은 절대 덮어쓰지 않는다(백엔드 저장 우선순위와 동일하게 맞춤).
+  const openDebtorEditModal = (debtor) => {
+    const korKey = n => String(n || "").replace(/[^가-힣]/g, "").slice(0, 3);
+    const resEntries = autoResidentNums[debtor.id];
+    let autoNum = debtor.residentNumber || "";
+    if (!autoNum && Array.isArray(resEntries) && resEntries.length > 0) {
+      const main = resEntries.find(e => korKey(e.name) === korKey(debtor.name)) || resEntries[0];
+      if (main?.number) autoNum = main.number;
+    }
+    const scoreEntries = autoCreditScores[debtor.id];
+    let autoGrade = debtor.creditGrade || "";
+    if (!autoGrade && Array.isArray(scoreEntries) && scoreEntries.length > 0) {
+      const main = scoreEntries.find(e => korKey(e.name) === korKey(debtor.name)) || scoreEntries[0];
+      if (main?.score) autoGrade = main.score;
+    }
+    const subResult = autoSubrogationDates[debtor.id];
+    const autoSubDate = (subResult && subResult.date) ? subResult.date : debtor.subrogationMonth || "";
+    const addrResult = autoAddresses[debtor.id];
+    const autoAddress = debtor.latestAddress || (addrResult && addrResult.address) || "";
+    const autoCreditPhone = debtor.creditPhone || (addrResult && addrResult.phone) || "";
+    const residentDetails = autoResidentDetails[debtor.id];
+    const autoResidentAddress = debtor.residentAddress || (residentDetails && residentDetails.address) || "";
+    const autoResidentRegisteredDate = debtor.residentRegisteredDate || (residentDetails && residentDetails.registeredDate) || "";
+    const autoResidentNote = debtor.residentNote || (residentDetails && residentDetails.note) || "";
+    setModal({ type: "debtor", data: { ...debtor, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress, creditPhone: autoCreditPhone, residentAddress: autoResidentAddress, residentRegisteredDate: autoResidentRegisteredDate, residentNote: autoResidentNote } });
+  };
   const navigateToDebtor = (debtor, detailTabName = "히스토리", highlight = null) => {
     setPrevTab(tab);
     setSel(debtor);
@@ -5147,31 +5175,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {canEdit && <button onClick={() => {
-              const korKey = n => String(n || "").replace(/[^가-힣]/g, "").slice(0, 3);
-              const resEntries = autoResidentNums[d.id];
-              let autoNum = d.residentNumber || "";
-              if (!autoNum && Array.isArray(resEntries) && resEntries.length > 0) {
-                const main = resEntries.find(e => korKey(e.name) === korKey(d.name)) || resEntries[0];
-                if (main?.number) autoNum = main.number;
-              }
-              const scoreEntries = autoCreditScores[d.id];
-              let autoGrade = d.creditGrade || "";
-              if (!autoGrade && Array.isArray(scoreEntries) && scoreEntries.length > 0) {
-                const main = scoreEntries.find(e => korKey(e.name) === korKey(d.name)) || scoreEntries[0];
-                if (main?.score) autoGrade = main.score;
-              }
-              const subResult = autoSubrogationDates[d.id];
-              const autoSubDate = (subResult && subResult.date) ? subResult.date : d.subrogationMonth || "";
-              const addrResult = autoAddresses[d.id];
-              const autoAddress = d.latestAddress || (addrResult && addrResult.address) || "";
-              const autoCreditPhone = d.creditPhone || (addrResult && addrResult.phone) || "";
-              const residentDetails = autoResidentDetails[d.id];
-              const autoResidentAddress = d.residentAddress || (residentDetails && residentDetails.address) || "";
-              const autoResidentRegisteredDate = d.residentRegisteredDate || (residentDetails && residentDetails.registeredDate) || "";
-              const autoResidentNote = d.residentNote || (residentDetails && residentDetails.note) || "";
-              setModal({ type: "debtor", data: { ...d, residentNumber: autoNum, creditGrade: autoGrade, subrogationMonth: autoSubDate, latestAddress: autoAddress, creditPhone: autoCreditPhone, residentAddress: autoResidentAddress, residentRegisteredDate: autoResidentRegisteredDate, residentNote: autoResidentNote } });
-            }} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
+            {canEdit && <button onClick={() => openDebtorEditModal(d)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canEdit && <button onClick={() => {
               setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName, phone: d.phone, guarantors: d.guarantors } });
             }} title={`${d.name}에게 새 채무 건을 추가로 등록합니다`} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="plus" size={14} />채무 추가</button>}
@@ -7144,6 +7148,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [missingAddr, setMissingAddr] = useState(null); // null=조회중, [] 이상=주소 미확보 채무자 목록
     const [extractingAddr, setExtractingAddr] = useState(false);
     const [extractAddrProgress, setExtractAddrProgress] = useState(null);
+    const [listMode, setListMode] = useState("noCoords"); // "noCoords"(주소→좌표변환/재조회 대상) | "missing"(주소 추출 대상)
     const mapElRef = useRef(null);
     const mapObjRef = useRef(null);
     const overlaysRef = useRef([]);
@@ -7324,6 +7329,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 좌표가 정상적으로 확보된(지도에 이미 잘 표시되는) 채무자는 목록에서 빼고, 아직
     // 손봐야 할(좌표 없는) 채무자만 보여준다 — 검색어가 있으면 검색 결과는 예외로 전체에서 찾는다.
     const searched = (locations || []).filter(d => (q || d.lat == null) && (!q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q)));
+    // "전체 채무자 주소 추출" 대상 목록 — missing-address는 id/name만 주므로 브랜드 등
+    // 표시에 필요한 나머지 필드는 data.debtors에서 채워온다.
+    const missingList = (missingAddr || []).map(m => data.debtors.find(x => x.id === m.id)).filter(Boolean);
+    const searchedMissing = missingList.filter(d => !q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q));
+    // 리스트 항목 클릭 → 채무자 상세 화면으로 이동하면서 신용조회상/초본상 주소를
+    // 바로 수동 입력할 수 있게 수정 모달까지 열어준다.
+    const openForFix = (debtorId) => {
+      const debtor = data.debtors.find(x => x.id === debtorId);
+      if (!debtor) return;
+      navigateToDebtor(debtor);
+      openDebtorEditModal(debtor);
+    };
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
@@ -7332,7 +7349,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
           </div>
           {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
-            <button onClick={runBulkAddressExtract} disabled={extractingAddr}
+            <button onClick={() => { setListMode("missing"); runBulkAddressExtract(); }} disabled={extractingAddr}
               title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다. 매일 밤 00시~06시에는 이 작업이 자동으로도 조금씩 진행되니(며칠에 걸쳐 완료), 급하지 않으면 안 눌러도 됩니다"
               style={{ padding: "8px 14px", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
               {extractingAddr
@@ -7341,13 +7358,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </button>
           )}
           {mapAppKey && noCoords.length > 0 && (
-            <button onClick={runBulkGeocode} disabled={geocoding}
+            <button onClick={() => { setListMode("noCoords"); runBulkGeocode(); }} disabled={geocoding}
               style={{ padding: "8px 14px", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)", color: geocoding ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: geocoding ? "default" : "pointer" }}>
               {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
             </button>
           )}
           {canEdit && noCoords.length > 0 && (
-            <button onClick={runBulkAddressRefresh} disabled={refreshingAddr}
+            <button onClick={() => { setListMode("noCoords"); runBulkAddressRefresh(); }} disabled={refreshingAddr}
               title="좌표 변환에 계속 실패하는 항목은 예전에 잘못 저장된 주소 캐시가 원인인 경우가 많습니다 — 눌러서 다시 추출합니다"
               style={{ padding: "8px 14px", borderRadius: 8, background: refreshingAddr ? "var(--bg2)" : "#8b5cf618", color: refreshingAddr ? "var(--tm)" : "#6d28d9", fontSize: 12, fontWeight: 600, border: refreshingAddr ? "none" : "1px solid #8b5cf640", cursor: refreshingAddr ? "default" : "pointer" }}>
               {refreshingAddr ? `주소 재조회 중... (${refreshAddrProgress?.done || 0}/${refreshAddrProgress?.total || 0})` : `주소 재조회 (${noCoords.length}건)`}
@@ -7398,24 +7415,50 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={isNarrow
             ? { width: "100%", maxHeight: 220, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }
             : { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }}>
-            {locations === null
-              ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
-              : searched.length === 0
-                ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소가 확보된 채무자가 없습니다.\n채무자 상세 페이지에서 CB보기로 주소를 자동추출해보세요."}</div>
-                : searched.map(d => (
-                    <div key={d.id} onClick={() => panTo(d)}
-                      style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: d.lat != null ? "pointer" : "default", opacity: d.lat != null ? 1 : 0.55 }}
-                      onMouseEnter={e => { if (d.lat != null) e.currentTarget.style.background = "var(--hover)"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <BrandBadge code={d.brand} brands={config.brands} />
-                        <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
-                        {d.lat == null && <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>좌표 없음</span>}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.latestAddress}</div>
-                    </div>
-                  ))
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", padding: "2px 2px 4px" }}>
+              {listMode === "missing" ? `주소 추출 대상 ${missingList.length}건` : `좌표 미확보 ${noCoords.length}건`}
+            </div>
+            {listMode === "missing"
+              ? (missingAddr === null
+                  ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
+                  : searchedMissing.length === 0
+                    ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소 추출이 필요한 채무자가 없습니다."}</div>
+                    : searchedMissing.map(d => (
+                        <div key={d.id} onClick={() => openForFix(d.id)}
+                          style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <BrandBadge code={d.brand} brands={config.brands} />
+                            <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
+                            <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>주소 없음</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2 }}>
+                            {[!d.residentAddress && "초본", !d.latestAddress && "신용조회"].filter(Boolean).join("·")} 주소 미확보 — 클릭해서 직접 입력
+                          </div>
+                        </div>
+                      ))
+                )
+              : (locations === null
+                  ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
+                  : searched.length === 0
+                    ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소가 확보된 채무자가 없습니다.\n채무자 상세 페이지에서 CB보기로 주소를 자동추출해보세요."}</div>
+                    : searched.map(d => (
+                        <div key={d.id} onClick={() => (d.lat != null ? panTo(d) : openForFix(d.id))}
+                          style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer", opacity: d.lat != null ? 1 : 0.55 }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <BrandBadge code={d.brand} brands={config.brands} />
+                            <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
+                            {d.lat == null && <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>좌표 없음 — 클릭해서 주소 수정</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.latestAddress}</div>
+                        </div>
+                      ))
+                )
             }
           </div>
           <div ref={mapElRef} style={{ flex: 1, borderRadius: 12, border: "1px solid var(--brd)", minHeight: 520, background: "var(--bg2)" }} />
