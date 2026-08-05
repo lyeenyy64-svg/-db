@@ -7148,7 +7148,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [missingAddr, setMissingAddr] = useState(null); // null=조회중, [] 이상=주소 미확보 채무자 목록
     const [extractingAddr, setExtractingAddr] = useState(false);
     const [extractAddrProgress, setExtractAddrProgress] = useState(null);
-    const [listMode, setListMode] = useState("noCoords"); // "noCoords"(주소→좌표변환/재조회 대상) | "missing"(주소 추출 대상)
+    const [listMode, setListMode] = useState("noCoords"); // "noCoords"(주소→좌표변환/재조회 대상) | "missing"(주소 추출 대상) | "all"(주소 확보) | "withCoords"(좌표 확보)
     const mapElRef = useRef(null);
     const mapObjRef = useRef(null);
     const overlaysRef = useRef([]);
@@ -7326,13 +7326,16 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const q = searchQ.trim().toLowerCase();
+    const nameMatch = d => !q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q);
     // 좌표가 정상적으로 확보된(지도에 이미 잘 표시되는) 채무자는 목록에서 빼고, 아직
     // 손봐야 할(좌표 없는) 채무자만 보여준다 — 검색어가 있으면 검색 결과는 예외로 전체에서 찾는다.
-    const searched = (locations || []).filter(d => (q || d.lat == null) && (!q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q)));
+    const searched = (locations || []).filter(d => (q || d.lat == null) && nameMatch(d));
+    const searchedAll = (locations || []).filter(nameMatch);
+    const searchedWithCoords = (locations || []).filter(d => d.lat != null && nameMatch(d));
     // "전체 채무자 주소 추출" 대상 목록 — missing-address는 id/name만 주므로 브랜드 등
     // 표시에 필요한 나머지 필드는 data.debtors에서 채워온다.
     const missingList = (missingAddr || []).map(m => data.debtors.find(x => x.id === m.id)).filter(Boolean);
-    const searchedMissing = missingList.filter(d => !q || d.name.toLowerCase().includes(q) || (d.brandName || "").toLowerCase().includes(q));
+    const searchedMissing = missingList.filter(nameMatch);
     // 리스트 항목 클릭 → 채무자 상세 화면으로 이동하면서 신용조회상/초본상 주소를
     // 바로 수동 입력할 수 있게 수정 모달까지 열어준다.
     const openForFix = (debtorId) => {
@@ -7341,12 +7344,56 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       navigateToDebtor(debtor);
       openDebtorEditModal(debtor);
     };
+    const listConfig = {
+      missing:    { label: `주소 추출 대상 ${missingList.length}건`, items: searchedMissing, loading: missingAddr === null, emptyMsg: "주소 추출이 필요한 채무자가 없습니다." },
+      noCoords:   { label: `좌표 미확보 ${noCoords.length}건`, items: searched, loading: locations === null, emptyMsg: "주소가 확보된 채무자가 없습니다.\n채무자 상세 페이지에서 CB보기로 주소를 자동추출해보세요." },
+      all:        { label: `주소 확보 전체 ${(locations || []).length}건`, items: searchedAll, loading: locations === null, emptyMsg: "주소가 확보된 채무자가 없습니다." },
+      withCoords: { label: `좌표 확보 ${withCoordsCount}건`, items: searchedWithCoords, loading: locations === null, emptyMsg: "좌표가 확보된 채무자가 없습니다." },
+    }[listMode];
+    const renderMissingRow = (d) => (
+      <div key={d.id} onClick={() => openForFix(d.id)}
+        style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}
+        onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <BrandBadge code={d.brand} brands={config.brands} />
+          <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
+          <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>주소 없음</span>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2 }}>
+          {[!d.residentAddress && "초본", !d.latestAddress && "신용조회"].filter(Boolean).join("·")} 주소 미확보 — 클릭해서 직접 입력
+        </div>
+      </div>
+    );
+    const renderLocRow = (d) => (
+      <div key={d.id} onClick={() => (d.lat != null ? panTo(d) : openForFix(d.id))}
+        style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer", opacity: d.lat != null ? 1 : 0.55 }}
+        onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <BrandBadge code={d.brand} brands={config.brands} />
+          <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
+          {d.lat == null && <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>좌표 없음 — 클릭해서 주소 수정</span>}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.latestAddress}</div>
+      </div>
+    );
 
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 12, height: "100%" }}>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 16px", border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)" }}>
-            주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
+          <div style={{ display: "flex", gap: 0, background: "var(--card)", borderRadius: 10, border: "1px solid var(--brd)", fontSize: 12, color: "var(--tm)", overflow: "hidden" }}>
+            <span onClick={() => setListMode("all")} title="주소가 확보된 채무자 전체를 왼쪽에 표시합니다"
+              style={{ padding: "10px 16px", cursor: "pointer", background: listMode === "all" ? "var(--hover)" : "transparent" }}>
+              주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건
+            </span>
+            <span style={{ alignSelf: "center", color: "var(--brd)" }}>·</span>
+            <span onClick={() => setListMode("withCoords")} title="좌표까지 확보되어 지도에 표시 중인 채무자를 왼쪽에 표시합니다"
+              style={{ padding: "10px 16px", cursor: "pointer", background: listMode === "withCoords" ? "var(--hover)" : "transparent" }}>
+              좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
+            </span>
           </div>
           {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -7438,49 +7485,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             ? { width: "100%", maxHeight: 220, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }
             : { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 6, overflowY: "auto", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tm)", padding: "2px 2px 4px" }}>
-              {listMode === "missing" ? `주소 추출 대상 ${missingList.length}건` : `좌표 미확보 ${noCoords.length}건`}
+              {listConfig.label}
             </div>
-            {listMode === "missing"
-              ? (missingAddr === null
-                  ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
-                  : searchedMissing.length === 0
-                    ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소 추출이 필요한 채무자가 없습니다."}</div>
-                    : searchedMissing.map(d => (
-                        <div key={d.id} onClick={() => openForFix(d.id)}
-                          style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer" }}
-                          onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <BrandBadge code={d.brand} brands={config.brands} />
-                            <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
-                            <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>주소 없음</span>
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2 }}>
-                            {[!d.residentAddress && "초본", !d.latestAddress && "신용조회"].filter(Boolean).join("·")} 주소 미확보 — 클릭해서 직접 입력
-                          </div>
-                        </div>
-                      ))
-                )
-              : (locations === null
-                  ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
-                  : searched.length === 0
-                    ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : "주소가 확보된 채무자가 없습니다.\n채무자 상세 페이지에서 CB보기로 주소를 자동추출해보세요."}</div>
-                    : searched.map(d => (
-                        <div key={d.id} onClick={() => (d.lat != null ? panTo(d) : openForFix(d.id))}
-                          style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg)", border: "1px solid var(--brd)", cursor: "pointer", opacity: d.lat != null ? 1 : 0.55 }}
-                          onMouseEnter={e => { e.currentTarget.style.background = "var(--hover)"; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <BrandBadge code={d.brand} brands={config.brands} />
-                            <span style={{ fontSize: 12, fontWeight: 700 }}>{d.name}</span>
-                            {d.lat == null && <span style={{ fontSize: 9, color: "var(--warn)", marginLeft: "auto" }}>좌표 없음 — 클릭해서 주소 수정</span>}
-                          </div>
-                          <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.latestAddress}</div>
-                        </div>
-                      ))
-                )
+            {listConfig.loading
+              ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>
+              : listConfig.items.length === 0
+                ? <div style={{ padding: 16, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>{q ? "검색 결과 없음" : listConfig.emptyMsg}</div>
+                : listConfig.items.map(listMode === "missing" ? renderMissingRow : renderLocRow)
             }
           </div>
           <div ref={mapElRef} style={{ flex: 1, borderRadius: 12, border: "1px solid var(--brd)", minHeight: 520, background: "var(--bg2)" }} />
