@@ -577,10 +577,11 @@ function applyThirdsOv(cases) {
   return cases.map(c => ov[c.id] !== undefined ? { ...c, thirdParties: ov[c.id] } : c);
 }
 
-// ─── 제3채무자 편집 섹션 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
-const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
-  const [rows, setRows] = useState(() => thirds.map(t => ({ ...t })));
-  const [isEditing, setIsEditing] = useState(false);
+// ─── 제3채무자 진술서: 채무자 1명 몫의 편집 박스 (독립 컴포넌트 — 입력마다 부모 재렌더 방지) ────
+const ThirdGroupBox = memo(({ debtorName, rows: committedRows, onSaveGroup, onDeleteGroup, canDelete }) => {
+  const [rows, setRows] = useState(() => committedRows.map(t => ({ ...t })));
+  const [nameDraft, setNameDraft] = useState(debtorName || "");
+  const [isEditing, setIsEditing] = useState(() => committedRows.length === 0);
   const [checked, setChecked] = useState(() => new Set());
 
   const setRow = useCallback((i, k, v) => {
@@ -588,25 +589,26 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
   }, []);
 
   const startEdit = useCallback(() => {
-    setRows(thirds.map(t => ({ ...t })));
+    setRows(committedRows.map(t => ({ ...t })));
+    setNameDraft(debtorName || "");
     setChecked(new Set());
     setIsEditing(true);
-  }, [thirds]);
+  }, [committedRows, debtorName]);
 
   const handleSave = useCallback(() => {
     const cleaned = rows.map((r, i) => ({ ...r, seqNo: i + 1 })).filter(r => r.bankName.trim());
-    saveThirdsOv(caseId, cleaned);
-    onSave(cleaned);
+    onSaveGroup(nameDraft.trim(), cleaned);
     setRows(cleaned);
     setChecked(new Set());
     setIsEditing(false);
-  }, [rows, caseId, onSave]);
+  }, [rows, nameDraft, onSaveGroup]);
 
   const handleCancel = useCallback(() => {
-    setRows(thirds.map(t => ({ ...t })));
+    setRows(committedRows.map(t => ({ ...t })));
+    setNameDraft(debtorName || "");
     setChecked(new Set());
     setIsEditing(false);
-  }, [thirds]);
+  }, [committedRows, debtorName]);
 
   const addRow = useCallback(() => {
     setRows(prev => [...prev, { seqNo: prev.length + 1, bankName: "", responseDate: "", claimAmount: 0, balance: 0, collected: 0, remarks: "", completed: false }]);
@@ -622,18 +624,30 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
     setChecked(new Set());
   }, [checked]);
 
-  const display = isEditing ? rows : thirds;
+  const display = isEditing ? rows : committedRows;
   const inpS = { padding: "3px 6px", fontSize: 11, borderRadius: 5, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
   const numInpS = { ...inpS, textAlign: "right", width: 90 };
 
   return (
-    <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+    <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12, border: "1px solid var(--brd)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        {isEditing ? (
+          <KoreanInput value={nameDraft} onChange={e => setNameDraft(e.target.value)} placeholder="채무자명 입력" style={{ ...inpS, width: 140, fontWeight: 700 }} />
+        ) : (
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)", border: "1px solid var(--acc)", borderRadius: 6, padding: "2px 10px" }}>
+            {debtorName || "채무자명 미입력"}
+          </span>
+        )}
+        {canDelete && isEditing && (
+          <button onClick={onDeleteGroup} style={{ fontSize: 11, color: "#ef4444", background: "none", border: "none", cursor: "pointer", padding: 2 }}>이 채무자 칸 삭제</button>
+        )}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>제3채무자 진술서 (압류 은행)</div>
         <span style={{ fontSize: 11, color: "var(--ts)", background: "var(--bg2)", border: "1px solid var(--brd)", borderRadius: 10, padding: "1px 8px" }}>{display.length}건</span>
         {!isEditing && (
           <span className="mono" style={{ fontSize: 11, color: "var(--ok)" }}>
-            잔액 합계 {fmt(thirds.reduce((s, t) => s + (t.balance || 0), 0))}
+            잔액 합계 {fmt(committedRows.reduce((s, t) => s + (t.balance || 0), 0))}
           </span>
         )}
         <span style={{ flex: 1 }} />
@@ -691,6 +705,69 @@ const ThirdsEditorSection = memo(({ thirds, caseId, onSave }) => {
     </div>
   );
 });
+
+// 레거시(채무자 구분 없던 시절) 데이터는 은행 행이 바로 배열에 담겨있고,
+// 새 데이터는 [{ debtorName, rows: [...] }] 형태 — 둘 다 읽을 수 있게 정규화
+function normalizeThirdGroups(thirdParties) {
+  const arr = thirdParties || [];
+  if (arr.length === 0) return [];
+  if (arr[0] && Array.isArray(arr[0].rows)) return arr;
+  return [{ debtorName: "", rows: arr }];
+}
+
+// ─── 제3채무자 진술서 전체 섹션 — 채무자별로 편집 박스를 나눠서 렌더링 ────
+const ThirdsEditorSection = ({ thirds, caseId, onSave }) => {
+  const [groupList, setGroupList] = useState(() => {
+    const groups = normalizeThirdGroups(thirds);
+    return (groups.length ? groups : [{ debtorName: "", rows: [] }]).map((g, i) => ({ id: i, debtorName: g.debtorName || "", rows: g.rows }));
+  });
+  const nextIdRef = useRef(groupList.length);
+
+  const persist = useCallback((groups) => {
+    const flat = groups.map(g => ({ debtorName: g.debtorName, rows: g.rows }));
+    saveThirdsOv(caseId, flat);
+    onSave(flat);
+  }, [caseId, onSave]);
+
+  const handleSaveGroup = useCallback((id, newDebtorName, cleanedRows) => {
+    setGroupList(prev => {
+      const next = prev.map(g => g.id === id ? { ...g, debtorName: newDebtorName, rows: cleanedRows } : g);
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  const handleDeleteGroup = useCallback((id) => {
+    setGroupList(prev => {
+      if (prev.length <= 1) return prev;
+      const next = prev.filter(g => g.id !== id);
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  const handleAddGroup = useCallback(() => {
+    setGroupList(prev => [...prev, { id: nextIdRef.current++, debtorName: "", rows: [] }]);
+  }, []);
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      {groupList.map(g => (
+        <ThirdGroupBox
+          key={g.id}
+          debtorName={g.debtorName}
+          rows={g.rows}
+          canDelete={groupList.length > 1}
+          onSaveGroup={(name, rows) => handleSaveGroup(g.id, name, rows)}
+          onDeleteGroup={() => handleDeleteGroup(g.id)}
+        />
+      ))}
+      <button onClick={handleAddGroup} style={{ fontSize: 11, fontWeight: 600, padding: "5px 12px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px dashed var(--brd)", cursor: "pointer", width: "100%" }}>
+        + 채무자(제3채무자 진술서) 칸 추가 — 압류 대상자가 여러 명일 때
+      </button>
+    </div>
+  );
+};
 
 // ─── 강화된 이름 정규화 (전자소송 피고명용) ────────────────
 function normLegalName(raw) {
