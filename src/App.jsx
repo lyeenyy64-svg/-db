@@ -2095,6 +2095,27 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const [viewMode, setViewMode] = useState("all");
   const [searchQ, setSearchQ] = useState("");
   const [openMonths, setOpenMonths] = useState({});
+  // 기본은 등록일 최신순 — "등록일"/"담당자" 헤더를 누르면 그 기준으로 정렬을 바꿀 수 있다.
+  const [sortField, setSortField] = useState("createdAt"); // "createdAt" | "assignee"
+  const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
+  const SORTABLE_HEADERS = { "등록일": "createdAt", "담당자": "assignee" };
+  const toggleSort = (field) => {
+    if (sortField === field) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortField(field); setSortDir(field === "assignee" ? "asc" : "desc"); }
+  };
+  const sortArrow = (field) => sortField === field ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  const renderThead = (headers, widths) => (
+    <thead><tr>{headers.map((h, i) => {
+      const field = SORTABLE_HEADERS[h];
+      return (
+        <th key={i}
+          style={{ ...issueTh, ...(widths[i] ? { width: widths[i] } : {}), ...(field ? { cursor: "pointer", userSelect: "none" } : {}) }}
+          onClick={field ? () => toggleSort(field) : undefined}>
+          {h}{field ? sortArrow(field) : ""}
+        </th>
+      );
+    })}</tr></thead>
+  );
   // 업무 내용/결과는 한 글자 입력할 때마다 즉시 저장돼서, 한 문장을 치는 동안 통계에
   // "저장 N번"이 그대로 쌓여 실제로는 한 번 고친 걸 여러 번 고친 것처럼 부풀려 보이는
   // 문제가 있었다(사용자가 직접 지적함). 타이핑 중엔 화면에만 즉시 반영하고, 잠깐
@@ -2125,13 +2146,17 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const byMode = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.status === "완료" && !r.deleted) : (r.status !== "완료" && !r.deleted));
   const q = searchQ.trim().toLowerCase();
   const filtered = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
-  // 담당자별로 묶어서 보이도록 담당자 기준으로 먼저 정렬하고, 같은 담당자 안에서는
-  // 등록일이 최신인 항목이 위로 오게(등록일 없는 옛 항목은 맨 아래로) 정렬한다.
+  // 기본은 등록일 최신순, "등록일"/"담당자" 헤더 클릭으로 기준·방향을 바꿀 수 있다.
+  // 담당자 기준일 때는 같은 담당자 안에서 등록일 최신순으로 2차 정렬한다.
   const shown = [...filtered].sort((a, b) => {
-    const an = a.assignee || "", bn = b.assignee || "";
-    if (an !== bn) return an.localeCompare(bn, "ko");
-    const ad = a.createdAt || "", bd = b.createdAt || "";
-    return bd.localeCompare(ad);
+    let cmp;
+    if (sortField === "assignee") {
+      cmp = (a.assignee || "").localeCompare(b.assignee || "", "ko");
+      if (cmp === 0) cmp = (b.createdAt || "").localeCompare(a.createdAt || "");
+    } else {
+      cmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+    }
+    return sortDir === "asc" ? cmp : -cmp;
   });
   const emptyMsg = q ? "검색 결과가 없습니다" : viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 항목이 없습니다 — [등록]으로 추가하세요";
 
@@ -2181,8 +2206,8 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
       </tr>
     );
   };
-  const theadEl = <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}</tr></thead>;
-  const completedTheadEl = <thead><tr>{completedCols.map((h, i) => <th key={i} style={{ ...issueTh, ...(completedColWidths[i] ? { width: completedColWidths[i] } : {}) }}>{h}</th>)}</tr></thead>;
+  const theadEl = renderThead(cols, colWidths);
+  const completedTheadEl = renderThead(completedCols, completedColWidths);
 
   const filterBar = (
     <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="담당자·업무 내용·결과 검색..."
