@@ -310,6 +310,9 @@ db.exec(`
 // 일괄생성)도 실제 대상 채무자로 이동할 수 있도록 요청 시점에 미리 계산해 둔다.
 try { db.exec("ALTER TABLE user_activity_log ADD COLUMN ref_debtor_id TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE user_activity_log ADD COLUMN detail TEXT"); } catch(e) {}
+// kv 배열(히스토리·To Do List 등) 항목 하나를 저장할 때 그 항목의 id를 같이 남겨둔다 —
+// 이 항목이 나중에 완전히 삭제되면 그 id로 예전 로그를 찾아 무효화(voidKvItemLogs)할 수 있게.
+try { db.exec("ALTER TABLE user_activity_log ADD COLUMN item_id TEXT"); } catch(e) {}
 
 // kvPut(/api/kv/:key)이 사용자 이름을 안 보내던 시절에 쌓인 "알수없음" 통계 노이즈를
 // 한 번만 정리 (실제 사용자명이 붙은 기록은 그대로 둔다). 서버 재시작 시 1회만 실행.
@@ -2913,6 +2916,9 @@ function diffDetailText(oldVal, newVal) {
 // 재시작되면 그냥 새로 쌓이기 시작할 뿐이라 안전하다 — 서로 다른 항목/사용자/키는 절대 섞이지 않는다.
 const recentKvEdits = new Map(); // "user path itemId" -> { logId, ts }
 const KV_COALESCE_WINDOW_MS = 3 * 60 * 1000;
+const insertActivityLogWithItem = db.prepare(
+  "INSERT INTO user_activity_log (type, user_name, bytes, path, ref_debtor_id, detail, item_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+);
 function logKvDataInput(userName, path, bytes, detail, itemId) {
   if (bytes <= 0 || userName === "알수없음") return;
   const last = db.prepare(
@@ -2930,8 +2936,23 @@ function logKvDataInput(userName, path, bytes, detail, itemId) {
       return;
     }
   }
-  const info = insertActivityLog.run("data_input", userName, bytes, path, null, detail);
+  const info = insertActivityLogWithItem.run("data_input", userName, bytes, path, null, detail, itemId != null ? String(itemId) : null);
   if (itemId != null) recentKvEdits.set(`${userName} ${path} ${itemId}`, { logId: info.lastInsertRowid, ts: Date.now() });
+}
+
+// kv 배열/객체에서 항목이 완전히 삭제되면(예: 히스토리 항목 삭제, 매핑 항목 제거), 그 항목
+// 때문에 예전에 찍혔던 "추가"/"수정" 로그도 더 이상 실제로 남아있는 입력이 아니다 — 통계에서
+// 빼되(bytes=0), 로그 자체는 지우지 않고 "[이후 삭제됨]" 표시만 붙여서 "그때 이런 걸 썼다가
+// 나중에 지웠다"는 사실은 화면에서 계속 확인할 수 있게 남겨둔다. 이미 확인/마감한 과거 기간의
+// 숫자도 다시 조회하면 이 삭제가 반영되어 바뀔 수 있다 — 다만 이 기능 적용 이전에 이미 지워진
+// 항목은 item_id가 안 남아있어 손댈 수 없고, 앞으로 발생하는 삭제부터만 적용된다.
+function voidKvItemLogs(path, itemId) {
+  if (itemId == null) return;
+  db.prepare(`
+    UPDATE user_activity_log
+    SET bytes = 0, detail = '[이후 삭제됨] ' || COALESCE(detail, '')
+    WHERE path = ? AND item_id = ? AND bytes > 0
+  `).run(path, String(itemId));
 }
 
 // PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
@@ -2951,6 +2972,17 @@ app.put("/api/kv/:key", (req, res) => {
       const bytes = detail ? detail.length : diffByteEstimate(oldVal, req.body);
       const userName = extractUserName(req);
       logKvDataInput(userName, req.path, bytes, detail, diffResult ? diffResult.itemId : null);
+      // 배열/객체에서 항목이 통째로 사라졌으면(완전 삭제) 그 항목으로 예전에 찍힌 로그를 무효화.
+      if (Array.isArray(oldVal) && Array.isArray(req.body)) {
+        const newIds = new Set(req.body.filter(x => x && x.id != null).map(x => x.id));
+        for (const item of oldVal) {
+          if (item && item.id != null && !newIds.has(item.id)) voidKvItemLogs(req.path, item.id);
+        }
+      } else if (oldVal && typeof oldVal === "object" && !Array.isArray(oldVal) && req.body && typeof req.body === "object" && !Array.isArray(req.body)) {
+        for (const k of Object.keys(oldVal)) {
+          if (!(k in req.body)) voidKvItemLogs(req.path, k);
+        }
+      }
     } catch {}
   }
   // To Do List는 항목 배열 전체를 통째로 PUT하므로, 직전 저장값과 비교해서
