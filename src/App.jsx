@@ -11663,10 +11663,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               return diffDays >= 0 && diffDays <= 7;
             });
             const items = [
-              { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
-              { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
+              { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납" && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
+              { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
-              { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr).length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
+              { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
               { l: "민사소송 이벤트", v: `${minsaEventCases.length}건`, onClick: () => { setTab("minsa"); if (minsaEventCases[0]) setMinsaOpenCaseId(minsaEventCases[0].id); } },
               { l: "법적절차 이벤트", v: `${legalEventCases.length}건`, onClick: () => { setTab("legal"); if (legalEventCases[0]) setLegalOpenCaseId(legalEventCases[0].id); } },
               { l: "회생/파산 이벤트", v: `${rehabEventCases.length}건`, onClick: () => { setTab("rehabBankruptcy"); if (rehabEventCases[0]) setRehabOpenCaseId(rehabEventCases[0].id); } },
