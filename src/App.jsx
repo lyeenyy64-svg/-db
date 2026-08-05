@@ -4808,22 +4808,37 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const runAnalysis = async (debtor) => {
       setAnalyzing(true);
+      // 응답을 기다리는 동안(수~수십 초) 사용자가 주요사항을 직접 고칠 수 있다 — 시작 시점의
+      // 마커 이후(AI 블록이 있던 영역) 내용을 남겨둬서, 나중에 그 영역이 그때와 달라져 있으면
+      // "사용자가 그 사이에 직접 손댔다"는 뜻으로 보고 새 AI 블록으로 덮어쓰지 않는다.
+      const marker = "[채무자 및 연대보증인 종합분석]";
+      const afterMarker = (s) => { const i = (s || "").indexOf(marker); return i >= 0 ? s.slice(i) : null; };
+      const startingAfter = afterMarker(debtor.keyNotes);
       try {
         const res = await fetch(`/api/debtor/${debtor.id}/analysis`, { method: "POST" });
-        const data = await res.json();
-        if (!data.ok) { showToast(data.error ? `종합분석 실패: ${data.error}` : "종합분석 실패"); return; }
-        const marker = "[채무자 및 연대보증인 종합분석]";
+        const result = await res.json();
+        if (!result.ok) { showToast(result.error ? `종합분석 실패: ${result.error}` : "종합분석 실패"); return; }
+        let skippedDueToConflict = false;
         // keyNotes는 latest(저장 시점의 최신 채무자 값)에서 계산 — API 응답을 기다리는 동안
         // 사용자가 주요사항을 직접 수정/저장했다면 그 최신 내용 위에 이어붙여야 하고,
         // 여기서 캡처한 debtor.keyNotes(호출 시작 시점의 낡은 값)로 덮어쓰면 안 된다.
         await updateDebtor(debtor.id, (latest) => {
           const cur = latest.keyNotes || "";
+          const curAfter = afterMarker(cur);
+          if (startingAfter != null && curAfter != null && startingAfter !== curAfter) {
+            skippedDueToConflict = true;
+            return null; // 마커 이후 영역을 사용자가 그 사이에 직접 고쳤음 — 건드리지 않고 그대로 둔다.
+          }
           const idx = cur.indexOf(marker);
           const before = (idx >= 0 ? cur.slice(0, idx) : cur).trim();
-          const block = `${marker}\n${data.text}`;
+          const block = `${marker}\n${result.text}`;
           return { keyNotes: before ? `${before}\n\n${block}` : block };
         });
-        addLog("수정", "채권", `${debtor.name} — AI 종합분석 추가`);
+        if (skippedDueToConflict) {
+          showToast("방금 주요사항을 직접 수정하셔서 AI 종합분석 자동 갱신을 건너뛰었습니다 — 필요하면 다시 생성해주세요");
+        } else {
+          addLog("수정", "채권", `${debtor.name} — AI 종합분석 추가`);
+        }
       } catch { showToast("종합분석 실패"); }
       finally { setAnalyzing(false); }
     };
