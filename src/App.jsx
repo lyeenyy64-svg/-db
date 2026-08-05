@@ -7469,8 +7469,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [isEditingComplaint, setIsEditingComplaint] = useState(false); // 기본정보/수사정보 수정 모드
     const [cmpHistory,        setCmpHistory]         = useState([]);    // 진행 히스토리
     const [cmpHistForm,       setCmpHistForm]        = useState(null);  // 추가/수정 폼
-    const [sortField, setSortField] = useState(null);  // null | 컬럼 필드명
-    const [sortDir,   setSortDir]   = useState(null);  // null | "asc" | "desc"
+    const [sortField, setSortField] = useState("date");  // null | 컬럼 필드명 — 기본: 접수일
+    const [sortDir,   setSortDir]   = useState("desc");  // null | "asc" | "desc" — 기본: 최신순
     const toggleColSort = (field) => {
       if (sortField !== field) { setSortField(field); setSortDir("asc"); }
       else if (sortDir === "asc") setSortDir("desc");
