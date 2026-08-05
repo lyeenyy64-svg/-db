@@ -3414,6 +3414,9 @@ app.get("/api/admin/stats/detail", (req, res) => {
 
     // 채무자 정보 수정은 debtor_edit_log에 필드 단위로 실제 변경 전/후 값이 남아있으므로
     // user_activity_log(액션 단위 바이트 합계)보다 이걸 그대로 보여주는 게 훨씬 구체적이다.
+    // 순변화량 계산(computeNetDebtorVolume)과 마찬가지로 주요사항의 AI 종합분석 블록은
+    // 사람이 "입력"한 게 아니므로 목록에서도 잘라내고, 그 결과 실제로 달라진 게 없는
+    // 저장(순수 AI 재생성만 있던 저장)은 항목 자체를 보여주지 않는다.
     const debtorEdits = db.prepare(`
       SELECT debtor_id AS debtorId, debtor_name AS debtorName, field_name AS fieldName,
              field_label AS fieldLabel, old_value AS oldValue, new_value AS newValue, changed_at AS changedAt
@@ -3421,7 +3424,9 @@ app.get("/api/admin/stats/detail", (req, res) => {
       WHERE changed_by = ? AND substr(changed_at,1,${len}) = ?
       ORDER BY changed_at DESC
       LIMIT 500
-    `).all(user, period);
+    `).all(user, period)
+      .map(r => ({ ...r, oldValue: stripAiAnalysisBlock(r.fieldName, r.oldValue), newValue: stripAiAnalysisBlock(r.fieldName, r.newValue) }))
+      .filter(r => r.oldValue !== r.newValue);
 
     // 그 외(kv 저장, 협의/추심의뢰/민사소송 등) 저장은 필드별 상세 로그가 없어 요청 경로와
     // 바이트만 보여준다 — /api/debtors/*로 시작하는 행은 위 debtorEdits로 이미 다뤘으므로 제외.
