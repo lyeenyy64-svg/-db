@@ -3104,12 +3104,27 @@ const STATS_START_DATE = "2026-07-14 00:00:00";
 // 여러 사람이 건드렸다면, 마지막에 저장해 그 결과를 실제로 남긴 사람에게 순변화량
 // 전체를 귀속한다(중간 편집자는 그 필드로는 0을 받는다 — 이 기간엔 그의 편집이
 // 최종 결과에 남지 않았기 때문).
+// 주요사항(key_notes)의 [채무자 및 연대보증인 종합분석] 마커 이후 블록은 AI가 생성한
+// 텍스트라 사람이 "입력"한 게 아니다 — 그 부분만 바뀐 저장은 순변화량에 잡히면 안 되므로,
+// 계산 전에 마커 이후를 잘라내고 마커 이전(직접 쓰는 기타사항)만 비교 대상으로 남긴다.
+// (원본 debtor_edit_log 행 자체는 그대로 두므로 "최근 수정 내역"에서는 전체 내용을 그대로 볼 수 있다.)
+function stripAiAnalysisBlock(fieldName, value) {
+  if (fieldName !== "key_notes") return value ?? "";
+  const v = value ?? "";
+  const idx = v.indexOf(ANALYSIS_MARKER);
+  return idx >= 0 ? v.slice(0, idx).trimEnd() : v;
+}
+
 function computeNetDebtorVolume(len) {
   const rows = db.prepare(`
     SELECT debtor_id, field_name, changed_by, changed_at, old_value, new_value
     FROM debtor_edit_log
     ORDER BY debtor_id, field_name, changed_at ASC, id ASC
-  `).all();
+  `).all().map(r => ({
+    ...r,
+    old_value: stripAiAnalysisBlock(r.field_name, r.old_value),
+    new_value: stripAiAnalysisBlock(r.field_name, r.new_value),
+  }));
 
   const groups = new Map();
   for (const r of rows) {
