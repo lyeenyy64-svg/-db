@@ -5183,6 +5183,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <div key={idx}>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
                     <span style={{ fontSize: 12, fontWeight: 700, color: parseInt(entry.score)>=700 ? "var(--ok)" : parseInt(entry.score)>=400 ? "var(--warn)" : "var(--err)" }}>{entry.score}점</span>
+                    {entry.ambiguous && (
+                      <span title="이름 앞 2~3글자만 겹치는 CB 파일로 찾은 결과라 동명이인(다른 사람)의 점수가 섞였을 수 있습니다 — 'CB 보기'로 실제 문서를 확인하세요."
+                        style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
+                    )}
                   </div>
                 );
                 if (allEntries.length === 1) return renderScore(allEntries[0], 0);

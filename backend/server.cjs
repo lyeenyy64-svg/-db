@@ -3647,24 +3647,33 @@ async function findCreditScoreForName(name, limit, priority) {
   const CB_FILTER = `(LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%') AND ext = 'pdf'`;
 
   let rows = db.prepare(
-    `SELECT file_path, filename FROM file_index
+    `SELECT file_path, filename, parsed_person_name FROM file_index
      WHERE parsed_person_name = ? AND ${CB_FILTER}
      ORDER BY parsed_date DESC LIMIT ?`
   ).all(name, limit);
 
+  let fuzzy = false;
   if (rows.length === 0) {
     const kor = korName3(name);
     if (!kor) return null;
+    fuzzy = true;
     rows = db.prepare(
-      `SELECT file_path, filename FROM file_index
+      `SELECT file_path, filename, parsed_person_name FROM file_index
        WHERE (parsed_person_name LIKE ? OR filename LIKE ?) AND ${CB_FILTER}
        ORDER BY parsed_date DESC LIMIT ?`
     ).all(`%${kor}%`, `%${kor}%`, limit);
   }
 
+  // 이름이 완전히 일치하는 파일이 하나도 없어 앞 2~3글자 부분일치로 넓힌 경우에만 해당 —
+  // 후보 중 실제로 파싱된 이름(parsed_person_name)이 검색 대상과 "다른" 값으로 확인된 게
+  // 있으면, 동명이인(다른 사람)의 CB 파일이 섞여 들어왔다는 뚜렷한 신호다. 이 경우 점수를
+  // 자신 있게 하나 골라 보여주면 위험하므로 ambiguous 플래그를 같이 내려서, 화면/AI
+  // 종합분석 양쪽 모두 "확인 필요"로 표시하고 그 점수를 근거로 단정하지 않게 한다.
+  const ambiguous = fuzzy && rows.some(r => r.parsed_person_name && r.parsed_person_name !== name);
+
   for (const c of rows) {
     const r = await ocrPdfForCreditScore(c.file_path, priority);
-    if (r.ok && r.score) return { score: r.score, filename: c.filename };
+    if (r.ok && r.score) return { score: r.score, filename: c.filename, ambiguous };
   }
   return null;
 }
@@ -4724,7 +4733,9 @@ async function generateDebtorAnalysisText(debtorId, priority) {
     const guarantorScores = [];
     for (const gName of guarantorNames) {
       const result = await findCreditScoreForName(gName, 3, priority);
-      if (result) guarantorScores.push(`${gName}: ${result.score}점`);
+      // ambiguous=true면 이름 앞 2~3글자만 겹치는 동명이인 CB 파일이 섞여있을 수 있다는 뜻이라,
+      // AI가 그 점수를 근거로 단정하지 않도록 함께 표시한다 (점수 자체는 참고용으로 남겨둠).
+      if (result) guarantorScores.push(`${gName}: ${result.score}점${result.ambiguous ? " (동명이인 파일 혼재 가능 — 확인 필요)" : ""}`);
     }
 
     const contextText = `
@@ -4759,6 +4770,8 @@ ${acts.length === 0 ? "없음" : acts.map(a => `${a.activity_date} [${a.activity
 - 신용점수, 법적절차내역, 히스토리(추심 활동 기록)를 근거로 판단하세요.
 - 채무자 유형이 "법인"이면 법인은 개인 CB 신용점수 대상이 아니므로 채무자 신용점수 관련 항목은
   만들지 마세요(연대보증인 신용점수는 정상적으로 다루세요).
+- 연대보증인 신용점수에 "(동명이인 파일 혼재 가능 — 확인 필요)"가 붙어있으면, 그 점수를 확정된
+  값처럼 인용하지 말고 "동명이인 파일과 섞였을 수 있어 재확인 필요"로만 언급하세요.
 - 채무자와 연대보증인 항목을 구분해서 각각 나열하세요.
 - 항목 중 특히 긴급하거나 중요하다고 판단되는 것은 그 항목 전체를 **와 ** 사이에 넣어서 표시하세요
   (예: "- **연대보증인 신용점수 확인 안됨, 즉시 조회 필요**"). 모든 항목을 강조하지 말고 정말 중요한 것만 표시하세요.
