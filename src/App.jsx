@@ -7349,26 +7349,48 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             주소 확보 <b style={{ color: "var(--tp)" }}>{(locations || []).length}</b>건 · 좌표 확보 <b style={{ color: "var(--tp)" }}>{withCoordsCount}</b>건
           </div>
           {canEdit && (extractingAddr || (missingAddr && missingAddr.length > 0)) && (
-            <button onClick={() => { setListMode("missing"); runBulkAddressExtract(); }} disabled={extractingAddr}
-              title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다. 매일 밤 00시~06시에는 이 작업이 자동으로도 조금씩 진행되니(며칠에 걸쳐 완료), 급하지 않으면 안 눌러도 됩니다"
-              style={{ padding: "8px 14px", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
-              {extractingAddr
-                ? `${extractAddrProgress?.phase === "geocode" ? "좌표 변환" : "주소 추출"} 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})`
-                : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => setListMode("missing")}
+                title="주소 추출이 필요한 채무자 목록을 왼쪽에 표시합니다 — 실제 추출은 오른쪽 업데이트 아이콘을 눌러주세요"
+                style={{ padding: "8px 14px", borderRadius: 8, background: listMode === "missing" ? "#0ea5e918" : "var(--bg2)", color: extractingAddr ? "var(--tm)" : "#0369a1", fontSize: 12, fontWeight: 600, border: listMode === "missing" ? "1px solid #0ea5e940" : "1px solid transparent", cursor: "pointer" }}>
+                {extractingAddr
+                  ? `${extractAddrProgress?.phase === "geocode" ? "좌표 변환" : "주소 추출"} 중... (${extractAddrProgress?.done || 0}/${extractAddrProgress?.total || 0})`
+                  : `전체 채무자 주소 추출 (${missingAddr.length}건)`}
+              </button>
+              <button onClick={runBulkAddressExtract} disabled={extractingAddr}
+                title="초본/CB보고서에서 아직 주소를 추출하지 않은(한 번도 열어보지 않은) 채무자 전원을 대상으로 서버에서 OCR 추출을 돌립니다 — 시작 후에는 이 창을 닫아도 서버 PC에서 계속 진행됩니다. 매일 밤 00시~06시에는 이 작업이 자동으로도 조금씩 진행되니(며칠에 걸쳐 완료), 급하지 않으면 안 눌러도 됩니다"
+                style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: extractingAddr ? "var(--bg2)" : "#0ea5e918", color: extractingAddr ? "var(--tm)" : "#0369a1", border: extractingAddr ? "none" : "1px solid #0ea5e940", cursor: extractingAddr ? "default" : "pointer" }}>
+                <span style={{ display: "inline-flex", animation: extractingAddr ? "spin 1s linear infinite" : "none" }}><I name="refresh" size={14} /></span>
+              </button>
+            </div>
           )}
           {mapAppKey && noCoords.length > 0 && (
-            <button onClick={() => { setListMode("noCoords"); runBulkGeocode(); }} disabled={geocoding}
-              style={{ padding: "8px 14px", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)", color: geocoding ? "var(--tm)" : "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: geocoding ? "default" : "pointer" }}>
-              {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => setListMode("noCoords")}
+                title="주소는 있지만 좌표가 없는 채무자 목록을 왼쪽에 표시합니다 — 실제 좌표 변환은 오른쪽 업데이트 아이콘을 눌러주세요"
+                style={{ padding: "8px 14px", borderRadius: 8, background: listMode === "noCoords" ? "var(--acc)" : "var(--bg2)", color: listMode === "noCoords" ? "#fff" : "var(--tm)", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>
+                {geocoding ? `좌표 변환 중... (${geocodeProgress?.done || 0}/${geocodeProgress?.total || 0})` : `주소→좌표 변환 (${noCoords.length}건 남음)`}
+              </button>
+              <button onClick={runBulkGeocode} disabled={geocoding}
+                title="업데이트: 목록의 주소를 카카오 지오코딩으로 실제 변환합니다"
+                style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: geocoding ? "var(--bg2)" : "var(--acc)18", color: geocoding ? "var(--tm)" : "var(--acc)", border: geocoding ? "none" : "1px solid var(--acc)40", cursor: geocoding ? "default" : "pointer" }}>
+                <span style={{ display: "inline-flex", animation: geocoding ? "spin 1s linear infinite" : "none" }}><I name="refresh" size={14} /></span>
+              </button>
+            </div>
           )}
           {canEdit && noCoords.length > 0 && (
-            <button onClick={() => { setListMode("noCoords"); runBulkAddressRefresh(); }} disabled={refreshingAddr}
-              title="좌표 변환에 계속 실패하는 항목은 예전에 잘못 저장된 주소 캐시가 원인인 경우가 많습니다 — 눌러서 다시 추출합니다"
-              style={{ padding: "8px 14px", borderRadius: 8, background: refreshingAddr ? "var(--bg2)" : "#8b5cf618", color: refreshingAddr ? "var(--tm)" : "#6d28d9", fontSize: 12, fontWeight: 600, border: refreshingAddr ? "none" : "1px solid #8b5cf640", cursor: refreshingAddr ? "default" : "pointer" }}>
-              {refreshingAddr ? `주소 재조회 중... (${refreshAddrProgress?.done || 0}/${refreshAddrProgress?.total || 0})` : `주소 재조회 (${noCoords.length}건)`}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => setListMode("noCoords")}
+                title="주소는 있지만 좌표가 없는 채무자 목록을 왼쪽에 표시합니다 — 실제 재조회는 오른쪽 업데이트 아이콘을 눌러주세요"
+                style={{ padding: "8px 14px", borderRadius: 8, background: listMode === "noCoords" ? "#8b5cf618" : "var(--bg2)", color: refreshingAddr ? "var(--tm)" : "#6d28d9", fontSize: 12, fontWeight: 600, border: listMode === "noCoords" ? "1px solid #8b5cf640" : "1px solid transparent", cursor: "pointer" }}>
+                {refreshingAddr ? `주소 재조회 중... (${refreshAddrProgress?.done || 0}/${refreshAddrProgress?.total || 0})` : `주소 재조회 (${noCoords.length}건)`}
+              </button>
+              <button onClick={runBulkAddressRefresh} disabled={refreshingAddr}
+                title="업데이트: 좌표 변환에 계속 실패하는 항목의 주소 캐시를 지우고 다시 추출합니다"
+                style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: refreshingAddr ? "var(--bg2)" : "#8b5cf618", color: refreshingAddr ? "var(--tm)" : "#6d28d9", border: refreshingAddr ? "none" : "1px solid #8b5cf640", cursor: refreshingAddr ? "default" : "pointer" }}>
+                <span style={{ display: "inline-flex", animation: refreshingAddr ? "spin 1s linear infinite" : "none" }}><I name="refresh" size={14} /></span>
+              </button>
+            </div>
           )}
           <span style={{ flex: 1 }} />
           <div style={{ position: "relative", width: 260 }}>
