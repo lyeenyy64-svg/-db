@@ -3214,7 +3214,10 @@ const STATS_START_DATE = "2026-07-14 00:00:00";
 // 계산 전에 마커 이후를 잘라내고 마커 이전(직접 쓰는 기타사항)만 비교 대상으로 남긴다.
 // (원본 debtor_edit_log 행 자체는 그대로 두므로 "최근 수정 내역"에서는 전체 내용을 그대로 볼 수 있다.)
 function stripAiAnalysisBlock(fieldName, value) {
-  if (fieldName !== "key_notes") return value ?? "";
+  // debtor_edit_log.field_name엔 DB 컬럼명(key_notes)이 아니라 프론트 JS 키(keyNotes)가
+  // 저장된다(applyDebtorFieldPatch의 insLog.run(..., jsKey, ...) 참고) — "key_notes"로
+  // 비교하면 항상 불일치라 이 함수가 실질적으로 아무것도 걸러내지 못하고 있었다.
+  if (fieldName !== "keyNotes") return value ?? "";
   const v = value ?? "";
   const idx = v.indexOf(ANALYSIS_MARKER);
   return idx >= 0 ? v.slice(0, idx).trimEnd() : v;
