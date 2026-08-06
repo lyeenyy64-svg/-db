@@ -1740,6 +1740,15 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
   const sched = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
   if (!sched) return res.status(404).json({ ok: false, error: "일정 없음" });
 
+  // 이미 완납/일부납으로 실제 입금이 반영된 일정이면 그 기록을 이월로 덮어쓰지 않는다.
+  // 예) 90만원 중 60만원만 들어와 이미 완납 처리된 일정에 대해, 나머지 30만원을 다음
+  // 날짜로 미루려고 "이월"을 쓰면 — 기존엔 원본 일정까지 통째로 '이월' 상태가 되어
+  // (해당 상태는 달력에서 숨겨짐) 이미 받은 60만원 완납 기록이 사라지고, 그 자리에
+  // 새로 만들어진 30만원 일정이 그 달 입금 풀을 다시 가져가 "완납"으로 잘못 표시되는
+  // 이중 카운트 버그가 있었다. 이미 돈이 들어온 일정은 그대로 두고, 부족분만 새 일정
+  // 으로 추가 생성해서 "원본 완납 1건 + 이월 1건" 2건이 남게 한다.
+  const alreadyPaid = sched.status === "완납" || sched.status === "일부납";
+
   try {
     const newIds = db.transaction(() => {
       const ids = [];
@@ -1761,7 +1770,11 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
         );
         ids.push(newId);
       });
-      db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(ids.join(","), req.params.id);
+      if (alreadyPaid) {
+        db.prepare("UPDATE installment_schedules SET rolled_over_to = ? WHERE id = ?").run(ids.join(","), req.params.id);
+      } else {
+        db.prepare("UPDATE installment_schedules SET status = '이월', rolled_over_to = ? WHERE id = ?").run(ids.join(","), req.params.id);
+      }
       return ids;
     })();
     // 이월로 그 달의 일정 구성이 바뀌었으니, 같은 채무자의 이미 '완납'으로 확정된 일정도

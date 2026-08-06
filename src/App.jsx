@@ -1422,7 +1422,12 @@ const BulkEditModal = ({ type, count, options, onConfirm, onClose }) => {
 // 900,000원 전체를 한 날짜로 미루는 게 기본이지만, "8/7 45만 + 8/8 45만"처럼 여러 날짜로
 // 나눠 이월하는 경우가 있어 날짜/금액 행을 여러 개 추가할 수 있게 한다.
 const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
-  const [splits, setSplits] = useState([{ date: "", amount: sched?.scheduledAmount ? String(sched.scheduledAmount) : "" }]);
+  // 이미 완납/일부납으로 실제 입금이 반영된 일정을 이월하는 경우 — 서버가 기존 일정을
+  // '이월'로 덮어쓰지 않고 그대로 둔 채 새 일정만 추가로 만든다(백엔드 /rollover 참고).
+  // 이때는 "기존 금액 그대로 미루기"가 아니라 "부족분만큼 새로 추가"가 목적이라
+  // 금액 기본값을 전체 예정 금액으로 채우지 않는다.
+  const alreadyPaid = sched?.status === "완납" || sched?.status === "일부납";
+  const [splits, setSplits] = useState([{ date: "", amount: (!alreadyPaid && sched?.scheduledAmount) ? String(sched.scheduledAmount) : "" }]);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1432,7 +1437,7 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
   const parsedAmt = (s) => parseInt(String(s.amount || "").replace(/,/g, ""), 10) || 0;
   const filledSplits = splits.filter(s => s.date);
   const totalSplitAmt = splits.reduce((sum, s) => sum + parsedAmt(s), 0);
-  const amountMismatch = filledSplits.length > 1 && sched?.scheduledAmount > 0 && totalSplitAmt !== sched.scheduledAmount;
+  const amountMismatch = !alreadyPaid && filledSplits.length > 1 && sched?.scheduledAmount > 0 && totalSplitAmt !== sched.scheduledAmount;
 
   const doRollover = async () => {
     if (filledSplits.length === 0) { showToast("이월 날짜를 1개 이상 입력하세요"); return; }
@@ -1505,9 +1510,13 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
         </Field>
         {filledSplits.length > 0 && (
           <div style={{ background: "#8b5cf610", border: "1px solid #8b5cf640", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7c3aed" }}>
-            기존 일정은 <b>이월</b> 처리되고, {filledSplits.length > 1
-              ? <>아래 <b>{filledSplits.length}개 날짜</b>에 새 납부 일정이 각각 생성됩니다.</>
-              : <><b>{filledSplits[0].date}</b>에 새 납부 일정이 생성됩니다.</>}
+            {alreadyPaid
+              ? <>기존 <b>{sched?.status}</b> 일정은 그대로 유지되고, {filledSplits.length > 1
+                  ? <>아래 <b>{filledSplits.length}개 날짜</b>에 새 납부 일정이 각각 추가로 생성됩니다.</>
+                  : <><b>{filledSplits[0].date}</b>에 새 납부 일정이 추가로 생성됩니다.</>}</>
+              : <>기존 일정은 <b>이월</b> 처리되고, {filledSplits.length > 1
+                  ? <>아래 <b>{filledSplits.length}개 날짜</b>에 새 납부 일정이 각각 생성됩니다.</>
+                  : <><b>{filledSplits[0].date}</b>에 새 납부 일정이 생성됩니다.</>}</>}
           </div>
         )}
       </div>
