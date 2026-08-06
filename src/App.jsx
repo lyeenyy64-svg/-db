@@ -1925,6 +1925,16 @@ const issueTd  = { padding: "5px 8px", fontSize: 12, border: "1px solid var(--br
 const issueInp = { width: "100%", padding: "5px 7px", fontSize: 12, borderRadius: 4, border: "1px solid transparent", background: "transparent", textAlign: "center" };
 const issueAuto = { fontSize: 12, color: "var(--tm)" };
 
+// 표 헤더 클릭 정렬용 비교 함수 — 빈 값은 항상 뒤로 보내고, 둘 다 숫자면 숫자 비교, 아니면 한글 로케일 문자열 비교
+const compareSortVal = (a, b) => {
+  const av = a ?? "", bv = b ?? "";
+  if (av === "" && bv === "") return 0;
+  if (av === "") return 1;
+  if (bv === "") return -1;
+  if (av !== "" && bv !== "" && !isNaN(av) && !isNaN(bv)) return Number(av) - Number(bv);
+  return String(av).localeCompare(String(bv), "ko");
+};
+
 // viewMode: "all"(기본, 삭제되지 않은 전체) | "completed"(완료만) | "trash"(삭제된 것만)
 // showComplete=false인 표(주요 협의 대상자)는 완료 개념이 없어 완료 버튼을 숨긴다
 // filterBar: 헤더 아래 검색창 등 추가 UI(옵션). customBody: 기본 <table>{children} 대신
@@ -1957,17 +1967,25 @@ const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComple
 
 const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["채무자명", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+  const sortFields = ["debtorName", "brand", "execTitleDate", "residentCopyDate", "creditOk", "assignee", "registeredDate", "resolvedDate", null, null];
   // 채무자명이 minWidth만 있고 다른 칸엔 폭 제한이 없어, 남는 공간을 전부 채무자명 칸이
   // 가져가며 유독 넓어 보이던 문제 수정 — 각 칸에 비율에 맞는 폭을 지정
   const colWidths = [110, 90, 110, 110, 70, 90, 110, 110, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
+  const [sortField, setSortField] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
+  const filtered = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
+  const shown = sortField ? [...filtered].sort((a, b) => compareSortVal(a[sortField], b[sortField]) * (sortDir === "asc" ? 1 : -1)) : filtered;
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
       onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false })}>
-      <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
+      <thead><tr>{cols.map((h, i) => <th key={i} onClick={sortFields[i] ? () => handleSort(sortFields[i]) : undefined} style={{ ...issueTh, width: colWidths[i], cursor: sortFields[i] ? "pointer" : "default", userSelect: "none" }}>{h}{sortField === sortFields[i] ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
         {shown.map(r => {
@@ -2028,16 +2046,24 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
 
 const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["대상자", "주민등록번호", "연락처", "브랜드", "요청자", "요청일", "담당자", "신용조회일", "신용조회 결과", "처리결과", "삭제"];
+  const sortFields = ["target", "residentId", "phone", "brand", "requester", "requestDate", "assignee", "checkDate", "checkResult", null, null];
   // 대상자/요청자가 폭 제한 없이 남는 공간을 다 가져가 유독 넓어 보이던 문제 수정
   const colWidths = [110, 130, 110, 90, 90, 110, 90, 110, 90, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
-  const shown = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
+  const [sortField, setSortField] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
+  const filtered = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
+  const shown = sortField ? [...filtered].sort((a, b) => compareSortVal(a[sortField], b[sortField]) * (sortDir === "asc" ? 1 : -1)) : filtered;
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
       onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false })}>
-      <thead><tr>{cols.map((h, i) => <th key={i} style={{ ...issueTh, width: colWidths[i] }}>{h}</th>)}</tr></thead>
+      <thead><tr>{cols.map((h, i) => <th key={i} onClick={sortFields[i] ? () => handleSort(sortFields[i]) : undefined} style={{ ...issueTh, width: colWidths[i], cursor: sortFields[i] ? "pointer" : "default", userSelect: "none" }}>{h}{sortField === sortFields[i] ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
         {shown.map(r => {
