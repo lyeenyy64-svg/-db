@@ -1617,7 +1617,7 @@ const TRIGGER_TYPES = [
   { key: "status_change", label: "추심상태 변경" },
   { key: "new_debtor", label: "신규 채권 등록" },
   { key: "seizure_collected", label: "압류 회수 발생" },
-  { key: "history_promise", label: "히스토리 약속일 리마인드 (±7일)" },
+  { key: "history_promise", label: "히스토리 약속일 리마인드 (어제/오늘/내일)" },
 ];
 
 // ─── Brand Logo ───────────────────────────────────────────

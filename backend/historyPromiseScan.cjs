@@ -19,7 +19,7 @@ function withinWindow(date, today, windowDays) {
   return diffDays >= -windowDays && diffDays <= windowDays;
 }
 
-function scanHistoryPromises(db, { windowDays = 7 } = {}) {
+function scanHistoryPromises(db, { windowDays = 1 } = {}) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const results = [];

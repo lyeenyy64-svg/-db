@@ -230,15 +230,23 @@ if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rules_dm_fix_v1'").
   db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rules_dm_fix_v1', '1')").run();
 }
 
-// 채무자 히스토리에 적힌 입금 약속일(오늘 ±7일)을 매일 리마인드하는 새 규칙 — 요청자
-// 본인(준원)에게만 DM으로 보낸다. alert_rules는 최초 실행 시에만 시드되므로, 이미
-// 운영 중인 DB에도 반영되도록 별도 1회성 마이그레이션으로 추가한다.
+// 채무자 히스토리에 적힌 입금 약속일(오늘 ±1일 — 어제/오늘/내일)을 매일 리마인드하는
+// 새 규칙 — 요청자 본인(준원)에게만 DM으로 보낸다. alert_rules는 최초 실행 시에만
+// 시드되므로, 이미 운영 중인 DB에도 반영되도록 별도 1회성 마이그레이션으로 추가한다.
 if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rule_history_promise_v1'").get()) {
   db.prepare(`
     INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee, assignee_slack_id)
-    VALUES ('rule6', '히스토리 약속일 리마인드', 1, 'history_promise', '히스토리에 언급된 날짜가 오늘 ±7일 이내', 'dm', '', '준원', 'U05AGKJNVEY')
+    VALUES ('rule6', '히스토리 약속일 리마인드', 1, 'history_promise', '히스토리에 언급된 날짜가 오늘 ±1일(어제/오늘/내일) 이내', 'dm', '', '준원', 'U05AGKJNVEY')
   `).run();
   db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rule_history_promise_v1', '1')").run();
+}
+// 위 규칙을 처음엔 ±7일로 만들었더니 하루 100건 넘게 쏟아져 실용성이 없다는 피드백으로
+// ±1일로 좁혔다 — 이미 시드된 운영 DB의 조건 설명 문구도 맞춰 갱신한다(동작 자체는
+// runAlertRules의 windowDays 파라미터가 결정하므로 이 텍스트는 표시용일 뿐이지만, 실제
+// 동작과 다른 설명이 남아있으면 혼란을 준다).
+if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rule_history_promise_v2_1day'").get()) {
+  db.prepare("UPDATE alert_rules SET condition_text = '히스토리에 언급된 날짜가 오늘 ±1일(어제/오늘/내일) 이내' WHERE id='rule6'").run();
+  db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rule_history_promise_v2_1day', '1')").run();
 }
 
 // 학습 매핑 테이블 (최초 실행 시 자동 생성)
@@ -1296,7 +1304,7 @@ async function runAlertRules() {
       `).all(cutoff, cutoff);
       lines = matched.map(d => `• ${d.name} (${d.hub_name || "-"})`);
     } else if (rule.trigger_type === "history_promise") {
-      matched = scanHistoryPromises(db, { windowDays: 7 });
+      matched = scanHistoryPromises(db, { windowDays: 1 });
       lines = matched.map(h => `• ${h.debtorName} (${h.hubName || "-"}) — ${h.resolvedDate} 추정 | "${h.snippet}" (기록일 ${h.entryDate})`);
     } else {
       continue; // 이벤트형 트리거는 해당 API 경로에서 즉시 발송하므로 여기서는 스킵
