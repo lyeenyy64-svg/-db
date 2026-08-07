@@ -101,6 +101,14 @@ describe("generateInstallmentDates", () => {
     const dates = generateInstallmentDates({ firstDate: "2026-08-10", interval: "매월", useEndOfMonth: "both", maxCount: 3 });
     expect(dates).toEqual(["2026-08-10", "2026-08-31", "2026-09-10"]);
   });
+  it("both + secondDay: 두 날짜 모두 고정일로 지정할 수 있다 (10일+20일)", () => {
+    const dates = generateInstallmentDates({ firstDate: "2026-08-10", endDate: "2026-09-20", interval: "매월", useEndOfMonth: "both", secondDay: 20 });
+    expect(dates).toEqual(["2026-08-10", "2026-08-20", "2026-09-10", "2026-09-20"]);
+  });
+  it("both + secondDay가 첫 날짜보다 이전이어도 그 달 안에서 순서대로 정렬된다 (20일 시작 + 10일)", () => {
+    const dates = generateInstallmentDates({ firstDate: "2026-08-20", endDate: "2026-09-10", interval: "매월", useEndOfMonth: "both", secondDay: 10 });
+    expect(dates).toEqual(["2026-08-20", "2026-09-10"]);
+  });
 });
 
 describe("suggestEndDate", () => {
