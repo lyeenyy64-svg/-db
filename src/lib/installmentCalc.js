@@ -30,19 +30,41 @@ export function addIntervals(dateStr, interval, n, useEndOfMonth = false) {
   return localDateStr(d);
 }
 
-// interval이 없거나(null/"") endDate가 없으면 firstDate 하나만 반환
-export function generateInstallmentDates({ firstDate, endDate, interval, useEndOfMonth = false }) {
+// interval이 없거나(null/"") endDate/maxCount가 모두 없으면 firstDate 하나만 반환.
+// useEndOfMonth: false=지정일 고정 | true=말일 고정 | "both"=지정일+말일 월 2회(매월에서만 유효)
+export function generateInstallmentDates({ firstDate, endDate, interval, useEndOfMonth = false, maxCount }) {
   if (!firstDate) return [];
-  if (!interval || !endDate) return [firstDate];
-  const endD = new Date(endDate + "T00:00:00");
-  if (isNaN(endD.getTime())) return [firstDate];
+  if (!interval || (!endDate && !maxCount)) return [firstDate];
+  const endD = endDate ? new Date(endDate + "T00:00:00") : null;
+  if (endD && isNaN(endD.getTime())) return [firstDate];
   const dates = [];
-  const MAX = 1200;
-  if (interval === "매월") {
+  const MAX = Math.min(maxCount || 1200, 1200);
+  if (interval === "매월" && useEndOfMonth === "both") {
+    const start = new Date(firstDate + "T00:00:00");
+    const anchorDay = start.getDate();
+    let ny = start.getFullYear(), nm = start.getMonth();
+    let monthsLeft = MAX + 2; // 무한루프 방지용 상한(회차 수보다 넉넉하게)
+    while (dates.length < MAX && monthsLeft-- > 0) {
+      const lastDay = new Date(ny, nm + 1, 0).getDate();
+      const dayDate = new Date(ny, nm, Math.min(anchorDay, lastDay));
+      const eomDate = new Date(ny, nm, lastDay);
+      const monthDates = dayDate.getTime() === eomDate.getTime() ? [dayDate] : [dayDate, eomDate];
+      let stop = false;
+      for (const dd of monthDates) {
+        if (dd < start) continue;
+        if (endD && dd > endD) { stop = true; break; }
+        dates.push(localDateStr(dd));
+        if (dates.length >= MAX) break;
+      }
+      if (stop) break;
+      nm += 1;
+      if (nm > 11) { nm = 0; ny += 1; }
+    }
+  } else if (interval === "매월") {
     const origDay = useEndOfMonth ? 31 : new Date(firstDate + "T00:00:00").getDate();
     let cur = new Date(firstDate + "T00:00:00");
     while (dates.length < MAX) {
-      if (isNaN(cur.getTime()) || cur > endD) break;
+      if (isNaN(cur.getTime()) || (endD && cur > endD)) break;
       dates.push(localDateStr(cur));
       const nm = (cur.getMonth() + 1) % 12;
       const ny = cur.getMonth() === 11 ? cur.getFullYear() + 1 : cur.getFullYear();
@@ -54,7 +76,7 @@ export function generateInstallmentDates({ firstDate, endDate, interval, useEndO
     const origMonth = new Date(firstDate + "T00:00:00").getMonth();
     let cur = new Date(firstDate + "T00:00:00");
     while (dates.length < MAX) {
-      if (isNaN(cur.getTime()) || cur > endD) break;
+      if (isNaN(cur.getTime()) || (endD && cur > endD)) break;
       dates.push(localDateStr(cur));
       cur = new Date(cur.getFullYear() + 1, origMonth, origDay);
     }
@@ -62,12 +84,23 @@ export function generateInstallmentDates({ firstDate, endDate, interval, useEndO
     const iv = interval === "매주" ? 7 : 14;
     let cur = new Date(firstDate + "T00:00:00");
     while (dates.length < MAX) {
-      if (isNaN(cur.getTime()) || cur > endD) break;
+      if (isNaN(cur.getTime()) || (endD && cur > endD)) break;
       dates.push(localDateStr(cur));
       cur.setDate(cur.getDate() + iv);
     }
   }
   return dates;
+}
+
+// count회를 채우기 위한 종료일 추천. "both"(월 2회)는 월 단위로 addIntervals를
+// 적용할 수 없으므로 generateInstallmentDates를 count 기준으로 돌려 마지막 날짜를 취한다.
+export function suggestEndDate(firstDate, interval, count, useEndOfMonth = false) {
+  if (!firstDate || !count || count <= 1) return "";
+  if (interval === "매월" && useEndOfMonth === "both") {
+    const dates = generateInstallmentDates({ firstDate, interval, useEndOfMonth, maxCount: count });
+    return dates[dates.length - 1] || "";
+  }
+  return addIntervals(firstDate, interval, count - 1, useEndOfMonth);
 }
 
 // 채권 총액 / 회당 납부액으로부터 필요한 회차 수 계산

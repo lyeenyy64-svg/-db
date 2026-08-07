@@ -3,7 +3,7 @@ import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
 import { COLLECTION_ORDERS } from "./collectionData.js";
-import { addIntervals, generateInstallmentDates, computeInstallmentCount, buildScheduleAmounts } from "./lib/installmentCalc.js";
+import { addIntervals, generateInstallmentDates, computeInstallmentCount, buildScheduleAmounts, suggestEndDate } from "./lib/installmentCalc.js";
 
 // ─── Utilities ────────────────────────────────────────────
 const fmt = (n) => `${(n || 0).toLocaleString("ko-KR")}원`;
@@ -4399,10 +4399,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const count = computeInstallmentCount(totalClaim, parsedAmount);
 
     const firstDay = firstDueDate ? new Date(firstDueDate + "T00:00:00").getDate() : 0;
-    const showEndOfMonthToggle = repeatInterval === "매월" && firstDay >= 28;
+    const showEndOfMonthToggle = repeatInterval === "매월";
 
     const cappedCount = Math.min(count, 1200);
-    const suggestedEndDate = cappedCount > 1 && firstDueDate ? addIntervals(firstDueDate, repeatInterval, cappedCount - 1, useEndOfMonth) : "";
+    const suggestedEndDate = firstDueDate ? suggestEndDate(firstDueDate, repeatInterval, cappedCount, useEndOfMonth) : "";
 
     const previewDates = generateInstallmentDates({ firstDate: firstDueDate, endDate, interval: repeat ? repeatInterval : null, useEndOfMonth });
 
@@ -4416,7 +4416,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         const planId = uid("INS");
         const pr = await fetch("/api/installments", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: planId, debtorId, paymentTiming: useEndOfMonth ? "말일" : "", monthlyAmount: parsedAmount, startDate: firstDueDate, status: "진행중", memo }),
+          body: JSON.stringify({ id: planId, debtorId, paymentTiming: useEndOfMonth === "both" ? `${firstDay}일+말일` : useEndOfMonth ? "말일" : "", monthlyAmount: parsedAmount, startDate: firstDueDate, status: "진행중", memo }),
         });
         const pResult = await pr.json();
         if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
@@ -4454,13 +4454,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {showEndOfMonthToggle && (
             <div style={{ padding: "8px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ color: "#92400e", fontWeight: 600 }}>매월 납부일:</span>
-              {[false, true].map(eom => (
+              {[false, true, "both"].map(eom => (
                 <button key={String(eom)} onClick={() => setUseEndOfMonth(eom)}
                   style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: useEndOfMonth === eom ? "#f97316" : "var(--brd)", background: useEndOfMonth === eom ? "#f97316" : "var(--bg)", color: useEndOfMonth === eom ? "#fff" : "var(--tp)" }}>
-                  {eom ? "말일" : `${firstDay}일 고정`}
+                  {eom === "both" ? "월 2회" : eom ? "말일" : `${firstDay}일 고정`}
                 </button>
               ))}
-              <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth ? "매달 마지막 날에 납부" : `매달 ${firstDay}일에 납부 (짧은 달은 말일)`}</span>
+              <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth === "both" ? `매달 ${firstDay}일 · 말일 총 2회 납부` : useEndOfMonth ? "매달 마지막 날에 납부" : `매달 ${firstDay}일에 납부 (짧은 달은 말일)`}</span>
             </div>
           )}
           {debtor && (
@@ -4478,13 +4478,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {repeat && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
               </div>
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--tp)" }}>되풀이 일정 등록</span>
-              {repeat && endDate && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatInterval}{useEndOfMonth ? " (말일)" : ""} · {previewDates.length}건</span>}
+              {repeat && endDate && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatInterval}{useEndOfMonth === "both" ? ` (${firstDay}일+말일)` : useEndOfMonth ? " (말일)" : ""} · {previewDates.length}건</span>}
             </div>
             {repeat && (
               <div style={{ padding: "12px", borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 10 }}>
                 <div style={{ display: "flex", gap: 5 }}>
                   {["매주", "격주", "매월", "매년"].map(t => (
-                    <button key={t} onClick={() => setRepeatInterval(t)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer", background: repeatInterval === t ? "var(--acc)" : "var(--bg2)", color: repeatInterval === t ? "#fff" : "var(--tp)" }}>{t}</button>
+                    <button key={t} onClick={() => { setRepeatInterval(t); setUseEndOfMonth(false); }} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer", background: repeatInterval === t ? "var(--acc)" : "var(--bg2)", color: repeatInterval === t ? "#fff" : "var(--tp)" }}>{t}</button>
                   ))}
                 </div>
                 <Field label="종료일">
@@ -6203,16 +6203,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const totalClaim = plan?.totalClaim || debtor?.finalBalanceLegal || 0;
       const parsedAmount = parseInt(amountStr.replace(/,/g, ""), 10) || 0;
       const firstDay = date ? new Date(date + "T00:00:00").getDate() : 0;
-      const showEndOfMonthToggle = repeatType === "월간" && firstDay >= 28;
+      const showEndOfMonthToggle = repeatType === "월간";
 
       // 추천 계산 (월간: 횟수, 주간/격주: 주 수)
       const suggestedCount = computeInstallmentCount(totalClaim, parsedAmount);
       const intervalForCalc = repeatType === "월간" ? "매월" : repeatType === "주간" ? "매주" : repeatType === "격주" ? "격주" : null;
       const applySuggestion = () => {
         if (!date || !suggestedCount || !intervalForCalc) return;
-        setRepeatEnd(addIntervals(date, intervalForCalc, suggestedCount - 1, useEndOfMonth));
+        setRepeatEnd(suggestEndDate(date, intervalForCalc, suggestedCount, useEndOfMonth));
       };
-      const suggestionLabel = repeatType === "월간" ? `약 ${suggestedCount}개월` : repeatType === "주간" ? `약 ${suggestedCount}주` : repeatType === "격주" ? `약 ${suggestedCount}회(격주)` : "";
+      const suggestionLabel = repeatType === "월간"
+        ? (useEndOfMonth === "both" ? `약 ${Math.ceil(suggestedCount / 2)}개월(총 ${suggestedCount}회)` : `약 ${suggestedCount}개월`)
+        : repeatType === "주간" ? `약 ${suggestedCount}주` : repeatType === "격주" ? `약 ${suggestedCount}회(격주)` : "";
 
       const previewDates = generateInstallmentDates({ firstDate: date, endDate: repeatEnd, interval: intervalForCalc, useEndOfMonth });
 
@@ -6284,7 +6286,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   {repeatType !== "없음" && <span style={{ color: "#fff", fontSize: 10, fontWeight: 700 }}>✓</span>}
                 </div>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "var(--tp)" }}>되풀이 일정 등록</span>
-                {repeatType !== "없음" && repeatEnd && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatType} · {previewDates.length}건</span>}
+                {repeatType !== "없음" && repeatEnd && <span style={{ fontSize: 11, color: "var(--acc)", marginLeft: "auto" }}>{repeatType}{useEndOfMonth === "both" ? ` (${firstDay}일+말일)` : useEndOfMonth ? " (말일)" : ""} · {previewDates.length}건</span>}
               </div>
               {repeatType !== "없음" && (
                 <div style={{ padding: "12px", borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -6296,13 +6298,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   {showEndOfMonthToggle && (
                     <div style={{ padding: "8px 12px", background: "#fff7ed", borderRadius: 8, border: "1px solid #fed7aa", fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <span style={{ color: "#92400e", fontWeight: 600 }}>매월 납부일:</span>
-                      {[false, true].map(eom => (
+                      {[false, true, "both"].map(eom => (
                         <button key={String(eom)} onClick={() => setUseEndOfMonth(eom)}
                           style={{ padding: "4px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", borderColor: useEndOfMonth === eom ? "#f97316" : "var(--brd)", background: useEndOfMonth === eom ? "#f97316" : "var(--bg)", color: useEndOfMonth === eom ? "#fff" : "var(--tp)" }}>
-                          {eom ? "말일" : `${firstDay}일 고정`}
+                          {eom === "both" ? "월 2회" : eom ? "말일" : `${firstDay}일 고정`}
                         </button>
                       ))}
-                      <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth ? "매달 마지막 날" : `매달 ${firstDay}일 (짧은 달은 말일)`}</span>
+                      <span style={{ fontSize: 11, color: "#92400e" }}>{useEndOfMonth === "both" ? `매달 ${firstDay}일 · 말일 총 2회` : useEndOfMonth ? "매달 마지막 날" : `매달 ${firstDay}일 (짧은 달은 말일)`}</span>
                     </div>
                   )}
                   <Field label="종료일"><input type="date" value={repeatEnd} onChange={e => setRepeatEnd(e.target.value)} style={inp} /></Field>

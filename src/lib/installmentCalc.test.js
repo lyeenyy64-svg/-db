@@ -5,6 +5,7 @@ import {
   generateInstallmentDates,
   computeInstallmentCount,
   buildScheduleAmounts,
+  suggestEndDate,
 } from "./installmentCalc.js";
 
 describe("computeInstallmentCount", () => {
@@ -87,6 +88,31 @@ describe("generateInstallmentDates", () => {
   it("종료일이 첫 날짜보다 이전이면 빈 배열 (기존 동작)", () => {
     const dates = generateInstallmentDates({ firstDate: "2026-08-01", endDate: "2026-07-01", interval: "매월" });
     expect(dates).toEqual([]);
+  });
+  it("both 옵션: 매월 지정일 + 말일로 월 2회 생성한다", () => {
+    const dates = generateInstallmentDates({ firstDate: "2026-08-10", endDate: "2026-10-10", interval: "매월", useEndOfMonth: "both" });
+    expect(dates).toEqual(["2026-08-10", "2026-08-31", "2026-09-10", "2026-09-30", "2026-10-10"]);
+  });
+  it("both 옵션: 지정일이 말일과 같아지는 달은 중복 없이 하루만", () => {
+    const dates = generateInstallmentDates({ firstDate: "2026-01-30", endDate: "2026-02-28", interval: "매월", useEndOfMonth: "both" });
+    expect(dates).toEqual(["2026-01-30", "2026-01-31", "2026-02-28"]);
+  });
+  it("maxCount로 종료일 없이 회차 수만큼 생성한다", () => {
+    const dates = generateInstallmentDates({ firstDate: "2026-08-10", interval: "매월", useEndOfMonth: "both", maxCount: 3 });
+    expect(dates).toEqual(["2026-08-10", "2026-08-31", "2026-09-10"]);
+  });
+});
+
+describe("suggestEndDate", () => {
+  it("일반 매월 모드는 addIntervals와 동일한 결과", () => {
+    expect(suggestEndDate("2026-08-10", "매월", 3)).toBe(addIntervals("2026-08-10", "매월", 2));
+  });
+  it("both 모드는 월 2회 기준으로 종료일을 추천한다", () => {
+    expect(suggestEndDate("2026-08-10", "매월", 3, "both")).toBe("2026-09-10");
+  });
+  it("count가 1 이하면 빈 문자열", () => {
+    expect(suggestEndDate("2026-08-10", "매월", 1, "both")).toBe("");
+    expect(suggestEndDate("2026-08-10", "매월", 0)).toBe("");
   });
 });
 
