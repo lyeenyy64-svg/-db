@@ -6731,7 +6731,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <span className="mono" style={{ fontWeight: 700, color: "var(--acc)" }}>{fmt(s.scheduledAmount)}</span>
                     {s.paidAmount > 0 && <span style={{ fontSize: 12, color: "#047857" }}>입금 {fmt(s.paidAmount)}</span>}
                     {shortfall > 0 && <span style={{ fontSize: 12, color: "#c2410c" }}>미납 {fmt(shortfall)}</span>}
-                    {(s.status === "미납" || s.status === "일부납") && (
+                    {(s.status === "미납" || s.status === "일부납" || s.status === "완납") && (
                       <button onClick={() => openDiagnose(s.id)}
                         style={{ marginLeft: "auto", padding: "2px 10px", borderRadius: 6, background: "#3b82f612", color: "#3b82f6", border: "1px solid #3b82f640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
                         왜 {s.status}?
