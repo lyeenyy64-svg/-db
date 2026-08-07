@@ -1617,6 +1617,7 @@ const TRIGGER_TYPES = [
   { key: "status_change", label: "추심상태 변경" },
   { key: "new_debtor", label: "신규 채권 등록" },
   { key: "seizure_collected", label: "압류 회수 발생" },
+  { key: "history_promise", label: "히스토리 약속일 리마인드 (±7일)" },
 ];
 
 // ─── Brand Logo ───────────────────────────────────────────
@@ -11382,7 +11383,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>트리거 유형 안내</div>
             {TRIGGER_TYPES.map(t => (<div key={t.key} style={{ display: "flex", gap: 10, padding: "3px 0", fontSize: 12 }}><span className="mono" style={{ fontWeight: 500, minWidth: 160, color: "var(--tm)" }}>{t.key}</span><span style={{ color: "var(--ts)" }}>{t.label}</span>{t.key === "seizure_collected" && <span style={{ fontSize: 11, color: "var(--err)" }}>(아직 자동 감지 미지원)</span>}</div>))}
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--brd)", fontSize: 11, color: "var(--tm)", lineHeight: 1.6 }}>
-              분할상환 미납/회생 변제금 미납/고액 잔액/장기 미연락은 30분마다 서버가 자동 점검해 하루 1회 요약 발송하고,
+              분할상환 미납/회생 변제금 미납/고액 잔액/장기 미연락/히스토리 약속일 리마인드는 30분마다 서버가 자동 점검해 하루 1회 요약 발송하고,
               신규 입금/신규 채권 등록/추심상태 변경은 발생 즉시 발송됩니다. 채무자 개인정보가 포함되므로 채널 발송은 금지되어 있으며,
               DM 대상자의 Slack ID를 등록해야만 실제로 발송됩니다 — 등록하지 않으면 채널로 새지 않고 그냥 발송이 건너뜁니다.
             </div>

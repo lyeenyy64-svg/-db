@@ -17,6 +17,7 @@ const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
 const fileScanner = require("./fileScanner.cjs");
 const { generateHwpx, buildPreviewHtml } = require("./documentGenerator.cjs");
+const { scanHistoryPromises } = require("./historyPromiseScan.cjs");
 const { WebClient: SlackClient } = require("@slack/web-api");
 
 const slackNotify = process.env.SLACK_BOT_TOKEN ? new SlackClient(process.env.SLACK_BOT_TOKEN) : null;
@@ -227,6 +228,17 @@ if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rules_dm_fix_v1'").
   db.prepare("UPDATE alert_rules SET target='dm', channel='', assignee='준원', assignee_slack_id='U05AGKJNVEY' WHERE id='rule1'").run();
   db.prepare("UPDATE alert_rules SET assignee='준원', assignee_slack_id='U05AGKJNVEY' WHERE id='rule3'").run();
   db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rules_dm_fix_v1', '1')").run();
+}
+
+// 채무자 히스토리에 적힌 입금 약속일(오늘 ±7일)을 매일 리마인드하는 새 규칙 — 요청자
+// 본인(준원)에게만 DM으로 보낸다. alert_rules는 최초 실행 시에만 시드되므로, 이미
+// 운영 중인 DB에도 반영되도록 별도 1회성 마이그레이션으로 추가한다.
+if (!db.prepare("SELECT value FROM kv_store WHERE key='alert_rule_history_promise_v1'").get()) {
+  db.prepare(`
+    INSERT INTO alert_rules (id, name, enabled, trigger_type, condition_text, target, channel, assignee, assignee_slack_id)
+    VALUES ('rule6', '히스토리 약속일 리마인드', 1, 'history_promise', '히스토리에 언급된 날짜가 오늘 ±7일 이내', 'dm', '', '준원', 'U05AGKJNVEY')
+  `).run();
+  db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('alert_rule_history_promise_v1', '1')").run();
 }
 
 // 학습 매핑 테이블 (최초 실행 시 자동 생성)
@@ -1283,6 +1295,9 @@ async function runAlertRules() {
           AND NOT EXISTS (SELECT 1 FROM activities a WHERE a.debtor_id = d.id AND a.activity_date >= ?)
       `).all(cutoff, cutoff);
       lines = matched.map(d => `• ${d.name} (${d.hub_name || "-"})`);
+    } else if (rule.trigger_type === "history_promise") {
+      matched = scanHistoryPromises(db, { windowDays: 7 });
+      lines = matched.map(h => `• ${h.debtorName} (${h.hubName || "-"}) — ${h.resolvedDate} 추정 | "${h.snippet}" (기록일 ${h.entryDate})`);
     } else {
       continue; // 이벤트형 트리거는 해당 API 경로에서 즉시 발송하므로 여기서는 스킵
     }
