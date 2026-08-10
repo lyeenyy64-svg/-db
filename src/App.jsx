@@ -3547,9 +3547,19 @@ export default function App() {
     if (sort.f) {
       grouped.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
     } else {
-      // 기본 정렬: ①최근 히스토리 작성순 → ②채무자 관리 수정사항 발생순 → ③연체 에이징 구간(짧은 순) → ④채권액 큰 순
+      // 기본 정렬: ①히스토리 작성 또는 채무자 정보 수정 중 더 최근 것(둘 중 하나라도 있으면
+      // 맨 위, 둘 다 없는 채무자만 ②연체 에이징 구간(짧은 순) → ③채권액 큰 순으로 내려간다.
       const normDate = (s) => String(s || "").replace(/\./g, "-");
       const extractDate = (s) => { const m = String(s || "").match(/(\d{4})[.-](\d{1,2})[.-](\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; };
+      // 히스토리 createdAt은 UTC ISO(new Date().toISOString()), 채무자 updatedAt은 서버
+      // datetime('now','localtime')(공백 구분, 타임존 표기 없음) — 문자열로 그냥 비교하면
+      // 이 표기 차이(UTC vs 로컬) 때문에 실제로는 더 최근인 쪽이 뒤바뀔 수 있어, 절대 시각(ms)
+      // 으로 통일해서 비교한다.
+      const toMs = (s) => {
+        if (!s) return null;
+        const t = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T00:00:00").getTime() : new Date(s.replace(" ", "T")).getTime();
+        return isNaN(t) ? null : t;
+      };
       const lastPayByDebtor = {};
       data.payments.forEach(p => {
         if (!p.debtorId || !p.paymentDate) return;
@@ -3563,10 +3573,13 @@ export default function App() {
         // date는 "일이 있었던 날"이라 사용자가 과거 날짜로 임의 지정할 수 있어 정렬 기준으로
         // 쓰면 방금 쓴 글이 맨 위로 안 올라올 수 있다 — 실제로 시스템에 기입한 시각인
         // createdAt을 우선 쓰고, createdAt이 없는(예전) 항목만 date로 대신한다.
-        const histTimes = getHistM(d.id).map(h => h.createdAt || normDate(h.date)).filter(Boolean);
-        const lastHistory = histTimes.length ? histTimes.reduce((x, y) => (x > y ? x : y)) : null;
+        const histMsList = getHistM(d.id).map(h => toMs(h.createdAt || normDate(h.date))).filter(v => v != null);
+        const lastHistoryMs = histMsList.length ? Math.max(...histMsList) : null;
+        const lastModifiedMs = toMs(d.updatedAt);
+        const lastTouchedMs = lastHistoryMs != null && lastModifiedMs != null
+          ? Math.max(lastHistoryMs, lastModifiedMs)
+          : (lastHistoryMs ?? lastModifiedMs);
         const lastPayment = lastPayByDebtor[d.id] || null;
-        const lastModified = d.updatedAt || null;
         const anchor = extractDate(lastPayment || d.loanDate);
         let agingIdx = AGING_BUCKETS.length;
         if (anchor) {
@@ -3577,18 +3590,14 @@ export default function App() {
             agingIdx = idx === -1 ? AGING_BUCKETS.length - 1 : idx;
           }
         }
-        return { lastHistory, lastModified, agingIdx };
+        return { lastTouchedMs, agingIdx };
       };
       grouped.sort((a, b) => {
         const ia = sortInfo(a), ib = sortInfo(b);
-        if (ia.lastHistory || ib.lastHistory) {
-          if (!ia.lastHistory) return 1;
-          if (!ib.lastHistory) return -1;
-          if (ia.lastHistory !== ib.lastHistory) return ia.lastHistory > ib.lastHistory ? -1 : 1;
-        } else if (ia.lastModified || ib.lastModified) {
-          if (!ia.lastModified) return 1;
-          if (!ib.lastModified) return -1;
-          if (ia.lastModified !== ib.lastModified) return ia.lastModified > ib.lastModified ? -1 : 1;
+        if (ia.lastTouchedMs != null || ib.lastTouchedMs != null) {
+          if (ia.lastTouchedMs == null) return 1;
+          if (ib.lastTouchedMs == null) return -1;
+          if (ia.lastTouchedMs !== ib.lastTouchedMs) return ib.lastTouchedMs - ia.lastTouchedMs;
         }
         if (ia.agingIdx !== ib.agingIdx) return ia.agingIdx - ib.agingIdx;
         return (b.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0);
