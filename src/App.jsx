@@ -370,7 +370,7 @@ const addInstallmentMemoToDebtorHistory = (debtorId, dueDate, amount, text, user
   const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
   const context = [dueDate ? fmtDate(dueDate) : "", amount ? fmt(amount) : ""].filter(Boolean).join(" ");
   const content = `[분할상환${context ? " " + context : ""}] ${text}`;
-  saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자", sourceHistoryId }, ...hist]);
+  saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자", sourceHistoryId, createdAt: new Date().toISOString() }, ...hist]);
 };
 // 분할상환 메모 삭제 — 이력 로그 한 줄 + 현재 memo 값을 지우고, 그 메모가 자동으로 만들어둔
 // 채무자 "히스토리" 탭 항목도 sourceHistoryId로 찾아서 함께 지운다.
@@ -2141,13 +2141,13 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
       if (idx >= 0) {
         if (hist[idx].content === text) return;
         const updated = [...hist];
-        updated[idx] = { ...updated[idx], content: text, date: todayDot };
+        updated[idx] = { ...updated[idx], content: text, date: todayDot, createdAt: new Date().toISOString() };
         saveHistM(debtorId, updated);
         return;
       }
     }
     const newId = uid("HIST");
-    saveHistM(debtorId, [{ id: newId, date: todayDot, content: text, createdBy: currentUserName || "관리자" }, ...hist]);
+    saveHistM(debtorId, [{ id: newId, date: todayDot, content: text, createdBy: currentUserName || "관리자", createdAt: new Date().toISOString() }, ...hist]);
     updateKeyIssue("negotiations", r.id, { histId: newId });
   };
 
@@ -3531,7 +3531,7 @@ export default function App() {
     if (sort.f) {
       grouped.sort((a, b) => { const av = a[sort.f], bv = b[sort.f]; if (typeof av === "number") return sort.d === "asc" ? av - bv : bv - av; return sort.d === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av)); });
     } else {
-      // 기본 정렬: ①최근 히스토리 기입순 → ②최근 입금순 → ③연체 에이징 구간(짧은 순) → ④채권액 큰 순
+      // 기본 정렬: ①최근 히스토리 작성순 → ②채무자 관리 수정사항 발생순 → ③연체 에이징 구간(짧은 순) → ④채권액 큰 순
       const normDate = (s) => String(s || "").replace(/\./g, "-");
       const extractDate = (s) => { const m = String(s || "").match(/(\d{4})[.-](\d{1,2})[.-](\d{1,2})/); return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : null; };
       const lastPayByDebtor = {};
@@ -3544,9 +3544,13 @@ export default function App() {
         // 엑셀 원본에서 넘어온 d.history는 원본 파일 파싱 오류로 엉뚱한 값이 섞여 들어간 경우가 있어
         // (예: 브랜드명·담당자명이 날짜에 잘못 매칭됨) 정렬 기준에서 제외하고, 이 프로그램에서
         // "히스토리 추가"로 직접 입력한 항목(히스토리 관리)만 "최근 히스토리"로 취급한다.
-        const histDates = getHistM(d.id).map(h => h.date).map(normDate).filter(Boolean);
-        const lastHistory = histDates.length ? histDates.reduce((x, y) => (x > y ? x : y)) : null;
+        // date는 "일이 있었던 날"이라 사용자가 과거 날짜로 임의 지정할 수 있어 정렬 기준으로
+        // 쓰면 방금 쓴 글이 맨 위로 안 올라올 수 있다 — 실제로 시스템에 기입한 시각인
+        // createdAt을 우선 쓰고, createdAt이 없는(예전) 항목만 date로 대신한다.
+        const histTimes = getHistM(d.id).map(h => h.createdAt || normDate(h.date)).filter(Boolean);
+        const lastHistory = histTimes.length ? histTimes.reduce((x, y) => (x > y ? x : y)) : null;
         const lastPayment = lastPayByDebtor[d.id] || null;
+        const lastModified = d.updatedAt || null;
         const anchor = extractDate(lastPayment || d.loanDate);
         let agingIdx = AGING_BUCKETS.length;
         if (anchor) {
@@ -3557,7 +3561,7 @@ export default function App() {
             agingIdx = idx === -1 ? AGING_BUCKETS.length - 1 : idx;
           }
         }
-        return { lastHistory, lastPayment, agingIdx };
+        return { lastHistory, lastModified, agingIdx };
       };
       grouped.sort((a, b) => {
         const ia = sortInfo(a), ib = sortInfo(b);
@@ -3565,10 +3569,10 @@ export default function App() {
           if (!ia.lastHistory) return 1;
           if (!ib.lastHistory) return -1;
           if (ia.lastHistory !== ib.lastHistory) return ia.lastHistory > ib.lastHistory ? -1 : 1;
-        } else if (ia.lastPayment || ib.lastPayment) {
-          if (!ia.lastPayment) return 1;
-          if (!ib.lastPayment) return -1;
-          if (ia.lastPayment !== ib.lastPayment) return ia.lastPayment > ib.lastPayment ? -1 : 1;
+        } else if (ia.lastModified || ib.lastModified) {
+          if (!ia.lastModified) return 1;
+          if (!ib.lastModified) return -1;
+          if (ia.lastModified !== ib.lastModified) return ia.lastModified > ib.lastModified ? -1 : 1;
         }
         if (ia.agingIdx !== ib.agingIdx) return ia.agingIdx - ib.agingIdx;
         return (b.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0);
@@ -5064,7 +5068,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const type = histForm.type;
       if (!date || !content) return;
       if (histForm.mode === "add") {
-        updHistM([{ id: uid("HIST"), date, content, type, createdBy: currentUser?.name }, ...histManual]);
+        updHistM([{ id: uid("HIST"), date, content, type, createdBy: currentUser?.name, createdAt: new Date().toISOString() }, ...histManual]);
       } else {
         if (histForm.key.startsWith("e_")) {
           updHistE({ ...histEdits, [histForm.key]: { date, content, type } });
