@@ -1226,19 +1226,28 @@ const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showT
 
 // ─── VerifyExcelModal (재무실 대여금 회수 스케쥴 대사) ──────
 // 브랜드마다 재무팀이 보내는 파일의 시트명/컬럼 구성이 다르므로 소스별로 분리해뒀다.
-// 새 브랜드(예: 딜버) 파일이 추가되면 이 배열에 항목만 하나 더 추가하면 된다.
+// 새 브랜드 파일이 추가되면 이 배열에 항목만 하나 더 추가하면 된다. sheetNames가 여러 개면
+// (예: 딜버는 딜버대여금/웰컴대여금/타계열사대여금 3개 시트로 나뉘어 있다) 시트별로 각각
+// 해당 월의 회수 항목을 뽑아 모두 합친다 — 시트마다 컬럼 배치가 조금씩 달라도(예: 웰컴대여금
+// 시트만 "웰컴이자" 컬럼이 하나 더 있음) 컬럼을 이름으로 찾기 때문에 그대로 동작한다.
 const VERIFY_SOURCES = [
   {
     key: "barogo", label: "바로고", brand: "B",
-    sheetName: (y) => `대여금 회수 실적_${y}년`,
+    sheetNames: (y) => [`대여금 회수 실적_${y}년`],
     monthBase: 0, // 연도 라벨 셀 자체가 1월 컬럼 위치 → monthCol = yearCol + (month-1)
     hubNameKeys: ["허브명"], hubCodeKeys: ["허브코드"], companyKeys: ["거래처"],
   },
   {
     key: "moaline", label: "모아라인 (바다코리아)", brand: "M",
-    sheetName: (y) => `${y}대여금현황(월별)`,
+    sheetNames: (y) => [`${y}대여금현황(월별)`],
     monthBase: 1, // 연도 라벨 셀 다음(재무팀 조정 칸 다음)이 1월 → monthCol = yearCol + month
     hubNameKeys: ["출금명", "허브명"], hubCodeKeys: ["거래처코드", "허브코드"], companyKeys: ["모아콜코드", "거래처"],
+  },
+  {
+    key: "dilber", label: "딜버 (더원인터내셔널)", brand: "D",
+    sheetNames: () => ["딜버대여금", "웰컴대여금", "타계열사대여금"],
+    monthBase: 0, // 연도 라벨 셀 자체가 1월 컬럼 위치 → monthCol = yearCol + (month-1)
+    hubNameKeys: ["허브명"], hubCodeKeys: ["허브코드"], companyKeys: ["거래처"],
   },
 ];
 
@@ -1256,11 +1265,9 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
 
   const findCol = (row, keys) => row.findIndex(c => keys.includes((c ?? "").toString().trim()));
 
-  const parseFile = async () => {
-    const buf = await file.arrayBuffer();
-    const XLSX = await import("xlsx");
-    const wb = XLSX.read(buf, { type: "array" });
-    const sheetName = source.sheetName(year);
+  // 시트 하나에서 해당 연/월에 회수 표시된 채무자 목록을 뽑아낸다 — 소스에 시트가 여러 개면
+  // (예: 딜버) parseFile이 이 함수를 시트마다 호출해 결과를 합친다.
+  const parseSheetItems = (XLSX, wb, sheetName) => {
     const ws = wb.Sheets[sheetName];
     if (!ws) throw new Error(`시트를 찾을 수 없습니다: "${sheetName}" — 이 파일이 "${source.label}" 형식이 맞는지 확인해주세요`);
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
@@ -1277,7 +1284,7 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
       });
       if (matches >= 2 && cols[String(year)] != null) yearCol = cols[String(year)];
     }
-    if (yearCol === null) throw new Error(`"${year}년" 블록을 찾지 못했습니다`);
+    if (yearCol === null) throw new Error(`"${sheetName}" 시트에서 "${year}년" 블록을 찾지 못했습니다`);
     const monthCol = yearCol + source.monthBase + (month - 1);
 
     let headerRow = -1, colDebtor = -1, colHub = -1, colHubCode = -1, colCompany = -1;
@@ -1292,7 +1299,7 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
         break;
       }
     }
-    if (headerRow < 0) throw new Error('"채무자" 컬럼을 찾지 못했습니다 — 파일 형식을 확인해주세요');
+    if (headerRow < 0) throw new Error(`"${sheetName}" 시트에서 "채무자" 컬럼을 찾지 못했습니다 — 파일 형식을 확인해주세요`);
 
     const items = [];
     for (let r = headerRow + 1; r < rows.length; r++) {
@@ -1310,6 +1317,15 @@ const VerifyExcelModal = ({ onClose, onReload, showToast, onGoToPending }) => {
         });
       }
     }
+    return items;
+  };
+
+  const parseFile = async () => {
+    const buf = await file.arrayBuffer();
+    const XLSX = await import("xlsx");
+    const wb = XLSX.read(buf, { type: "array" });
+    const items = [];
+    for (const sheetName of source.sheetNames(year)) items.push(...parseSheetItems(XLSX, wb, sheetName));
     return items;
   };
 
