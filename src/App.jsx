@@ -1584,7 +1584,7 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
           <KoreanInput value={memo} onChange={e => setMemo(e.target.value)} placeholder="예: 월급 후 3일 뒤 입금하겠다고 함" style={{ ...inp, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
         </Field>
         {filledSplits.length > 0 && (
-          <div style={{ background: "#8b5cf610", border: "1px solid #8b5cf640", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#7c3aed" }}>
+          <div style={{ background: "#d946ef1c", border: "1px solid #d946ef55", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#a21caf" }}>
             {alreadyPaid
               ? <>기존 <b>{sched?.status}</b> 일정은 그대로 유지되고, {filledSplits.length > 1
                   ? <>아래 <b>{filledSplits.length}개 날짜</b>에 새 납부 일정이 각각 추가로 생성됩니다.</>
@@ -5707,7 +5707,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           const chain = getRolloverChainDates(s, data.installmentSchedules);
                           const shortChain = chain.map(dt => dt.slice(5).replace("-", "/")).join("→");
                           return (
-                            <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 10, fontSize: 10, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>
+                            <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 10, fontSize: 10, fontWeight: 600, background: "#d946ef1c", color: "#a21caf", border: "1px solid #d946ef55" }}>
                               ↩ 이월됨 ({shortChain})
                             </span>
                           );
@@ -5715,7 +5715,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         {canEdit && s.status !== "완납" && s.status !== "이월" && (
                           <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
                             <button onClick={async () => { await fetch(`/api/installments/schedules/${s.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완납", userName: "관리자" }) }); await reloadInstallments(); showToast("완납 처리됨"); }} style={{ padding: "2px 10px", borderRadius: 5, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>완납</button>
-                            <button onClick={() => setModal({ type: "rollover", sched: { ...s, debtorName: d.name } })} style={{ padding: "2px 10px", borderRadius: 5, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>이월</button>
+                            <button onClick={() => setModal({ type: "rollover", sched: { ...s, debtorName: d.name } })} style={{ padding: "2px 10px", borderRadius: 5, background: "#d946ef1c", color: "#a21caf", border: "1px solid #d946ef55", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>이월</button>
                             <button onClick={() => { setInstMemoSchedId(s.id); setInstMemoText(""); }} style={{ padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 11, cursor: "pointer" }}>메모</button>
                           </div>
                         )}
@@ -5740,8 +5740,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ position: "relative", paddingLeft: 20 }}>
                 {debtorInstHistory.length > 0 && <div style={{ position: "absolute", left: 7, top: 6, bottom: 6, width: 2, background: "var(--brd)", borderRadius: 2 }} />}
                 {debtorInstHistory.map((h) => {
-                  const evtColor = h.eventType === "완납" ? "#047857" : h.eventType === "이월" ? "#6d28d9" : h.eventType === "지연" ? "#b45309" : h.eventType === "메모" ? "#3b82f6" : h.eventType === "미납" ? "#b91c1c" : h.eventType === "예정" ? "#1d4ed8" : "var(--tm)";
-                  const evtBg = h.eventType === "완납" ? "#10b98118" : h.eventType === "이월" ? "#8b5cf618" : h.eventType === "지연" ? "#f59e0b18" : h.eventType === "메모" ? "#3b82f618" : h.eventType === "미납" ? "#ef444418" : h.eventType === "예정" ? "#3b82f618" : "var(--bg2)";
+                  const evtColor = h.eventType === "완납" ? "#047857" : h.eventType === "이월" ? "#a21caf" : h.eventType === "지연" ? "#b45309" : h.eventType === "메모" ? "#3b82f6" : h.eventType === "미납" ? "#b91c1c" : h.eventType === "예정" ? "#1d4ed8" : "var(--tm)";
+                  const evtBg = h.eventType === "완납" ? "#10b98118" : h.eventType === "이월" ? "#d946ef1c" : h.eventType === "지연" ? "#f59e0b18" : h.eventType === "메모" ? "#3b82f618" : h.eventType === "미납" ? "#ef444418" : h.eventType === "예정" ? "#3b82f618" : "var(--bg2)";
                   const [dt, tm] = (h.createdAt || "").split(" ");
                   return (
                     <div key={h.id} style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "flex-start" }}>
@@ -6275,11 +6275,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       showToast(result.sent ? "Slack 알림 전송 완료" : (result.reason || "알림 없음"));
     };
 
-    const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#8b5cf610", t: "#6d28d9", b: "#8b5cf640" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
-    // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 보라색 계열로 항상 구분되게 표시한다.
+    // "이월"을 보라(#8b5cf6)로 쓰면 "예정"의 파랑(#3b82f6)과 옅은 배경 위에서 색상이
+    // 너무 가까워 구분이 잘 안 됐다 — 이월은 색상환에서 파랑과 훨씬 멀리 떨어진 자홍
+    // (fuchsia #d946ef) 계열로 바꾸고, 배경/테두리 농도도 조금 더 올려 대비를 키웠다.
+    const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#d946ef1c", t: "#a21caf", b: "#d946ef55" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
+    // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 자홍색 계열로 항상 구분되게 표시한다.
     // 예전엔 진한 보라 solid 배경 + 흰 글자였는데, 달력에서 다른 상태 칩들(전부 옅은 배경톤)
     // 대비 너무 튀어서 다른 "이월" 배지(5604, 6714행)와 같은 옅은 팔레트로 맞췄다.
-    const rolloverColor = { bg: "#8b5cf618", t: "#6d28d9", b: "#8b5cf640" };
+    const rolloverColor = { bg: "#d946ef22", t: "#a21caf", b: "#d946ef55" };
 
     const calCells = useMemo(() => {
       const [y, m] = viewMonth.split("-").map(Number);
@@ -6825,7 +6828,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         const chain = getRolloverChainDates(s, data.installmentSchedules);
                         const shortChain = chain.map(dt => dt.slice(5).replace("-", "/")).join("→");
                         return (
-                          <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#8b5cf618", color: "#6d28d9", border: "1px solid #8b5cf640" }}>
+                          <span title={`이월 이력: ${chain.join(" → ")}`} style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#d946ef1c", color: "#a21caf", border: "1px solid #d946ef55" }}>
                             ↩ 이월됨 ({shortChain})
                           </span>
                         );
@@ -6944,12 +6947,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                             미납
                           </button>
                           <button onClick={() => { onClose(); setModal({ type: "rollover", sched: { ...s } }); }}
-                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "이월" ? "1px solid #8b5cf640" : "1px solid #e5e7eb", background: s.status === "이월" ? "#8b5cf6" : "#e5e7eb", color: s.status === "이월" ? "#fff" : "#111827" }}>
+                            style={{ padding: "5px 12px", borderRadius: 6, fontWeight: 600, fontSize: 12, cursor: "pointer", border: s.status === "이월" ? "1px solid #d946ef55" : "1px solid #e5e7eb", background: s.status === "이월" ? "#d946ef" : "#e5e7eb", color: s.status === "이월" ? "#fff" : "#111827" }}>
                             이월
                           </button>
                         </>
                       )}
-                      {isRolledOver && <span style={{ fontSize: 12, color: "#6d28d9", padding: "5px 0" }}>이월 처리됨</span>}
+                      {isRolledOver && <span style={{ fontSize: 12, color: "#a21caf", padding: "5px 0" }}>이월 처리됨</span>}
                       <button onClick={() => deleteSchedule(s.id)}
                         style={{ padding: "5px 8px", borderRadius: 6, background: "none", color: "var(--tm)", border: "1px solid var(--brd)", fontSize: 12, cursor: "pointer", marginLeft: "auto" }}>
                         <I name="trash" size={12} />
@@ -7128,7 +7131,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                                 cursor: canEdit ? "grab" : "pointer",
                                 opacity: dragSchedId === s.id ? 0.4 : 1,
                               }}>
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{s.debtorName}</span>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{isUnresolvedRollover && "↩ "}{s.debtorName}</span>
                               <span style={{ flexShrink: 0, opacity: 0.8 }}>{(s.scheduledAmount / 10000).toFixed(0)}만</span>
                             </div>
                           );
@@ -7152,7 +7155,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {/* 오른쪽: 카드 목록 — 숫자를 누르면 아래 목록이 해당 상태로 필터링됨, 스크롤 없이 전체 표시 */}
               <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }, { l: "이월", v: monthStats.rolledOver, c: "#6d28d9" }].map(x => (
+                  {[{ l: "전체", v: monthStats.total, c: "var(--acc)" }, { l: "완납", v: monthStats.done, c: "#047857" }, { l: "일부납", v: monthStats.partial, c: "#c2410c" }, { l: "미납", v: monthStats.unpaid, c: "#b91c1c" }, { l: "예정", v: monthStats.scheduled, c: "#1d4ed8" }, { l: "지연", v: monthStats.overdue, c: "#b45309" }, { l: "이월", v: monthStats.rolledOver, c: "#a21caf" }].map(x => (
                     <button key={x.l} onClick={() => setStFilter(x.l)}
                       style={{ padding: "6px 14px", background: stFilter === x.l ? x.c + "18" : "var(--card)", borderRadius: 8, border: stFilter === x.l ? `1px solid ${x.c}60` : "1px solid var(--brd)", textAlign: "center", cursor: "pointer" }}>
                       <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: x.c }}>{x.v}</div>
