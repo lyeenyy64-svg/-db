@@ -1232,6 +1232,22 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
   }
 });
 
+// ─── 입금 등록/수정 히스토리 조회 ───────────────────
+// GET /api/payments/:id/history
+app.get("/api/payments/:id/history", (req, res) => {
+  const payId = req.params.id;
+  const pay = db.prepare("SELECT id, created_at, created_by FROM payments WHERE id = ?").get(payId);
+  if (!pay) return res.status(404).json({ ok: false, error: "해당 입금건 없음" });
+
+  const logs = db.prepare(`
+    SELECT timestamp, user_name AS userName, action, detail
+    FROM audit_logs WHERE target = '입금' AND target_id = ?
+    ORDER BY timestamp ASC, id ASC
+  `).all(payId);
+
+  res.json({ ok: true, paymentId: pay.id, createdAt: pay.created_at, createdBy: pay.created_by, logs });
+});
+
 // ─── 알림 규칙 엔진 (관리자 > 알림 설정에서 만든 규칙을 실제로 평가/발송) ──
 // 상태 스캔형 규칙(installment_overdue/rehab_overdue/high_balance/no_contact)은
 // 30분마다 평가하되, 같은 규칙은 하루 1회만 발송(다이제스트)해 알림 폭주를 막는다.

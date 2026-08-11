@@ -985,6 +985,7 @@ const I = ({ name, size = 18 }) => {
     pieChart: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>,
     flag: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 22V4"/><path d="M4 4h14l-3 4 3 4H4"/></svg>,
     menu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+    clock: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
   };
   return s[name] || null;
 };
@@ -1220,6 +1221,64 @@ const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showT
         )}
       </div>
       <ModalFooter onCancel={onClose} onSave={doRematch} saveLabel={saving ? "처리중…" : "재매칭"} />
+    </Overlay>
+  );
+};
+
+// ─── Payment History Modal (입금 등록/수정 히스토리) ──────
+const PaymentHistoryModalStandalone = ({ pay, onClose }) => {
+  const [loading, setLoading] = useState(true);
+  const [hist, setHist] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    if (!pay?.id) return;
+    setLoading(true); setErr(null);
+    fetch(`/api/payments/${pay.id}/history`)
+      .then(r => r.json())
+      .then(d => { if (d.ok) setHist(d); else setErr(d.error || "조회 실패"); })
+      .catch(e => setErr(e.message || "네트워크 오류"))
+      .finally(() => setLoading(false));
+  }, [pay?.id]);
+  const ACTION_COLOR = { "등록": "#10b981", "수정": "#f59e0b", "삭제": "#ef4444" };
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title="입금 입력 히스토리" onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span><span style={{ color: "var(--tm)" }}>입금일:</span> {fmtDate(pay?.paymentDate)}</span>
+            <span><span style={{ color: "var(--tm)" }}>금액:</span> <b>{fmt(pay?.totalAmount)}</b></span>
+            <span><span style={{ color: "var(--tm)" }}>채무자:</span> {pay?.debtorName}</span>
+            <span><span style={{ color: "var(--tm)" }}>ID:</span> <span className="mono">{pay?.id}</span></span>
+          </div>
+        </div>
+        {loading && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>불러오는 중…</div>}
+        {err && <div style={{ padding: 12, color: "var(--err)", fontSize: 13 }}>{err}</div>}
+        {hist && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 11, color: "var(--tm)" }}>DB 등록시각(자동기록): <span className="mono">{hist.createdAt}</span></div>
+            {hist.logs.length === 0 ? (
+              <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>
+                남아있는 처리 로그가 없습니다.<br />
+                <span style={{ fontSize: 11 }}>(구 엑셀에서 이관된 건이거나, 로그 기록 전 등록된 건일 수 있습니다)</span>
+              </div>
+            ) : hist.logs.map((l, i) => (
+              <div key={i} style={{ display: "flex", gap: 10, padding: "10px 12px", background: "var(--bg2)", borderRadius: 8, border: "1px solid var(--brd)" }}>
+                <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, alignSelf: "flex-start", background: (ACTION_COLOR[l.action] || "#64748b") + "18", color: ACTION_COLOR[l.action] || "#64748b" }}>{l.action}</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                  <div style={{ fontSize: 13 }}>{l.detail}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)" }}>
+                    <b style={{ color: "var(--ts)" }}>{l.userName}</b> · <span className="mono">{l.timestamp}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+        <button onClick={onClose} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 13, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)" }}>닫기</button>
+      </div>
     </Overlay>
   );
 };
@@ -6040,7 +6099,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}<button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentHistory", payment: p }); }} style={{ background: "none", color: "var(--tm)", padding: 2 }} title="입력 히스토리"><I name="clock" size={13} /></button>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -6191,10 +6250,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     };
 
     const scColor = (st) => st === "완납" ? { bg: "#10b98110", t: "#047857", b: "#10b98130" } : st === "지연" ? { bg: "#f59e0b10", t: "#b45309", b: "#f59e0b30" } : st === "이월" ? { bg: "#8b5cf610", t: "#6d28d9", b: "#8b5cf640" } : st === "예정" ? { bg: "#3b82f610", t: "#1d4ed8", b: "#3b82f630" } : st === "일부납" ? { bg: "#fb923c10", t: "#c2410c", b: "#fb923c30" } : { bg: "#ef444410", t: "#b91c1c", b: "#ef444430" };
-    // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 검정 배경/흰 글자로 항상 눈에 띄게 표시한다.
-    // "이월" 상태 배지와 같은 보라색 계열로 통일 — 검정이었다가 사용자 요청으로 배지 색과
-    // 맞춤(진한 보라 배경 + 흰 글자, 배지의 옅은 배경과는 대비를 위해 solid로).
-    const rolloverColor = { bg: "#6d28d9", t: "#fff", b: "#6d28d9" };
+    // 이월로 생성된 일정은 원래 상태색(예정 등)이 아니라 보라색 계열로 항상 구분되게 표시한다.
+    // 예전엔 진한 보라 solid 배경 + 흰 글자였는데, 달력에서 다른 상태 칩들(전부 옅은 배경톤)
+    // 대비 너무 튀어서 다른 "이월" 배지(5604, 6714행)와 같은 옅은 팔레트로 맞췄다.
+    const rolloverColor = { bg: "#8b5cf618", t: "#6d28d9", b: "#8b5cf640" };
 
     const calCells = useMemo(() => {
       const [y, m] = viewMonth.split("-").map(Number);
@@ -12070,6 +12129,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {modal?.type === "debtor"          && <DebtorFormModal />}
       {modal?.type === "payment"         && <PaymentFormModal />}
       {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
+      {modal?.type === "paymentHistory" && <PaymentHistoryModalStandalone pay={modal.payment} onClose={() => setModal(null)} />}
       {modal?.type === "verifyExcel"     && <VerifyExcelModal onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} onGoToPending={() => { setModal(null); setPaymentsSubTab("미매칭"); setPendingRefreshKey(k => k + 1); }} />}
       {bulkModal && <BulkEditModal type={bulkModal.type} count={checkedDebtorIds.size} options={bulkModal.type === "assignee" ? config.assignees : config.collStatuses} onConfirm={runBulkUpdate} onClose={() => setBulkModal(null)} />}
       {modal?.type === "activity"        && <ActivityFormModal />}
