@@ -1162,21 +1162,32 @@ app.delete("/api/payments/:id", (req, res) => {
   const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(payId);
   if (!pay) return res.status(404).json({ ok: false, error: "해당 입금건 없음" });
 
-  const result = db.transaction(() => {
-    // 잔액 원복
-    db.prepare(`UPDATE debtors SET collected_amount = collected_amount - ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(pay.total_amount, pay.debtor_id);
-    // 입금 삭제
-    db.prepare("DELETE FROM payments WHERE id = ?").run(payId);
+  let result;
+  try {
+    result = db.transaction(() => {
+      // 잔액 원복
+      db.prepare(`UPDATE debtors SET collected_amount = collected_amount - ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(pay.total_amount, pay.debtor_id);
 
-    const debtor = db.prepare(`SELECT name, final_balance_legal FROM v_debtors WHERE id = ?`).get(pay.debtor_id);
-    db.prepare(`
-      INSERT INTO audit_logs (user_name, action, target, target_id, detail)
-      VALUES (?, '삭제', '입금', ?, ?)
-    `).run(req.body?.userName || "시스템", payId,
-           `${debtor?.name || pay.debtor_id} 입금 ${pay.total_amount.toLocaleString()}원 삭제 (잔액 원복)`);
+      // 미매칭 대기열에서 이 입금으로 연결된 건이 있으면 참조를 끊어준다 —
+      // pending_payments.resolved_to_payment_id가 payments(id)를 FK로 참조하고 있어
+      // 끊지 않으면 FOREIGN KEY constraint failed로 삭제 자체가 막힌다.
+      db.prepare("UPDATE pending_payments SET resolved_to_payment_id = NULL WHERE resolved_to_payment_id = ?").run(payId);
 
-    return { debtorId: pay.debtor_id, balanceAfter: debtor?.final_balance_legal ?? null };
-  })();
+      // 입금 삭제
+      db.prepare("DELETE FROM payments WHERE id = ?").run(payId);
+
+      const debtor = db.prepare(`SELECT name, final_balance_legal FROM v_debtors WHERE id = ?`).get(pay.debtor_id);
+      db.prepare(`
+        INSERT INTO audit_logs (user_name, action, target, target_id, detail)
+        VALUES (?, '삭제', '입금', ?, ?)
+      `).run(req.body?.userName || "시스템", payId,
+             `${debtor?.name || pay.debtor_id} 입금 ${pay.total_amount.toLocaleString()}원 삭제 (잔액 원복)`);
+
+      return { debtorId: pay.debtor_id, balanceAfter: debtor?.final_balance_legal ?? null };
+    })();
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e.message });
+  }
 
   // 입금이 삭제되어 분할상환 완납의 근거가 사라졌을 수 있으므로 해당 채무자 일정을 재열어 재평가
   try { runInstallmentAutoSync({ forceDebtorIds: [pay.debtor_id] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
@@ -2239,6 +2250,7 @@ app.post("/api/debtors", (req, res) => {
 app.delete("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
+    db.prepare("UPDATE pending_payments SET resolved_to_payment_id = NULL WHERE resolved_to_payment_id IN (SELECT id FROM payments WHERE debtor_id = ?)").run(id);
     db.prepare("DELETE FROM payments WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM activities WHERE debtor_id = ?").run(id);
     db.prepare("DELETE FROM rehabilitations WHERE debtor_id = ?").run(id);
