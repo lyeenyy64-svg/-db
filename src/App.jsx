@@ -3287,30 +3287,27 @@ export default function App() {
   };
 
   // 입금 삭제 — 백엔드 API 호출 (잔액 자동 원복)
+  // 백엔드 payments는 재조회 시 로컬 상태를 그대로 덮어쓰므로(getMR 병합 없음), 삭제가 실제
+  // DB에 반영되지 않은 채 화면에서만 지워지면 다음 reloadFromBackend()에서 그대로 되살아난다.
+  // 따라서 백엔드 확인 없는 로컬 전용 삭제는 절대 허용하지 않는다.
   const deletePayment = async (paymentId) => {
-    if (backendStatus === "connected") {
-      try {
-        const res = await fetch(`/api/payments/${paymentId}`, {
-          method: "DELETE", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userName: currentUser?.name }),
-        });
-        const result = await res.json();
-        if (!result.ok) { showToast(`삭제 실패: ${result.error}`); return; }
-        await reloadFromBackend();
-        showToast(`입금 삭제 완료 — 잔액 원복`);
-        return;
-      } catch (e) { showToast(`백엔드 오류: ${e.message}`); }
+    if (backendStatus !== "connected") {
+      showToast("백엔드 연결이 끊겨 있어 삭제할 수 없습니다. 연결 후 다시 시도해주세요.");
+      return false;
     }
-    // 폴백
-    setData(prev => {
-      const payment = prev.payments.find(p => p.id === paymentId);
-      if (!payment) return prev;
-      const newDebtors = prev.debtors.map(d => d.id === payment.debtorId ? recalcDebtor(d, -payment.totalAmount, payment.paymentDate) : d);
-      return { ...prev, debtors: newDebtors, payments: prev.payments.filter(p => p.id !== paymentId) };
-    });
-    if (sel) {
-      const payment = data.payments.find(p => p.id === paymentId);
-      if (payment && sel.id === payment.debtorId) setSel(prev => recalcDebtor(prev, -payment.totalAmount, payment.paymentDate));
+    try {
+      const res = await fetch(`/api/payments/${paymentId}`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userName: currentUser?.name }),
+      });
+      const result = await res.json();
+      if (!result.ok) { showToast(`삭제 실패: ${result.error}`); return false; }
+      await reloadFromBackend();
+      showToast(`입금 삭제 완료 — 잔액 원복`);
+      return true;
+    } catch (e) {
+      showToast(`백엔드 오류로 삭제 실패: ${e.message} — 다시 시도해주세요.`);
+      return false;
     }
   };
   const addActivity = async (activity) => {
@@ -5657,7 +5654,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); showToast("입금 삭제 및 잔액 원복 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
               {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
           </div>
         </div>}
@@ -6099,7 +6096,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}<button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentHistory", payment: p }); }} style={{ background: "none", color: "var(--tm)", padding: 2 }} title="입력 히스토리"><I name="clock" size={13} /></button>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id); addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); showToast("입금 삭제 완료"); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}<button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentHistory", payment: p }); }} style={{ background: "none", color: "var(--tm)", padding: 2 }} title="입력 히스토리"><I name="clock" size={13} /></button>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
