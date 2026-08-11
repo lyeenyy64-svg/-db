@@ -16,6 +16,7 @@ const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
 const fileScanner = require("./fileScanner.cjs");
+const multer = require("multer");
 const { generateHwpx, buildPreviewHtml } = require("./documentGenerator.cjs");
 const { scanHistoryPromises } = require("./historyPromiseScan.cjs");
 const { WebClient: SlackClient } = require("@slack/web-api");
@@ -3632,6 +3633,48 @@ app.delete("/api/documents/link/:id", (req, res) => {
     db.prepare("DELETE FROM debtor_documents WHERE id = ?").run(parseInt(req.params.id, 10));
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// OneDrive 스캔으로 못 찾는 서류(다른 경로에 있거나 아직 스캔 안 된 파일)를 사용자가
+// 직접 업로드해서 연결할 수 있게 한다. 저장 위치는 스캔 루트 폴더 밑 "_직접등록"
+// 폴더로 고정 — /api/file-stream이 루트 경로 밖의 파일은 열어주지 않기 때문에,
+// 업로드한 파일도 같은 방식으로(열기/스트리밍) 볼 수 있으려면 루트 안에 있어야 한다.
+const uploadStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    try {
+      const rootRow = db.prepare("SELECT value FROM kv_store WHERE key='docs_scan_root'").get();
+      if (!rootRow || !rootRow.value) return cb(new Error("스캔 폴더 경로가 설정되지 않았습니다. 관리자 > 시스템 설정 > 서류 폴더 에서 지정해주세요."));
+      const debtor = db.prepare("SELECT id, name FROM debtors WHERE id = ?").get(req.params.debtorId);
+      if (!debtor) return cb(new Error("채무자 없음"));
+      const dir = path.join(rootRow.value, "_직접등록", `${debtor.name}(${debtor.id})`);
+      fs.mkdirSync(dir, { recursive: true });
+      cb(null, dir);
+    } catch (e) { cb(e); }
+  },
+  filename: (req, file, cb) => {
+    // 멀티파트 파일명은 브라우저가 UTF-8로 보내지만 busboy가 기본적으로 latin1로
+    // 디코딩해서 한글이 깨진다 — 표준 우회법으로 다시 utf8로 복원한다.
+    const original = Buffer.from(file.originalname, "latin1").toString("utf8");
+    const safeName = path.basename(original).replace(/[\\/:*?"<>|]/g, "_");
+    cb(null, `${Date.now()}_${safeName}`);
+  },
+});
+const upload = multer({ storage: uploadStorage, limits: { fileSize: 100 * 1024 * 1024 } });
+
+// 서류 직접 업로드 + 연결 (OneDrive 스캔 후보에 없는 서류를 사용자가 파일로 올릴 때 사용)
+app.post("/api/documents/:debtorId/upload", (req, res) => {
+  upload.single("file")(req, res, (err) => {
+    if (err) return res.status(400).json({ ok: false, error: err.message });
+    if (!req.file) return res.status(400).json({ ok: false, error: "파일이 없습니다" });
+    try {
+      const fileName = Buffer.from(req.file.originalname, "latin1").toString("utf8");
+      db.prepare(`
+        INSERT INTO debtor_documents (debtor_id, file_path, file_name, doc_label, match_type, matched_name, linked_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(req.params.debtorId, req.file.path, fileName, "직접등록", "manual", null, req.body.linkedBy || null);
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+  });
 });
 
 // 파일 스트리밍 (보안: 설정된 루트 경로 내부만 허용)

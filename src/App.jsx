@@ -5188,6 +5188,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const [linkedDocs, setLinkedDocs] = useState(null);
     const [scanResult, setScanResult] = useState(null);
     const [scanning, setScanning] = useState(false);
+    const [uploadingDoc, setUploadingDoc] = useState(false);
+    const uploadInputRef = useRef(null);
     const [docModal, setDocModal] = useState(null); // { url, filename, candidates }
     const [relatedData, setRelatedData] = useState(null);
     // "관련 데이터" 탭: 노션/슬랙/이메일을 한꺼번에 다 보여주지 않고, 버튼을 눌러야
@@ -5267,6 +5269,25 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       await fetch(`/api/documents/link/${docId}`, { method: "DELETE" });
       setLinkedDocs(prev => prev.filter(x => x.id !== docId));
       showToast("연결 해제 완료");
+    };
+
+    const uploadDoc = async (file) => {
+      if (!file) return;
+      setUploadingDoc(true);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        if (currentUser?.name) fd.append("linkedBy", currentUser.name);
+        const r = await fetch(`/api/documents/${d.id}/upload`, { method: "POST", body: fd }).then(x => x.json());
+        if (!r.ok) { showToast(r.error || "업로드 실패"); return; }
+        const rows = await fetch(`/api/documents/${d.id}`).then(x => x.json());
+        setLinkedDocs(rows);
+        showToast("서류 등록 완료");
+      } catch (e) {
+        showToast(`업로드 실패: ${e.message}`);
+      } finally {
+        setUploadingDoc(false);
+      }
     };
 
     const EXT_ICONS = { pdf: "📄", docx: "📝", doc: "📝", xlsx: "📊", xls: "📊", hwp: "📋", hwpx: "📋", jpg: "🖼", jpeg: "🖼", png: "🖼", zip: "🗜" };
@@ -5868,14 +5889,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid var(--brd)" }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>연결된 서류 <span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>({linkedDocs ? linkedDocs.length : 0})</span></div>
-              {canEdit && <button onClick={runDocScan} disabled={scanning} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 12, fontWeight: 600, opacity: scanning ? 0.6 : 1 }}>
-                {scanning ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> 스캔 중...</> : <><span>🔍</span> OneDrive 스캔</>}
-              </button>}
+              {canEdit && <div style={{ display: "flex", gap: 8 }}>
+                <input ref={uploadInputRef} type="file" style={{ display: "none" }}
+                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadDoc(f); }} />
+                <button onClick={() => uploadInputRef.current?.click()} disabled={uploadingDoc} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, background: "var(--bg)", color: "var(--tp)", fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", opacity: uploadingDoc ? 0.6 : 1 }}>
+                  {uploadingDoc ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> 업로드 중...</> : <><span>📤</span> 직접 등록</>}
+                </button>
+                <button onClick={runDocScan} disabled={scanning} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 12, fontWeight: 600, opacity: scanning ? 0.6 : 1 }}>
+                  {scanning ? <><span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>⟳</span> 스캔 중...</> : <><span>🔍</span> OneDrive 스캔</>}
+                </button>
+              </div>}
             </div>
             {!linkedDocs && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>}
             {linkedDocs && linkedDocs.length === 0 && !scanResult && <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>
               연결된 서류가 없습니다.<br />
-              <span style={{ fontSize: 11, color: "var(--ts)" }}>위의 'OneDrive 스캔' 버튼을 눌러 자동으로 찾아보세요.</span>
+              <span style={{ fontSize: 11, color: "var(--ts)" }}>'OneDrive 스캔'으로 자동으로 찾거나, '직접 등록'으로 파일을 올려주세요.</span>
             </div>}
             {linkedDocs && linkedDocs.length > 0 && <div style={{ display: "flex", flexDirection: "column" }}>
               {linkedDocs.map(doc => (
@@ -5889,6 +5917,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </a>
                     <div style={{ display: "flex", gap: 8, marginTop: 2, color: "var(--ts)", fontSize: 10 }}>
                       {doc.match_type === "guarantor" && <span style={{ color: "#f59e0b", fontWeight: 600 }}>보증인 ({doc.matched_name})</span>}
+                      {doc.match_type === "manual" && <span style={{ color: "#10b981", fontWeight: 600 }}>직접등록</span>}
                       {doc.linked_by && <span>연결: {doc.linked_by}</span>}
                       <span>{doc.linked_at?.slice(0, 10)}</span>
                     </div>
