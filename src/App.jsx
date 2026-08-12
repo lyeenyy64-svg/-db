@@ -328,6 +328,7 @@ const MK = {
   negotiations:     "manual_negotiations",
   todoList:         "manual_todo_list",
   assigneeTargets:  "manual_assignee_targets",
+  monthlySchedule:  "manual_monthly_schedule",
 };
 function getMR(key)  { try { return JSON.parse(localStorage.getItem(key) || "[]"); } catch { return []; } }
 function saveMR(key, recs) {
@@ -947,6 +948,7 @@ function loadExcelData(cfg) {
     negotiations:     getMR(MK.negotiations),
     todoList:         getMR(MK.todoList),
     assigneeTargets:  getMR(MK.assigneeTargets),
+    monthlySchedule:  getMR(MK.monthlySchedule),
   };
 }
 
@@ -2455,6 +2457,201 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   );
 };
 
+// ─── 월간 주요일정 달력 (연차/기타 메모 수동등록 + 소송·법적절차·회생파산 자동연동) ─
+// 연차/메모는 To Do List와 동일하게 addKeyIssue/updateKeyIssue/deleteKeyIssue로
+// manual_monthly_schedule kv 키에 저장한다. 소송/법적절차/회생파산은 별도로 저장하지 않고,
+// 각 사건 화면에서 이미 관리 중인 "기일"(case_event_{id}, getCaseEventDate)을 그대로 읽어와
+// 표시만 한다 — 그 화면에서 기일을 바꾸면 이 달력에도 그대로 반영된다.
+const SCHEDULE_TYPE_COLOR = { leave: "#3b82f6", memo: "#64748b", minsa: "#ef4444", legal: "#f59e0b", rehab: "#a21caf" };
+const SCHEDULE_TYPE_LABEL = { leave: "연차", memo: "메모", minsa: "민사소송", legal: "법적절차", rehab: "회생/파산" };
+
+const AddScheduleModal = ({ date, onSave, onClose }) => {
+  const [d, setD] = useState(date);
+  const [type, setType] = useState("leave");
+  const [text, setText] = useState("");
+  const handleSave = () => { if (text.trim()) onSave(d, type, text); };
+  return (
+    <Overlay onClose={onClose}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <span style={{ fontSize: 16, fontWeight: 700 }}>일정 추가</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <Field label="날짜"><input type="date" value={d} onChange={e => setD(e.target.value)} style={inp} /></Field>
+        <Field label="구분">
+          <div style={{ display: "flex", gap: 6 }}>
+            {[{ k: "leave", l: "연차" }, { k: "memo", l: "메모" }].map(t => (
+              <button key={t.k} onClick={() => setType(t.k)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: type === t.k ? "var(--acc)" : "var(--bg2)", color: type === t.k ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t.l}</button>
+            ))}
+          </div>
+        </Field>
+        <Field label={type === "leave" ? "구성원 이름" : "메모 내용"}>
+          <KoreanInput value={text} onChange={e => setText(e.target.value)} style={inp} placeholder={type === "leave" ? "예: 홍길동" : "메모 내용을 입력하세요"} />
+        </Field>
+      </div>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
+        <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+        <button onClick={handleSave} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
+      </div>
+    </Overlay>
+  );
+};
+
+const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclosures, rehabilitations, addKeyIssue, updateKeyIssue, deleteKeyIssue, setTab, setMinsaOpenCaseId, setLegalOpenCaseId, setRehabOpenCaseId }) => {
+  const todayStr = today();
+  const [viewMonth, setViewMonth] = useState(todayStr.slice(0, 7));
+  const [dayPopup, setDayPopup] = useState(null); // "YYYY-MM-DD"
+  const [addModal, setAddModal] = useState(null); // { date }
+
+  const monthLabel = (ym) => { const [y, m] = ym.split("-"); return `${y}년 ${parseInt(m, 10)}월`; };
+  const prevMonth = (ym) => { const dt = new Date(ym + "-01"); dt.setMonth(dt.getMonth() - 1); return dt.toISOString().slice(0, 7); };
+  const nextMonth = (ym) => { const dt = new Date(ym + "-01"); dt.setMonth(dt.getMonth() + 1); return dt.toISOString().slice(0, 7); };
+
+  const calCells = useMemo(() => {
+    const [y, m] = viewMonth.split("-").map(Number);
+    const firstDow = new Date(y, m - 1, 1).getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [viewMonth]);
+  const cellDate = (day) => `${viewMonth}-${String(day).padStart(2, "0")}`;
+
+  // 소송/법적절차/회생파산 사건에 이미 등록된 "기일"만 자동으로 끌어온다 — 접수일 등 다른 날짜는 표시하지 않는다.
+  const autoEvents = useMemo(() => {
+    const list = [];
+    const pushAll = (cases, kind, labelOf, onGoto) => {
+      for (const c of cases || []) {
+        const ev = getCaseEventDate(c.id);
+        if (!ev) continue;
+        list.push({ id: `auto_${c.id}`, date: ev, kind, label: labelOf(c), onGoto: () => onGoto(c) });
+      }
+    };
+    pushAll(minsaCases, "minsa", c => c.defendant || c.debtorName || "민사소송", c => { setTab("minsa"); setMinsaOpenCaseId(c.id); });
+    pushAll(legalCases, "legal", c => `${c.defendant || c.debtorName || "-"} (${c.type || "법적절차"})`, c => { setTab("legal"); setLegalOpenCaseId(c.id); });
+    pushAll(assetDisclosures, "legal", c => `${c.debtorName || c.defendant || "-"} (재산명시)`, c => { setTab("legal"); setLegalOpenCaseId(c.id); });
+    pushAll(rehabilitations, "rehab", c => `${c.debtorName || "-"} (${c.type || "회생/파산"})`, c => { setTab("rehabBankruptcy"); setRehabOpenCaseId(c.id); });
+    return list;
+  }, [minsaCases, legalCases, assetDisclosures, rehabilitations]);
+
+  const itemsByDate = useMemo(() => {
+    const map = {};
+    for (const s of schedule || []) {
+      if (!map[s.date]) map[s.date] = [];
+      map[s.date].push({ id: s.id, kind: s.type, label: s.text, manual: s });
+    }
+    for (const ev of autoEvents) {
+      if (!map[ev.date]) map[ev.date] = [];
+      map[ev.date].push(ev);
+    }
+    return map;
+  }, [schedule, autoEvents]);
+
+  const saveNewEntry = (date, type, text) => {
+    addKeyIssue("monthlySchedule", { id: uid("MSC"), date, type, text: text.trim(), createdAt: new Date().toISOString() });
+    setAddModal(null);
+  };
+
+  return (
+    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />월간 주요일정
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setViewMonth(prevMonth(viewMonth))} style={{ width: 26, height: 26, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="back" size={13} /></button>
+          <span style={{ fontWeight: 700, fontSize: 13, minWidth: 80, textAlign: "center" }}>{monthLabel(viewMonth)}</span>
+          <button onClick={() => setViewMonth(nextMonth(viewMonth))} style={{ width: 26, height: 26, borderRadius: 6, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="arrowDown" size={13} /></button>
+          {viewMonth !== todayStr.slice(0, 7) && <button onClick={() => setViewMonth(todayStr.slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
+          <button onClick={() => setAddModal({ date: todayStr })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={13} />일정 추가</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10, fontSize: 11 }}>
+        {Object.entries(SCHEDULE_TYPE_LABEL).map(([k, l]) => (
+          <div key={k} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: SCHEDULE_TYPE_COLOR[k] }} />
+            <span style={{ color: "var(--tm)" }}>{l}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ borderRadius: 10, border: "1px solid var(--brd)", overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "var(--bg2)", borderBottom: "1px solid var(--brd)" }}>
+          {KO_DAYS.map((d, i) => (
+            <div key={d} style={{ padding: "7px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: i === 0 ? "#ef4444" : i === 6 ? "#3b82f6" : "var(--tm)" }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+          {calCells.map((day, idx) => {
+            if (!day) return <div key={`e${idx}`} style={{ minHeight: 78, borderRight: idx % 7 !== 6 ? "1px solid var(--brd)" : "none", borderBottom: "1px solid var(--brd)", background: "var(--bg2)", opacity: 0.4 }} />;
+            const ds = cellDate(day);
+            const items = itemsByDate[ds] || [];
+            const isToday = ds === todayStr;
+            const col = idx % 7;
+            return (
+              <div key={ds} onClick={() => items.length > 0 && setDayPopup(ds)}
+                style={{ minHeight: 78, padding: "4px 3px 3px", borderRight: col !== 6 ? "1px solid var(--brd)" : "none", borderBottom: "1px solid var(--brd)", cursor: items.length > 0 ? "pointer" : "default" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: isToday ? 700 : 500, background: isToday ? "var(--acc)" : "transparent", color: isToday ? "#fff" : col === 0 ? "#ef4444" : col === 6 ? "#3b82f6" : "var(--tp)" }}>{day}</div>
+                  <button onClick={e => { e.stopPropagation(); setAddModal({ date: ds }); }} style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
+                </div>
+                {items.slice(0, 3).map(it => {
+                  const c = SCHEDULE_TYPE_COLOR[it.kind] || "#64748b";
+                  return (
+                    <div key={it.id} onClick={e => { e.stopPropagation(); it.onGoto ? it.onGoto() : setDayPopup(ds); }}
+                      style={{ fontSize: 9, lineHeight: "14px", padding: "0 4px", borderRadius: 3, marginBottom: 2, background: `${c}18`, color: c, border: `1px solid ${c}40`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}>
+                      {it.label}
+                    </div>
+                  );
+                })}
+                {items.length > 3 && <div style={{ fontSize: 9, color: "var(--tm)", padding: "0 4px" }}>+{items.length - 3}건 더보기</div>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {dayPopup && (() => {
+        const items = itemsByDate[dayPopup] || [];
+        return (
+          <Overlay onClose={() => setDayPopup(null)}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{fmtDate(dayPopup)} 일정</span>
+              <button onClick={() => setDayPopup(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {items.length === 0 && <div style={{ color: "var(--tm)", fontSize: 12, textAlign: "center", padding: 20 }}>일정이 없습니다</div>}
+              {items.map(it => {
+                const c = SCHEDULE_TYPE_COLOR[it.kind] || "#64748b";
+                return (
+                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--brd)" }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: `${c}18`, color: c, border: `1px solid ${c}40`, flexShrink: 0 }}>{SCHEDULE_TYPE_LABEL[it.kind] || it.kind}</span>
+                    {it.manual ? (
+                      <KoreanInput defaultValue={it.label} onBlur={e => { const v = e.target.value.trim(); if (v && v !== it.label) updateKeyIssue("monthlySchedule", it.id, { text: v }); }} style={{ ...issueInp, flex: 1, textAlign: "left" }} />
+                    ) : (
+                      <span style={{ flex: 1, fontSize: 13, cursor: "pointer" }} onClick={it.onGoto}>{it.label}</span>
+                    )}
+                    {it.manual ? (
+                      <button onClick={() => { if (confirm("이 일정을 삭제하시겠습니까?")) deleteKeyIssue("monthlySchedule", it.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                    ) : (
+                      <button onClick={it.onGoto} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "var(--bg2)", color: "var(--acc)", border: "1px solid var(--brd)", cursor: "pointer" }}>이동</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </Overlay>
+        );
+      })()}
+
+      {addModal && <AddScheduleModal date={addModal.date} onSave={saveNewEntry} onClose={() => setAddModal(null)} />}
+    </div>
+  );
+};
+
 export default function App() {
   // ─── Auth & Users ─────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(null);
@@ -2788,7 +2985,8 @@ export default function App() {
       const negotiations     = getMR(MK.negotiations);
       const todoList         = getMR(MK.todoList);
       const assigneeTargets  = getMR(MK.assigneeTargets);
-      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations, todoList, assigneeTargets }));
+      const monthlySchedule  = getMR(MK.monthlySchedule);
+      setData(prev => ({ ...prev, debtors: allDebtors, payments: paymentsRes, activities, installmentPlans: installmentsRes, installmentSchedules, rehabilitations, legalCases, minsaCases, assetDisclosures, complaints, collectionOrders, forcedExecutions, creditAnalyses, negotiations, todoList, assigneeTargets, monthlySchedule }));
       setBackendStatus("connected");
       setLastSaved(new Date());
       setPendingRefreshKey(k => k + 1);
@@ -4426,6 +4624,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} currentUserName={currentUser?.name} />
         <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
+        <MonthlyScheduleCalendar
+          schedule={data.monthlySchedule || []}
+          legalCases={data.legalCases} minsaCases={data.minsaCases} assetDisclosures={data.assetDisclosures} rehabilitations={data.rehabilitations}
+          addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue}
+          setTab={setTab} setMinsaOpenCaseId={setMinsaOpenCaseId} setLegalOpenCaseId={setLegalOpenCaseId} setRehabOpenCaseId={setRehabOpenCaseId}
+        />
       </div>
     );
   })();
