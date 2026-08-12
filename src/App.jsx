@@ -2572,6 +2572,52 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
     return map;
   }, [schedule, autoEvents]);
 
+  // 여러 날에 걸친 일정이 날짜 칸마다 따로따로 보이지 않도록, 한 주(행) 단위로 이어진
+  // 막대 하나로 합쳐 그린다 — 같은 항목이 그 주의 여러 칸을 덮는 열 구간(colStart~colEnd)을
+  // 계산해 한 번만 그리고, 겹치는 항목은 슬롯(줄)을 나눠 쌓는다.
+  const weeks = useMemo(() => {
+    const rows = [];
+    for (let i = 0; i < calCells.length; i += 7) rows.push(calCells.slice(i, i + 7));
+    return rows;
+  }, [calCells]);
+
+  const allItems = useMemo(() => {
+    const list = [];
+    for (const s of schedule || []) list.push({ id: s.id, kind: s.type, label: s.text, start: s.date, end: s.endDate || s.date, manual: s });
+    for (const ev of autoEvents) list.push({ id: ev.id, kind: ev.kind, label: ev.label, start: ev.date, end: ev.date, onGoto: ev.onGoto });
+    return list;
+  }, [schedule, autoEvents]);
+
+  const VISIBLE_SLOTS = 4;
+  const weekBars = useMemo(() => {
+    return weeks.map(week => {
+      const weekDates = week.map(day => day ? cellDate(day) : null);
+      const touching = [];
+      for (const item of allItems) {
+        let colStart = -1, colEnd = -1;
+        for (let col = 0; col < 7; col++) {
+          const wd = weekDates[col];
+          if (wd && wd >= item.start && wd <= item.end) { if (colStart === -1) colStart = col; colEnd = col; }
+        }
+        if (colStart === -1) continue;
+        touching.push({ ...item, colStart, colEnd, isTrueStart: weekDates[colStart] === item.start, isTrueEnd: weekDates[colEnd] === item.end });
+      }
+      // 시작 칸이 앞선 것부터, 같은 칸에서 시작하면 더 긴 막대를 먼저 배치
+      const sorted = [...touching].sort((a, b) => a.colStart - b.colStart || (b.colEnd - b.colStart) - (a.colEnd - a.colStart));
+      const occupied = []; // occupied[slot] = [{colStart,colEnd}, ...]
+      const placed = [];
+      for (const bar of sorted) {
+        let slot = 0;
+        while ((occupied[slot] || []).some(o => !(bar.colEnd < o.colStart || bar.colStart > o.colEnd))) slot++;
+        (occupied[slot] = occupied[slot] || []).push({ colStart: bar.colStart, colEnd: bar.colEnd });
+        placed.push({ ...bar, slot });
+      }
+      const hiddenByCol = Array(7).fill(0);
+      for (const bar of placed) if (bar.slot >= VISIBLE_SLOTS) for (let c = bar.colStart; c <= bar.colEnd; c++) hiddenByCol[c]++;
+      return { weekDates, bars: placed.filter(b => b.slot < VISIBLE_SLOTS), hiddenByCol };
+    });
+  }, [weeks, allItems]);
+
   const saveNewEntry = (startDate, endDate, type, text) => {
     addKeyIssue("monthlySchedule", { id: uid("MSC"), date: startDate, endDate, type, text: text.trim(), createdAt: new Date().toISOString() });
     setAddModal(null);
@@ -2607,34 +2653,62 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
             <div key={d} style={{ padding: "7px 0", textAlign: "center", fontSize: 11, fontWeight: 700, color: i === 0 ? "#ef4444" : i === 6 ? "#3b82f6" : "var(--tm)" }}>{d}</div>
           ))}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
-          {calCells.map((day, idx) => {
-            if (!day) return <div key={`e${idx}`} style={{ minHeight: 78, borderRight: idx % 7 !== 6 ? "1px solid var(--brd)" : "none", borderBottom: "1px solid var(--brd)", background: "var(--bg2)", opacity: 0.4 }} />;
-            const ds = cellDate(day);
-            const items = itemsByDate[ds] || [];
-            const isToday = ds === todayStr;
-            const col = idx % 7;
-            return (
-              <div key={ds} onClick={() => items.length > 0 && setDayPopup(ds)}
-                style={{ minHeight: 78, padding: "4px 3px 3px", borderRight: col !== 6 ? "1px solid var(--brd)" : "none", borderBottom: "1px solid var(--brd)", cursor: items.length > 0 ? "pointer" : "default" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                  <div style={{ width: 20, height: 20, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: isToday ? 700 : 500, background: isToday ? "var(--acc)" : "transparent", color: isToday ? "#fff" : col === 0 ? "#ef4444" : col === 6 ? "#3b82f6" : "var(--tp)" }}>{day}</div>
-                  <button onClick={e => { e.stopPropagation(); setAddModal({ date: ds }); }} style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
-                </div>
-                {items.slice(0, 3).map(it => {
-                  const c = SCHEDULE_TYPE_COLOR[it.kind] || "#64748b";
+        {weeks.map((week, wi) => {
+          const { weekDates, bars, hiddenByCol } = weekBars[wi];
+          return (
+            <div key={wi} style={{ position: "relative", borderBottom: wi !== weeks.length - 1 ? "1px solid var(--brd)" : "none" }}>
+              {/* 배경 열 구분선 — 막대가 여러 칸에 걸쳐 이어져 보이도록 칸 내용과는 별도 레이어로 그린다 */}
+              <div style={{ position: "absolute", inset: 0, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", pointerEvents: "none", zIndex: 0 }}>
+                {week.map((day, col) => <div key={col} style={{ borderRight: col !== 6 ? "1px solid var(--brd)" : "none", background: day ? "transparent" : "var(--bg2)", opacity: day ? 1 : 0.4 }} />)}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", position: "relative", zIndex: 1 }}>
+                {week.map((day, col) => {
+                  if (!day) return <div key={col} style={{ minHeight: 24 }} />;
+                  const ds = weekDates[col];
+                  const isToday = ds === todayStr;
+                  const hasItems = (itemsByDate[ds] || []).length > 0;
                   return (
-                    <div key={it.id} onClick={e => { e.stopPropagation(); it.onGoto ? it.onGoto() : setDayPopup(ds); }}
-                      style={{ fontSize: 9, lineHeight: "14px", padding: "0 4px", borderRadius: 3, marginBottom: 2, background: `${c}18`, color: c, border: `1px solid ${c}40`, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }}>
-                      {it.label}
+                    <div key={col} onClick={() => hasItems && setDayPopup(ds)} style={{ padding: "4px 3px 0", cursor: hasItems ? "pointer" : "default" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ width: 20, height: 20, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: isToday ? 700 : 500, background: isToday ? "var(--acc)" : "transparent", color: isToday ? "#fff" : col === 0 ? "#ef4444" : col === 6 ? "#3b82f6" : "var(--tp)" }}>{day}</div>
+                        <button onClick={e => { e.stopPropagation(); setAddModal({ date: ds }); }} style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
+                      </div>
                     </div>
                   );
                 })}
-                {items.length > 3 && <div style={{ fontSize: 9, color: "var(--tm)", padding: "0 4px" }}>+{items.length - 3}건 더보기</div>}
               </div>
-            );
-          })}
-        </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: 16, rowGap: 2, padding: "1px 0 4px", minHeight: 50, position: "relative", zIndex: 1 }}>
+                {bars.map(b => {
+                  const c = SCHEDULE_TYPE_COLOR[b.kind] || "#64748b";
+                  return (
+                    <div key={`${b.id}_${wi}`}
+                      onClick={() => b.onGoto ? b.onGoto() : setDayPopup(weekDates[b.colStart])}
+                      title={b.label}
+                      style={{
+                        gridColumn: `${b.colStart + 1} / ${b.colEnd + 2}`, gridRow: b.slot + 1,
+                        fontSize: 9, lineHeight: "14px", padding: "0 4px", margin: "0 1px",
+                        borderTopLeftRadius: b.isTrueStart ? 3 : 0, borderBottomLeftRadius: b.isTrueStart ? 3 : 0,
+                        borderTopRightRadius: b.isTrueEnd ? 3 : 0, borderBottomRightRadius: b.isTrueEnd ? 3 : 0,
+                        background: `${c}18`, color: c,
+                        borderTop: `1px solid ${c}40`, borderBottom: `1px solid ${c}40`,
+                        borderLeft: b.isTrueStart ? `1px solid ${c}40` : "none",
+                        borderRight: b.isTrueEnd ? `1px solid ${c}40` : "none",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer",
+                      }}>
+                      {b.label}
+                    </div>
+                  );
+                })}
+                {week.map((day, col) => hiddenByCol[col] > 0 ? (
+                  <div key={`more_${col}`} onClick={() => setDayPopup(weekDates[col])}
+                    style={{ gridColumn: `${col + 1} / ${col + 2}`, gridRow: VISIBLE_SLOTS + 1, fontSize: 9, color: "var(--tm)", cursor: "pointer", padding: "0 4px" }}>
+                    +{hiddenByCol[col]}건
+                  </div>
+                ) : null)}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {dayPopup && (() => {
