@@ -739,6 +739,20 @@ function resolveInstallmentActivity(req) {
   return { debtorId: null, detail: null };
 }
 
+// POST /api/debtors(신규 채무자 등록)는 detail 계산 로직이 없어서 요청 본문 전체 크기만
+// "기타 저장" 목록에 남고 있었다 — 등록한 이름/브랜드가 보이도록 채워준다.
+// id는 프론트에서 항상 uid("NPL")로 미리 만들어 body.id로 보내므로, 핸들러가 실행되기 전인
+// 여기서도 그대로 같은 값을 참조할 수 있다(직접 새로 만들면 핸들러의 생성 시각과 어긋난다).
+function resolveDebtorCreateActivity(req) {
+  const b = req.body || {};
+  let brandName = b.brand || "";
+  try {
+    const row = db.prepare("SELECT name FROM brands WHERE code = ?").get(b.brand);
+    if (row?.name) brandName = row.name;
+  } catch {}
+  return { debtorId: b.id || null, detail: `신규 채무자 등록: ${b.name || "(이름 없음)"}${brandName ? ` (${brandName})` : ""}` };
+}
+
 app.use((req, res, next) => {
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
@@ -749,6 +763,10 @@ app.use((req, res, next) => {
     let refDebtorId = null, detail = null;
     if (req.path.startsWith("/api/installments")) {
       const r = resolveInstallmentActivity(req);
+      refDebtorId = r.debtorId;
+      detail = r.detail;
+    } else if (req.path === "/api/debtors" && req.method === "POST") {
+      const r = resolveDebtorCreateActivity(req);
       refDebtorId = r.debtorId;
       detail = r.detail;
     }
