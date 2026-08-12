@@ -8882,6 +8882,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const rehabTab = rehabSubTab;
     const [rBrand, setRBrand] = useState("전체");
     const [rq, setRq] = useState("");
+    const [rStatusFilter, setRStatusFilter] = useState(null); // null | "미납" | "폐지"
     const [matchingRehab, setMatchingRehab] = useState(null); // 수동 매칭 중인 rehab
     const [matchQ, setMatchQ] = useState("");
     const [selRehab, setSelRehab] = useState(null);
@@ -8984,6 +8985,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       let l = data.rehabilitations.filter(r => r.type === rehabTab);
       if (rBrand !== "전체") l = l.filter(r => r.brand === rBrand);
       if (rq) { const q = rq.toLowerCase(); l = l.filter(r => r.debtorName.toLowerCase().includes(q) || r.caseNumber.includes(q) || (r.repaymentNote || "").includes(q)); }
+      if (rStatusFilter === "미납") l = l.filter(r => r.overdueStatus === "미납");
+      if (rStatusFilter === "폐지") l = l.filter(r => r.dismissed);
       if (rSortField && rSortDir) {
         const get = REHAB_SORT_GETTERS[rSortField];
         l = [...l].sort((a, b) => {
@@ -8994,7 +8997,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         });
       }
       return l;
-    }, [data.rehabilitations, rehabTab, rBrand, rq, rSortField, rSortDir]);
+    }, [data.rehabilitations, rehabTab, rBrand, rq, rStatusFilter, rSortField, rSortDir]);
     const RehabDetailModal = useStableComponent(() => {
       if (!selRehab) return null;
       const r = selRehab;
@@ -9183,9 +9186,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {selRehab && <RehabDetailModal />}
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-          <KPI label="회생/파산 전체" value={`${data.rehabilitations.length}건`} sub={`회생 ${data.rehabilitations.filter(r => r.type === "회생").length} / 파산 ${data.rehabilitations.filter(r => r.type === "파산/면책").length}`} color="#8b5cf6" />
-          <KPI label="미납" value={`${data.rehabilitations.filter(r => r.overdueStatus === "미납").length}건`} sub="변제 연체 중" color="#ef4444" />
-          <KPI label="폐지" value={`${data.rehabilitations.filter(r => r.dismissed).length}건`} sub="인가 취소/기각" color="#f59e0b" />
+          <KPI label="회생/파산 전체" value={`${data.rehabilitations.length}건`} sub={`회생 ${data.rehabilitations.filter(r => r.type === "회생").length} / 파산 ${data.rehabilitations.filter(r => r.type === "파산/면책").length}`} color="#8b5cf6" active={!rStatusFilter} onClick={() => setRStatusFilter(null)} />
+          <KPI label="미납" value={`${data.rehabilitations.filter(r => r.overdueStatus === "미납").length}건`} sub="변제 연체 중" color="#ef4444" active={rStatusFilter === "미납"} onClick={() => setRStatusFilter(rStatusFilter === "미납" ? null : "미납")} />
+          <KPI label="폐지" value={`${data.rehabilitations.filter(r => r.dismissed).length}건`} sub="인가 취소/기각" color="#f59e0b" active={rStatusFilter === "폐지"} onClick={() => setRStatusFilter(rStatusFilter === "폐지" ? null : "폐지")} />
         </div>
         {/* 브랜드 필터 */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
