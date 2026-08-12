@@ -2624,7 +2624,7 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
   };
 
   return (
-    <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+    <div id="monthly-schedule-calendar" style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />월간 주요일정
@@ -12417,7 +12417,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
               { l: "민/형사 이벤트", v: `${civilCriminalEventCount}건`, onClick: goToFirstCivilCriminalEvent },
-              { l: "주요일정 이벤트", v: `${todayScheduleCount}건`, onClick: () => setTab("issues") },
+              { l: "주요일정 이벤트", v: `${todayScheduleCount}건`, onClick: () => {
+                setTab("issues");
+                setTimeout(() => { document.getElementById("monthly-schedule-calendar")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 50);
+              } },
             ];
             return items.map((x, i) => (
               <div key={i} onClick={x.onClick}
