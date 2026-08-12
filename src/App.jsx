@@ -2462,8 +2462,10 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
 // manual_monthly_schedule kv 키에 저장한다. 소송/법적절차/회생파산은 별도로 저장하지 않고,
 // 각 사건 화면에서 이미 관리 중인 "기일"(case_event_{id}, getCaseEventDate)을 그대로 읽어와
 // 표시만 한다 — 그 화면에서 기일을 바꾸면 이 달력에도 그대로 반영된다.
-const SCHEDULE_TYPE_COLOR = { leave: "#3b82f6", memo: "#64748b", minsa: "#ef4444", legal: "#f59e0b", rehab: "#a21caf" };
-const SCHEDULE_TYPE_LABEL = { leave: "연차", memo: "메모", minsa: "민사소송", legal: "법적절차", rehab: "회생/파산" };
+const SCHEDULE_TYPE_COLOR = { leave: "#3b82f6", memo: "#64748b", meeting: "#10b981", minsa: "#ef4444", legal: "#f59e0b", rehab: "#a21caf" };
+const SCHEDULE_TYPE_LABEL = { leave: "연차", memo: "메모", meeting: "회의", minsa: "민사소송", legal: "법적절차", rehab: "회생/파산" };
+const SCHEDULE_TYPE_PLACEHOLDER = { leave: "예: 홍길동", memo: "메모 내용을 입력하세요", meeting: "회의 내용을 입력하세요" };
+const SCHEDULE_TYPE_FIELD_LABEL = { leave: "구성원 이름", memo: "메모 내용", meeting: "회의 내용" };
 
 const AddScheduleModal = ({ date, onSave, onClose }) => {
   const [d, setD] = useState(date);
@@ -2480,13 +2482,13 @@ const AddScheduleModal = ({ date, onSave, onClose }) => {
         <Field label="날짜"><input type="date" value={d} onChange={e => setD(e.target.value)} style={inp} /></Field>
         <Field label="구분">
           <div style={{ display: "flex", gap: 6 }}>
-            {[{ k: "leave", l: "연차" }, { k: "memo", l: "메모" }].map(t => (
+            {[{ k: "leave", l: "연차" }, { k: "memo", l: "메모" }, { k: "meeting", l: "회의" }].map(t => (
               <button key={t.k} onClick={() => setType(t.k)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: type === t.k ? "var(--acc)" : "var(--bg2)", color: type === t.k ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{t.l}</button>
             ))}
           </div>
         </Field>
-        <Field label={type === "leave" ? "구성원 이름" : "메모 내용"}>
-          <KoreanInput value={text} onChange={e => setText(e.target.value)} style={inp} placeholder={type === "leave" ? "예: 홍길동" : "메모 내용을 입력하세요"} />
+        <Field label={SCHEDULE_TYPE_FIELD_LABEL[type]}>
+          <KoreanInput value={text} onChange={e => setText(e.target.value)} style={inp} placeholder={SCHEDULE_TYPE_PLACEHOLDER[type]} />
         </Field>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
