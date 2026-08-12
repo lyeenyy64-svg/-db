@@ -12383,14 +12383,39 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
               return diffDays >= 0 && diffDays <= 7;
             });
+            // 민사소송/법적절차/회생파산 이벤트를 "민/형사 이벤트" 한 줄로 합친다 — 클릭하면
+            // 앞에서부터 실제로 이벤트가 있는 첫 카테고리로 이동(비어있는 카테고리는 건너뜀).
+            const civilCriminalEventGroups = [
+              { tab: "minsa", cases: minsaEventCases, setOpenId: setMinsaOpenCaseId },
+              { tab: "legal", cases: legalEventCases, setOpenId: setLegalOpenCaseId },
+              { tab: "rehabBankruptcy", cases: rehabEventCases, setOpenId: setRehabOpenCaseId },
+            ];
+            const civilCriminalEventCount = minsaEventCases.length + legalEventCases.length + rehabEventCases.length;
+            const goToFirstCivilCriminalEvent = () => {
+              const g = civilCriminalEventGroups.find(x => x.cases.length > 0) || civilCriminalEventGroups[0];
+              setTab(g.tab);
+              if (g.cases[0]) g.setOpenId(g.cases[0].id);
+            };
+            // "월간 주요일정"(주요현안 탭) 달력에 오늘 날짜로 표시되는 항목 수 — 수동 등록한
+            // 연차/메모/회의(기간이 오늘을 포함하는 것) + 사건별 기일이 정확히 오늘인 것을 합친다.
+            // (위 민/형사 이벤트는 "앞으로 7일 이내" 기준이라 이 값과는 자연히 겹칠 수 있다.)
+            const todayScheduleCount = (() => {
+              let n = 0;
+              for (const s of (data.monthlySchedule || [])) {
+                if (todayStr >= s.date && todayStr <= (s.endDate || s.date)) n++;
+              }
+              for (const cases of [data.minsaCases, data.legalCases, data.assetDisclosures, data.rehabilitations]) {
+                for (const c of (cases || [])) { if (getCaseEventDate(c.id) === todayStr) n++; }
+              }
+              return n;
+            })();
             const items = [
               { l: "어제 분할상환 미입금 대상자", v: `${scheds.filter(s => s.dueDate === yestStr && s.status !== "완납" && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(yestStr); } },
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
-              { l: "민사소송 이벤트", v: `${minsaEventCases.length}건`, onClick: () => { setTab("minsa"); if (minsaEventCases[0]) setMinsaOpenCaseId(minsaEventCases[0].id); } },
-              { l: "법적절차 이벤트", v: `${legalEventCases.length}건`, onClick: () => { setTab("legal"); if (legalEventCases[0]) setLegalOpenCaseId(legalEventCases[0].id); } },
-              { l: "회생/파산 이벤트", v: `${rehabEventCases.length}건`, onClick: () => { setTab("rehabBankruptcy"); if (rehabEventCases[0]) setRehabOpenCaseId(rehabEventCases[0].id); } },
+              { l: "민/형사 이벤트", v: `${civilCriminalEventCount}건`, onClick: goToFirstCivilCriminalEvent },
+              { l: "주요일정 이벤트", v: `${todayScheduleCount}건`, onClick: () => setTab("issues") },
             ];
             return items.map((x, i) => (
               <div key={i} onClick={x.onClick}
