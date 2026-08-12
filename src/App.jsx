@@ -2657,18 +2657,19 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
           const { weekDates, bars, hiddenByCol } = weekBars[wi];
           return (
             <div key={wi} style={{ position: "relative", borderBottom: wi !== weeks.length - 1 ? "1px solid var(--brd)" : "none" }}>
-              {/* 배경 열 구분선 — 막대가 여러 칸에 걸쳐 이어져 보이도록 칸 내용과는 별도 레이어로 그린다 */}
+              {/* 배경 채우기 — 이월 전/후로 벗어난 빈 칸만 회색으로 구분, 세로 구분선은 날짜 숫자
+                  줄에만 그린다(막대 영역까지 선이 이어지면 이어진 막대가 끊겨 보인다) */}
               <div style={{ position: "absolute", inset: 0, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", pointerEvents: "none", zIndex: 0 }}>
-                {week.map((day, col) => <div key={col} style={{ borderRight: col !== 6 ? "1px solid var(--brd)" : "none", background: day ? "transparent" : "var(--bg2)", opacity: day ? 1 : 0.4 }} />)}
+                {week.map((day, col) => <div key={col} style={{ background: day ? "transparent" : "var(--bg2)", opacity: day ? 1 : 0.4 }} />)}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", position: "relative", zIndex: 1 }}>
                 {week.map((day, col) => {
-                  if (!day) return <div key={col} style={{ minHeight: 24 }} />;
+                  if (!day) return <div key={col} style={{ minHeight: 24, borderRight: col !== 6 ? "1px solid var(--brd)" : "none" }} />;
                   const ds = weekDates[col];
                   const isToday = ds === todayStr;
                   const hasItems = (itemsByDate[ds] || []).length > 0;
                   return (
-                    <div key={col} onClick={() => hasItems && setDayPopup(ds)} style={{ padding: "4px 3px 0", cursor: hasItems ? "pointer" : "default" }}>
+                    <div key={col} onClick={() => hasItems && setDayPopup(ds)} style={{ padding: "4px 3px 0", borderRight: col !== 6 ? "1px solid var(--brd)" : "none", cursor: hasItems ? "pointer" : "default" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ width: 20, height: 20, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: isToday ? 700 : 500, background: isToday ? "var(--acc)" : "transparent", color: isToday ? "#fff" : col === 0 ? "#ef4444" : col === 6 ? "#3b82f6" : "var(--tp)" }}>{day}</div>
                         <button onClick={e => { e.stopPropagation(); setAddModal({ date: ds }); }} style={{ width: 16, height: 16, borderRadius: 4, background: "var(--acc)22", color: "var(--acc)", border: "none", cursor: "pointer", fontSize: 13, lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontWeight: 700 }}>+</button>
@@ -2687,6 +2688,7 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
                       style={{
                         gridColumn: `${b.colStart + 1} / ${b.colEnd + 2}`, gridRow: b.slot + 1,
                         fontSize: 9, lineHeight: "14px", padding: "0 4px", margin: "0 1px",
+                        textAlign: "center",
                         borderTopLeftRadius: b.isTrueStart ? 3 : 0, borderBottomLeftRadius: b.isTrueStart ? 3 : 0,
                         borderTopRightRadius: b.isTrueEnd ? 3 : 0, borderBottomRightRadius: b.isTrueEnd ? 3 : 0,
                         background: `${c}18`, color: c,
