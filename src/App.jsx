@@ -2366,7 +2366,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
     const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
     return (
       <tr key={r.id}>
-        <td style={strike(r, { width: w[0] })} className="mono">{r.createdAt ? fmtDate(r.createdAt) : "-"}</td>
+        <td style={strike(r, { width: w[0] })}><input type="date" value={r.createdAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { createdAt: e.target.value })} style={issueInp} /></td>
         <td style={strike(r, { width: w[1] })}>
           <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
             <option value="">-- 선택 --</option>
@@ -2375,7 +2375,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
         </td>
         <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
         <td style={strike(r, { width: w[3] })}><KoreanInput value={fieldValue(r, "result")} onChange={e => scheduleFieldSave(r, "result", e.target.value)} onBlur={() => flushFieldSave(r, "result")} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
-        {showCompletedCol && <td style={strike(r, { width: w[4] })} className="mono">{r.completedAt ? fmtDate(r.completedAt) : "-"}</td>}
+        {showCompletedCol && <td style={strike(r, { width: w[4] })}><input type="date" value={r.completedAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { completedAt: e.target.value })} style={issueInp} /></td>}
         <td style={strike(r, { width: showCompletedCol ? w[5] : w[4] })}>
           <select value={r.status || "진행중"} onChange={e => onStatusChange(r, e.target.value)} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
             <option value="진행중">진행중</option>
