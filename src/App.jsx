@@ -2468,10 +2468,16 @@ const SCHEDULE_TYPE_PLACEHOLDER = { leave: "예: 홍길동", memo: "메모 내�
 const SCHEDULE_TYPE_FIELD_LABEL = { leave: "구성원 이름", memo: "메모 내용", meeting: "회의 내용" };
 
 const AddScheduleModal = ({ date, onSave, onClose }) => {
-  const [d, setD] = useState(date);
+  const [startDate, setStartDate] = useState(date);
+  const [endDate, setEndDate] = useState(date);
   const [type, setType] = useState("leave");
   const [text, setText] = useState("");
-  const handleSave = () => { if (text.trim()) onSave(d, type, text); };
+  const handleSave = () => {
+    if (!text.trim()) return;
+    // 종료일을 시작일보다 앞으로 잘못 잡은 경우 순서만 바꿔서 그대로 저장 — 굳이 막지 않는다.
+    const [s, e] = endDate < startDate ? [endDate, startDate] : [startDate, endDate];
+    onSave(s, e, type, text);
+  };
   return (
     <Overlay onClose={onClose}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -2479,7 +2485,10 @@ const AddScheduleModal = ({ date, onSave, onClose }) => {
         <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={18} /></button>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <Field label="날짜"><input type="date" value={d} onChange={e => setD(e.target.value)} style={inp} /></Field>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="시작일"><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={inp} /></Field>
+          <Field label="종료일"><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={inp} /></Field>
+        </div>
         <Field label="구분">
           <div style={{ display: "flex", gap: 6 }}>
             {[{ k: "leave", l: "연차" }, { k: "memo", l: "메모" }, { k: "meeting", l: "회의" }].map(t => (
@@ -2521,6 +2530,15 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
     return cells;
   }, [viewMonth]);
   const cellDate = (day) => `${viewMonth}-${String(day).padStart(2, "0")}`;
+  // start~end 사이 날짜를 하루 단위로 나열 — 오래된 항목(endDate 없음)은 date 하루짜리로 취급.
+  // 입력 실수로 범위가 지나치게 넓어지는 걸 막기 위해 최대 366일로 끊는다.
+  const dateRange = (start, end) => {
+    const out = [];
+    const cur = new Date(start);
+    const last = new Date(end || start);
+    for (let i = 0; i < 366 && cur <= last; i++, cur.setDate(cur.getDate() + 1)) out.push(cur.toISOString().slice(0, 10));
+    return out;
+  };
 
   // 소송/법적절차/회생파산 사건에 이미 등록된 "기일"만 자동으로 끌어온다 — 접수일 등 다른 날짜는 표시하지 않는다.
   const autoEvents = useMemo(() => {
@@ -2542,8 +2560,10 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
   const itemsByDate = useMemo(() => {
     const map = {};
     for (const s of schedule || []) {
-      if (!map[s.date]) map[s.date] = [];
-      map[s.date].push({ id: s.id, kind: s.type, label: s.text, manual: s });
+      for (const d of dateRange(s.date, s.endDate)) {
+        if (!map[d]) map[d] = [];
+        map[d].push({ id: s.id, kind: s.type, label: s.text, manual: s });
+      }
     }
     for (const ev of autoEvents) {
       if (!map[ev.date]) map[ev.date] = [];
@@ -2552,8 +2572,8 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
     return map;
   }, [schedule, autoEvents]);
 
-  const saveNewEntry = (date, type, text) => {
-    addKeyIssue("monthlySchedule", { id: uid("MSC"), date, type, text: text.trim(), createdAt: new Date().toISOString() });
+  const saveNewEntry = (startDate, endDate, type, text) => {
+    addKeyIssue("monthlySchedule", { id: uid("MSC"), date: startDate, endDate, type, text: text.trim(), createdAt: new Date().toISOString() });
     setAddModal(null);
   };
 
@@ -2632,6 +2652,9 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
                 return (
                   <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--brd)" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: `${c}18`, color: c, border: `1px solid ${c}40`, flexShrink: 0 }}>{SCHEDULE_TYPE_LABEL[it.kind] || it.kind}</span>
+                    {it.manual && it.manual.endDate && it.manual.endDate !== it.manual.date && (
+                      <span style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0, whiteSpace: "nowrap" }}>{fmtDate(it.manual.date)} ~ {fmtDate(it.manual.endDate)}</span>
+                    )}
                     {it.manual ? (
                       <KoreanInput
                         value={editDrafts[it.id] !== undefined ? editDrafts[it.id] : it.label}
