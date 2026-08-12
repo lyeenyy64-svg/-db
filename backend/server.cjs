@@ -292,6 +292,26 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todo_log_ts          ON todo_activity_log(ts);
   CREATE INDEX IF NOT EXISTS idx_todo_log_user_action ON todo_activity_log(user_name, action);
 `);
+// todo_activity_log는 위 기능이 배포된 2026-08-04 이후의 등록/완료만 남아있어, 그 이전에
+// 등록/완료됐거나 등록일·완료 처리일을 나중에 직접 입력한 항목은 통계에서 빠진다. todo_id+action
+// 기준으로 이미 로그가 있으면 건너뛰므로 매번(서버 재시작마다) 실행해도 안전 — manual_todo_list의
+// createdAt/completedAt을 근거로 빠진 로그를 소급 채운다. 실제로 누가 등록/완료했는지는 남아있지
+// 않아 assignee(담당자)로 대신 귀속한다. 삭제는 deletedAt이 없어 소급 복원이 불가능.
+try {
+  const todoRow = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
+  const todoArr = todoRow ? JSON.parse(todoRow.value) : [];
+  const hasTodoLog = db.prepare("SELECT 1 FROM todo_activity_log WHERE todo_id = ? AND action = ? LIMIT 1");
+  const insertTodoBackfill = db.prepare(`INSERT INTO todo_activity_log (action, todo_id, assignee, task, user_name, ts) VALUES (?, ?, ?, ?, ?, ?)`);
+  for (const item of Array.isArray(todoArr) ? todoArr : []) {
+    if (!item || item.id == null) continue;
+    if (item.createdAt && !hasTodoLog.get(item.id, "등록")) {
+      insertTodoBackfill.run("등록", item.id, item.assignee || "", item.task || "", item.assignee || "알수없음", `${item.createdAt} 00:00:00`);
+    }
+    if (item.status === "완료" && item.completedAt && !hasTodoLog.get(item.id, "완료")) {
+      insertTodoBackfill.run("완료", item.id, item.assignee || "", item.task || "", item.assignee || "알수없음", `${item.completedAt} 00:00:00`);
+    }
+  }
+} catch {}
 
 // 담당자 변경 이력 (변경일 기준 실적 귀속용)
 db.exec(`
