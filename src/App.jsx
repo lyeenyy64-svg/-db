@@ -2504,6 +2504,7 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
   const [viewMonth, setViewMonth] = useState(todayStr.slice(0, 7));
   const [dayPopup, setDayPopup] = useState(null); // "YYYY-MM-DD"
   const [addModal, setAddModal] = useState(null); // { date }
+  const [editDrafts, setEditDrafts] = useState({}); // { [itemId]: 타이핑 중인 값 }
 
   const monthLabel = (ym) => { const [y, m] = ym.split("-"); return `${y}년 ${parseInt(m, 10)}월`; };
   const prevMonth = (ym) => { const dt = new Date(ym + "-01"); dt.setMonth(dt.getMonth() - 1); return dt.toISOString().slice(0, 7); };
@@ -2632,7 +2633,16 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
                   <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--brd)" }}>
                     <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: `${c}18`, color: c, border: `1px solid ${c}40`, flexShrink: 0 }}>{SCHEDULE_TYPE_LABEL[it.kind] || it.kind}</span>
                     {it.manual ? (
-                      <KoreanInput defaultValue={it.label} onBlur={e => { const v = e.target.value.trim(); if (v && v !== it.label) updateKeyIssue("monthlySchedule", it.id, { text: v }); }} style={{ ...issueInp, flex: 1, textAlign: "left" }} />
+                      <KoreanInput
+                        value={editDrafts[it.id] !== undefined ? editDrafts[it.id] : it.label}
+                        onChange={e => setEditDrafts(p => ({ ...p, [it.id]: e.target.value }))}
+                        onBlur={e => {
+                          const v = e.target.value.trim();
+                          setEditDrafts(p => { const n = { ...p }; delete n[it.id]; return n; });
+                          if (v && v !== it.label) updateKeyIssue("monthlySchedule", it.id, { text: v });
+                        }}
+                        style={{ ...issueInp, flex: 1, textAlign: "left" }}
+                      />
                     ) : (
                       <span style={{ flex: 1, fontSize: 13, cursor: "pointer" }} onClick={it.onGoto}>{it.label}</span>
                     )}
