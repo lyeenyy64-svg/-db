@@ -2472,11 +2472,12 @@ const AddScheduleModal = ({ date, onSave, onClose }) => {
   const [endDate, setEndDate] = useState(date);
   const [type, setType] = useState("leave");
   const [text, setText] = useState("");
+  const [detail, setDetail] = useState("");
   const handleSave = () => {
     if (!text.trim()) return;
     // 종료일을 시작일보다 앞으로 잘못 잡은 경우 순서만 바꿔서 그대로 저장 — 굳이 막지 않는다.
     const [s, e] = endDate < startDate ? [endDate, startDate] : [startDate, endDate];
-    onSave(s, e, type, text);
+    onSave(s, e, type, text, detail);
   };
   return (
     <Overlay onClose={onClose}>
@@ -2499,6 +2500,9 @@ const AddScheduleModal = ({ date, onSave, onClose }) => {
         <Field label={SCHEDULE_TYPE_FIELD_LABEL[type]}>
           <KoreanInput value={text} onChange={e => setText(e.target.value)} style={inp} placeholder={SCHEDULE_TYPE_PLACEHOLDER[type]} />
         </Field>
+        <Field label="세부내용 (선택)">
+          <KoreanTextarea value={detail} onChange={e => setDetail(e.target.value)} rows={3} style={{ ...inp, resize: "vertical" }} placeholder="세부내용을 입력하세요" />
+        </Field>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}>
         <button onClick={onClose} style={{ padding: "8px 18px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
@@ -2514,6 +2518,9 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
   const [dayPopup, setDayPopup] = useState(null); // "YYYY-MM-DD"
   const [addModal, setAddModal] = useState(null); // { date }
   const [editDrafts, setEditDrafts] = useState({}); // { [itemId]: 타이핑 중인 값 }
+  const [detailDrafts, setDetailDrafts] = useState({}); // { [itemId]: 타이핑 중인 세부내용 }
+  const [expandedIds, setExpandedIds] = useState(() => new Set()); // 세부내용을 펼쳐서 보는 항목 id 집합
+  const toggleExpand = (id) => setExpandedIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const monthLabel = (ym) => { const [y, m] = ym.split("-"); return `${y}년 ${parseInt(m, 10)}월`; };
   const prevMonth = (ym) => { const dt = new Date(ym + "-01"); dt.setMonth(dt.getMonth() - 1); return dt.toISOString().slice(0, 7); };
@@ -2618,8 +2625,8 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
     });
   }, [weeks, allItems]);
 
-  const saveNewEntry = (startDate, endDate, type, text) => {
-    addKeyIssue("monthlySchedule", { id: uid("MSC"), date: startDate, endDate, type, text: text.trim(), createdAt: new Date().toISOString() });
+  const saveNewEntry = (startDate, endDate, type, text, detail) => {
+    addKeyIssue("monthlySchedule", { id: uid("MSC"), date: startDate, endDate, type, text: text.trim(), detail: (detail || "").trim(), createdAt: new Date().toISOString() });
     setAddModal(null);
   };
 
@@ -2684,7 +2691,7 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
                   return (
                     <div key={`${b.id}_${wi}`}
                       onClick={() => b.onGoto ? b.onGoto() : setDayPopup(weekDates[b.colStart])}
-                      title={b.label}
+                      title={b.manual && b.manual.detail ? `${b.label}\n${b.manual.detail}` : b.label}
                       style={{
                         gridColumn: `${b.colStart + 1} / ${b.colEnd + 2}`, gridRow: b.slot + 1,
                         fontSize: 9, lineHeight: "14px", padding: "0 4px", margin: "0 1px",
@@ -2725,30 +2732,53 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
               {items.length === 0 && <div style={{ color: "var(--tm)", fontSize: 12, textAlign: "center", padding: 20 }}>일정이 없습니다</div>}
               {items.map(it => {
                 const c = SCHEDULE_TYPE_COLOR[it.kind] || "#64748b";
+                const isExpanded = expandedIds.has(it.id);
+                const hasDetail = !!(it.manual && it.manual.detail);
                 return (
-                  <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--brd)" }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: `${c}18`, color: c, border: `1px solid ${c}40`, flexShrink: 0 }}>{SCHEDULE_TYPE_LABEL[it.kind] || it.kind}</span>
-                    {it.manual && it.manual.endDate && it.manual.endDate !== it.manual.date && (
-                      <span style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0, whiteSpace: "nowrap" }}>{fmtDate(it.manual.date)} ~ {fmtDate(it.manual.endDate)}</span>
-                    )}
-                    {it.manual ? (
-                      <KoreanInput
-                        value={editDrafts[it.id] !== undefined ? editDrafts[it.id] : it.label}
-                        onChange={e => setEditDrafts(p => ({ ...p, [it.id]: e.target.value }))}
+                  <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--brd)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: `${c}18`, color: c, border: `1px solid ${c}40`, flexShrink: 0 }}>{SCHEDULE_TYPE_LABEL[it.kind] || it.kind}</span>
+                      {it.manual && it.manual.endDate && it.manual.endDate !== it.manual.date && (
+                        <span style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0, whiteSpace: "nowrap" }}>{fmtDate(it.manual.date)} ~ {fmtDate(it.manual.endDate)}</span>
+                      )}
+                      {it.manual ? (
+                        <KoreanInput
+                          value={editDrafts[it.id] !== undefined ? editDrafts[it.id] : it.label}
+                          onChange={e => setEditDrafts(p => ({ ...p, [it.id]: e.target.value }))}
+                          onBlur={e => {
+                            const v = e.target.value.trim();
+                            setEditDrafts(p => { const n = { ...p }; delete n[it.id]; return n; });
+                            if (v && v !== it.label) updateKeyIssue("monthlySchedule", it.id, { text: v });
+                          }}
+                          style={{ ...issueInp, flex: 1, textAlign: "left" }}
+                        />
+                      ) : (
+                        <span style={{ flex: 1, fontSize: 13, cursor: "pointer" }} onClick={it.onGoto}>{it.label}</span>
+                      )}
+                      {it.manual && (
+                        <button onClick={() => toggleExpand(it.id)} title="세부내용 보기" style={{ background: "none", border: "none", cursor: "pointer", color: hasDetail ? "var(--acc)" : "var(--tm)", flexShrink: 0, display: "flex", alignItems: "center" }}>
+                          <span style={{ display: "flex", transition: "transform .15s", transform: isExpanded ? "rotate(180deg)" : "none" }}><I name="arrowDown" size={13} /></span>
+                        </button>
+                      )}
+                      {it.manual ? (
+                        <button onClick={() => { if (confirm("이 일정을 삭제하시겠습니까?")) deleteKeyIssue("monthlySchedule", it.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
+                      ) : (
+                        <button onClick={it.onGoto} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "var(--bg2)", color: "var(--acc)", border: "1px solid var(--brd)", cursor: "pointer" }}>이동</button>
+                      )}
+                    </div>
+                    {it.manual && isExpanded && (
+                      <KoreanTextarea
+                        value={detailDrafts[it.id] !== undefined ? detailDrafts[it.id] : (it.manual.detail || "")}
+                        onChange={e => setDetailDrafts(p => ({ ...p, [it.id]: e.target.value }))}
                         onBlur={e => {
                           const v = e.target.value.trim();
-                          setEditDrafts(p => { const n = { ...p }; delete n[it.id]; return n; });
-                          if (v && v !== it.label) updateKeyIssue("monthlySchedule", it.id, { text: v });
+                          setDetailDrafts(p => { const n = { ...p }; delete n[it.id]; return n; });
+                          if (v !== (it.manual.detail || "")) updateKeyIssue("monthlySchedule", it.id, { detail: v });
                         }}
-                        style={{ ...issueInp, flex: 1, textAlign: "left" }}
+                        rows={3}
+                        placeholder="세부내용을 입력하세요"
+                        style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg2)", resize: "vertical", textAlign: "left" }}
                       />
-                    ) : (
-                      <span style={{ flex: 1, fontSize: 13, cursor: "pointer" }} onClick={it.onGoto}>{it.label}</span>
-                    )}
-                    {it.manual ? (
-                      <button onClick={() => { if (confirm("이 일정을 삭제하시겠습니까?")) deleteKeyIssue("monthlySchedule", it.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)" }}><I name="close" size={14} /></button>
-                    ) : (
-                      <button onClick={it.onGoto} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, fontWeight: 600, background: "var(--bg2)", color: "var(--acc)", border: "1px solid var(--brd)", cursor: "pointer" }}>이동</button>
                     )}
                   </div>
                 );
