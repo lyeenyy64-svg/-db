@@ -3823,6 +3823,16 @@ function korName3(name) {
   return kor.length >= 2 ? kor.slice(0, 3) : null;
 }
 
+// 이름이 완전히 같은 다른 채무자가 이미 있으면(동명이인), 이름만으로 찾은 문서가
+// 사실은 그 동명이인의 것일 수 있다 — 실제로 신규 등록한 채무자에게 기존 동명이인의
+// 주민등록번호가 자동으로 잘못 채워져 저장된 사례가 있었다. 이 경우엔 자동추출 결과를
+// DB에 써넣지 않고(화면에만 "확인 필요"로 보여주고) 사람이 직접 확인해서 입력하게 한다.
+function hasNameCollision(debtorId, name) {
+  if (!name) return false;
+  const row = db.prepare("SELECT 1 FROM debtors WHERE name = ? AND id != ? LIMIT 1").get(name, debtorId);
+  return !!row;
+}
+
 // 이름으로 CB(신용정보) 보고서 PDF를 찾아 OCR로 점수를 추출.
 // /api/debtor/:id/credit-score 화면 표시와 AI 종합분석(연대보증인 신용점수)이 각자
 // 따로 검색하다가 서로 다른 값을 보여주던 문제가 있어 이 함수로 통합했다.
@@ -3869,6 +3879,7 @@ async function findCreditScoreForName(name, limit, priority) {
 async function lookupResidentDetails(debtorId, debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
+  const ambiguous = hasNameCollision(debtorId, debtor.name);
 
   // 후보 파일을 5개→2개로 줄임 — 파일마다 OCR이 실패하면 타임아웃까지 기다려야 해서,
   // 배치로 여러 채무자를 순회할 때 후보를 다 시도하면 한 명당 최악의 경우 너무 오래 걸린다.
@@ -3895,17 +3906,18 @@ async function lookupResidentDetails(debtorId, debtor, priority) {
     if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
     if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
     if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
-    if (updates.length) {
+    if (updates.length && !ambiguous) {
       db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtorId);
     }
 
     return {
       ok: true,
-      address: debtor.resident_address || r.address || null,
-      registeredDate: debtor.resident_registered_date || r.registeredDate || null,
-      note: debtor.resident_note || r.note || null,
-      issuedDate: debtor.resident_issued_date || r.issuedDate || null,
+      address: debtor.resident_address || (ambiguous ? null : r.address) || null,
+      registeredDate: debtor.resident_registered_date || (ambiguous ? null : r.registeredDate) || null,
+      note: debtor.resident_note || (ambiguous ? null : r.note) || null,
+      issuedDate: debtor.resident_issued_date || (ambiguous ? null : r.issuedDate) || null,
       filename: c.filename,
+      ambiguous,
     };
   }
 
@@ -3921,6 +3933,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
        FROM debtors d WHERE d.id = ?`
     ).get(req.params.id);
     if (!debtor) return res.json({ ok: false, entries: [], residentDetails: null });
+    const ambiguous = hasNameCollision(req.params.id, debtor.name);
 
     const entries = [];
     let residentDetails = null;
@@ -3949,24 +3962,28 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
           const gotDetails = r.address || r.registeredDate;
           if (!gotNumber && !gotDetails) continue;
 
-          if (gotNumber) entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename });
+          if (gotNumber) entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename, ambiguous });
 
-          // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다
+          // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다 — 단, 동명이인이 있으면
+          // 이 문서가 그 사람 것일 수 있어 DB에는 쓰지 않고 화면에만 "확인 필요"로 보여준다.
           const updates = [], vals = [];
-          if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
-          if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
-          if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
-          if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
-          if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
+          if (!ambiguous) {
+            if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+            if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
+            if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
+            if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
+            if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
+          }
           if (updates.length) {
             db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, req.params.id);
           }
 
           residentDetails = {
-            address: debtor.resident_address || r.address || null,
-            registeredDate: debtor.resident_registered_date || r.registeredDate || null,
-            note: debtor.resident_note || r.note || null,
-            issuedDate: debtor.resident_issued_date || r.issuedDate || null,
+            address: debtor.resident_address || (ambiguous ? null : r.address) || null,
+            registeredDate: debtor.resident_registered_date || (ambiguous ? null : r.registeredDate) || null,
+            note: debtor.resident_note || (ambiguous ? null : r.note) || null,
+            issuedDate: debtor.resident_issued_date || (ambiguous ? null : r.issuedDate) || null,
+            ambiguous,
           };
           if (gotNumber) break; // 번호까지 찾았으면 더 오래된 파일은 볼 필요 없음
         }
@@ -4035,16 +4052,18 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
        FROM debtors d WHERE d.id = ?`
     ).get(req.params.id);
     if (!debtor) return res.json({ ok: false, entries: [] });
+    const ambiguous = hasNameCollision(req.params.id, debtor.name);
 
     const entries = [];
 
     // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
     // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
-    // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다.
+    // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다. 동명이인이 있으면(다른 채무자와 이름이
+    // 같으면) 이 CB 파일이 그 사람 것일 수 있어 DB에는 저장하지 않고 화면에만 표시한다.
     const mainResult = await findCreditScoreForName(debtor.name, 5);
     if (mainResult) {
-      entries.push({ name: debtor.name, ...mainResult, source: "ocr" });
-      if (!debtor.credit_grade) {
+      entries.push({ name: debtor.name, ...mainResult, source: "ocr", ambiguous: mainResult.ambiguous || ambiguous });
+      if (!debtor.credit_grade && !ambiguous) {
         db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
       }
     }
@@ -4069,6 +4088,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 async function lookupCreditAddress(debtor, priority) {
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
+  const ambiguous = hasNameCollision(debtor.id, debtor.name);
 
   // 후보 파일을 5개→2개로 줄임 (사유는 lookupResidentDetails 주석 참고)
   const rows = db.prepare(
@@ -4088,32 +4108,37 @@ async function lookupCreditAddress(debtor, priority) {
       // 가장 최근 CB보고서가 "자택정보이력 0건"이라고 명시하면, 그보다 오래된 보고서로
       // 넘어가지 않는다 — 더 오래된 보고서의 이력을 잘못 캐치는 것보다 "없음"이 안전하다.
       const noHistUpdates = [], noHistVals = [];
-      if (!debtor.credit_phone && r.phone) { noHistUpdates.push("credit_phone = ?"); noHistVals.push(r.phone); }
-      if (!debtor.credit_queried_date && r.queriedDate) { noHistUpdates.push("credit_queried_date = ?"); noHistVals.push(r.queriedDate); }
+      if (!ambiguous) {
+        if (!debtor.credit_phone && r.phone) { noHistUpdates.push("credit_phone = ?"); noHistVals.push(r.phone); }
+        if (!debtor.credit_queried_date && r.queriedDate) { noHistUpdates.push("credit_queried_date = ?"); noHistVals.push(r.queriedDate); }
+      }
       if (noHistUpdates.length) db.prepare(`UPDATE debtors SET ${noHistUpdates.join(", ")} WHERE id = ?`).run(...noHistVals, debtor.id);
-      noHistoryResult = { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || r.phone || null, queriedDate: debtor.credit_queried_date || r.queriedDate || null, error: "CB보고서에 자택정보이력 없음", filename: c.filename };
+      noHistoryResult = { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || (ambiguous ? null : r.phone) || null, queriedDate: debtor.credit_queried_date || (ambiguous ? null : r.queriedDate) || null, error: "CB보고서에 자택정보이력 없음", filename: c.filename, ambiguous };
       break;
     }
     if (!r.address && !r.phone) continue;
 
     const updates = [], vals = [];
-    if (!debtor.latest_address && r.address) {
-      updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')", "credit_source_date = ?");
-      vals.push(r.address, c.parsed_date || null);
+    if (!ambiguous) {
+      if (!debtor.latest_address && r.address) {
+        updates.push("latest_address = ?", "latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')", "credit_source_date = ?");
+        vals.push(r.address, c.parsed_date || null);
+      }
+      if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
+      if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
     }
-    if (!debtor.credit_phone && r.phone) { updates.push("credit_phone = ?"); vals.push(r.phone); }
-    if (!debtor.credit_queried_date && r.queriedDate) { updates.push("credit_queried_date = ?"); vals.push(r.queriedDate); }
     if (updates.length) {
       db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, debtor.id);
     }
 
     return {
       ok: true,
-      address: debtor.latest_address || r.address || null,
-      phone: debtor.credit_phone || r.phone || null,
-      queriedDate: debtor.credit_queried_date || r.queriedDate || null,
+      address: debtor.latest_address || (ambiguous ? null : r.address) || null,
+      phone: debtor.credit_phone || (ambiguous ? null : r.phone) || null,
+      queriedDate: debtor.credit_queried_date || (ambiguous ? null : r.queriedDate) || null,
       source: "ocr",
       filename: c.filename,
+      ambiguous,
     };
   }
 

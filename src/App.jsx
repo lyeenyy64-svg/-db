@@ -5732,6 +5732,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   return <div key={idx}>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
                     <span style={{ fontSize: 11, fontWeight: 500 }}>{front}-<span onClick={toggleReveal} style={{ cursor: "pointer", color: isRevealed ? "inherit" : "#9ca3af", textDecoration: "underline dotted", userSelect: "none" }}>{isRevealed ? back : "*".repeat(back.length||7)}</span></span>
+                    {entry.ambiguous && (
+                      <span title="이름이 같은 다른 채무자가 있어 초본 파일을 이름만으로 찾다가 그 사람의 정보가 섞였을 수 있습니다 — '초본 보기'로 실제 문서를 확인하세요."
+                        style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
+                    )}
                     <div style={{ fontSize: 10, color: "var(--ts)" }}>{century}{yy}.{mm}.{dd2} 생 {(() => { const by=parseInt(century+yy,10),bm=parseInt(mm,10),bd=parseInt(dd2,10),now=new Date(); const age=now.getFullYear()-by-(now.getMonth()+1<bm||(now.getMonth()+1===bm&&now.getDate()<bd)?1:0); return `(만 ${age}세)`; })()}</div>
                   </div>;
                 };
@@ -5758,7 +5762,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 }
                 return <div>
                   <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 2 }}>초본 발급일 / 초본 등록일 / 비고</div>
-                  <div style={{ fontSize: 12, fontWeight: 500 }}>{[issuedDate || "-", registeredDate || "-", note || "-"].join(" / ")}</div>
+                  <div style={{ fontSize: 12, fontWeight: 500 }}>{[issuedDate || "-", registeredDate || "-", note || "-"].join(" / ")}
+                    {details && details.ambiguous && (
+                      <span title="이름이 같은 다른 채무자가 있어 초본 파일을 이름만으로 찾다가 그 사람의 정보가 섞였을 수 있습니다 — '초본 보기'로 실제 문서를 확인하세요."
+                        style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
+                    )}
+                  </div>
                 </div>;
               })()}
             </div>
@@ -5800,7 +5809,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {(() => {
                 const addrResult = autoAddresses[d.id];
                 const phone = d.creditPhone || (addrResult && addrResult.phone) || null;
-                if (phone) return <span style={{ fontSize: 12, fontWeight: 500 }}>{phone}</span>;
+                if (phone) return <span>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>{phone}</span>
+                  {addrResult && addrResult.ambiguous && (
+                    <span title="이름이 같은 다른 채무자가 있어 CB보고서를 이름만으로 찾다가 그 사람의 정보가 섞였을 수 있습니다 — 'CB 보기'로 실제 문서를 확인하세요."
+                      style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
+                  )}
+                </span>;
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음"}</span>;
               })()}
             </div>
@@ -5832,7 +5847,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               {(() => {
                 const addrResult = autoAddresses[d.id];
                 const address = d.latestAddress || (addrResult && addrResult.address) || null;
-                if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
+                if (address) return <span>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>
+                  {addrResult && addrResult.ambiguous && (
+                    <span title="이름이 같은 다른 채무자가 있어 CB보고서를 이름만으로 찾다가 그 사람의 정보가 섞였을 수 있습니다 — 'CB 보기'로 실제 문서를 확인하세요."
+                      style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
+                  )}
+                </span>;
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음 — CB 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
               })()}
               {(() => {
