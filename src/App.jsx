@@ -275,11 +275,20 @@ const EXCEL_NAME_ALIASES = {
   "D||문호섭2": "D||문호섭",
 };
 // 이름+브랜드 매칭 실패 시에만, 전화번호가 유일하게 일치하는 원본이 있으면 보조로 매칭
-function matchExcelDebtor(d) {
+// nameBrandCounts(현재 DB에서 같은 브랜드+이름을 쓰는 채무자 수)를 넘기면, 그 이름을 쓰는
+// 채무자가 둘 이상(동명이인)일 때는 허브코드까지 일치해야만 매칭을 인정한다 — 안 그러면
+// 신규 등록한 동명이인이 이름만으로 기존 다른 사람의 히스토리/연대보증인을 그대로 물려받는다
+// (실제로 새로 등록한 "김재원"이 기존 "김재원"의 히스토리 9건을 통째로 보여준 사례로 발견).
+function matchExcelDebtor(d, nameBrandCounts) {
   const key = `${d.brand}||${d.name}`;
-  return EXCEL_BY_KEY[key]
+  const ex = EXCEL_BY_KEY[key]
     || EXCEL_BY_PHONE[`${d.brand}||${extractPhoneDigits(d.phone)}`]
     || (EXCEL_NAME_ALIASES[key] ? EXCEL_BY_KEY[EXCEL_NAME_ALIASES[key]] : undefined);
+  if (ex && nameBrandCounts && nameBrandCounts[key] > 1) {
+    const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
+    if (baseCode(d.hubCode) !== baseCode(ex.hubCode)) return undefined;
+  }
+  return ex;
 }
 
 // 현재 로그인한 사용자 이름 — App() 컴포넌트 밖에서도 참조할 수 있도록
@@ -3100,8 +3109,10 @@ export default function App() {
         fetch("/api/activities").then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
+      const nameBrandCounts = {};
+      debtorsRes.forEach(d => { const k = `${d.brand}||${d.name}`; nameBrandCounts[k] = (nameBrandCounts[k] || 0) + 1; });
       const debtors = debtorsRes.map(d => {
-        const ex = matchExcelDebtor(d);
+        const ex = matchExcelDebtor(d, nameBrandCounts);
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
@@ -3500,8 +3511,10 @@ export default function App() {
         fetch("/api/payments").then(r => r.json()),
       ]);
       const brandColorMap = Object.fromEntries(DEFAULT_CONFIG.brands.map(b => [b.code, b.color]));
+      const nameBrandCounts = {};
+      debtorsRes.forEach(d => { const k = `${d.brand}||${d.name}`; nameBrandCounts[k] = (nameBrandCounts[k] || 0) + 1; });
       const debtors = debtorsRes.map(d => {
-        const ex = matchExcelDebtor(d);
+        const ex = matchExcelDebtor(d, nameBrandCounts);
         return {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
