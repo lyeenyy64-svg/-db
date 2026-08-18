@@ -3027,7 +3027,7 @@ export default function App() {
       if (main?.score) autoGrade = main.score;
     }
     const subResult = autoSubrogationDates[debtor.id];
-    const autoSubDate = (subResult && subResult.date) ? subResult.date : debtor.subrogationMonth || "";
+    const autoSubDate = debtor.subrogationMonth || (subResult && subResult.date) || "";
     const addrResult = autoAddresses[debtor.id];
     const autoAddress = debtor.latestAddress || (addrResult && addrResult.address) || "";
     const autoCreditPhone = debtor.creditPhone || (addrResult && addrResult.phone) || "";
@@ -5909,9 +5909,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {(() => {
                   const sub = autoSubrogationDates[d.id];
-                  const displayDate = (sub && sub.date) ? sub.date : d.subrogationMonth || null;
+                  const displayDate = d.subrogationMonth || (sub && sub.date) || null;
                   return <span style={{ fontSize: 12, fontWeight: displayDate ? 500 : 400, color: displayDate ? "var(--tp)" : "var(--tm)" }}>
-                    {sub === null ? "조회 중..." : displayDate || "없음"}
+                    {displayDate ? displayDate : (sub === null ? "조회 중..." : "없음")}
                   </span>;
                 })()}
                 <button onClick={() => openDocModal(d.id, "대위변제증명서,대위변제", d.name)} style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 600, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", cursor: "pointer" }}>
