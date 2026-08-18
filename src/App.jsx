@@ -30,6 +30,10 @@ const getRolloverChainDates = (sched, allSchedules) => {
   }
   return chain;
 };
+// 이름(+브랜드)이 같아도 주민등록번호가 둘 다 입력돼 있고 서로 다르면 동명이인(다른 사람)이
+// 확실하므로 묶지 않는다 — 하나라도 비어있으면(아직 확인 못한 상태) 판단 근거가 없어 기존대로 묶는다.
+const isConfirmedDifferentPerson = (a, b) =>
+  !!(a.residentNumber && b.residentNumber && a.residentNumber.trim() !== b.residentNumber.trim());
 // 채무자 목록 화면에서 같은 사람의 여러 채무 항목을 한 행으로 묶어 보여주는 것과 동일한
 // 기준(이름+브랜드 또는 유사 코드)으로 "몇 명"인지 센다 — "건수"(원장 행 개수)와는 다른 단위.
 const countDistinctPeople = (arr) => {
@@ -40,7 +44,7 @@ const countDistinctPeople = (arr) => {
     if (seen.has(d.id)) continue;
     const bc = baseCode(d.hubCode);
     const siblings = arr.filter(x =>
-      x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && (
+      x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && !isConfirmedDifferentPerson(d, x) && (
         (x.name && d.name && x.name.trim() === d.name.trim()) ||
         (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
       )
@@ -3917,7 +3921,7 @@ export default function App() {
       if (seen.has(d.id)) continue;
       const bc = baseCode(d.hubCode);
       const siblings = l.filter(x =>
-        x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && (
+        x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && !isConfirmedDifferentPerson(d, x) && (
           (x.name && d.name && x.name.trim() === d.name.trim()) ||
           (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
         )
