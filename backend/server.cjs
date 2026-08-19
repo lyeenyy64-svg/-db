@@ -635,7 +635,10 @@ app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
 // express.json() 기본값(strict:true)은 최상위가 객체/배열이 아닌 JSON 바디를 거부해서
 // 원시값 PUT이 전부 400으로 조용히 실패하고 있었다 (예: 이벤트 날짜 "YYYY-MM-DD" 저장)
-app.use(express.json({ strict: false }));
+// limit:'20mb' — 공유 KV 값(예: legal_thirds_overrides처럼 모든 사건의 데이터를 한 JSON에
+// 합쳐 저장하는 키)이 누적되며 기본값 100kb를 넘어서면 413으로 조용히 저장이 막힌다.
+// kvPut()은 실패해도 console.warn만 하고 화면엔 표시하지 않아 사용자가 알 방법이 없었다.
+app.use(express.json({ strict: false, limit: "20mb" }));
 
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();
