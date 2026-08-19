@@ -4302,7 +4302,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <KPI label="소송현황" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 재산명시·재산조회 ${stats.byLegalType["재산명시"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0} / 회생/파산 ${stats.totalRehabs || 0}`} color="#ef4444" />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", flexDirection: "column" }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드별 현황</div>
             {config.brands.map(b => { const bd = stats.byBrand[b.code] || {}; return (<div key={b.code} style={{ marginBottom: 14 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BrandBadge code={b.code} brands={config.brands} /><span style={{ fontSize: 13, fontWeight: 500 }}>{b.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{bd.count || 0}건</span></div><span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{fmt(bd.remaining)}</span></div><div style={{ height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}><div style={{ height: "100%", width: `${maxBrand > 0 ? ((bd.remaining || 0) / maxBrand) * 100 : 0}%`, background: `linear-gradient(90deg,${b.color},${b.color}88)`, borderRadius: 4 }} /></div></div>); })}
             {(() => {
@@ -4317,7 +4317,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const now = new Date();
               const atMax = ry === now.getFullYear() && rm === now.getMonth() + 1;
               return (
-                <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--brd)" }}>
+                <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid var(--brd)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>등록기준 현황</div>
                     <span style={{ fontSize: 11, color: "var(--tm)" }}>(해당월에 처음 등록된 사람만 — 기존 채무자의 +항목 추가는 제외)</span>
@@ -4351,7 +4351,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               );
             })()}
           </div>
-          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", display: "flex", flexDirection: "column" }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>분류별 현황</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 20 }}>
               {DASHBOARD_GROUPS.map(g => (
@@ -4364,28 +4364,30 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
-            <div style={{ display: "flex", gap: 10 }}>
-              {config.assignees.map(a => (
-                <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
-                  style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
-                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 2 }}>{stats.byAssigneePersons[a] || 0}명</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.byAssignee[a] || 0}건)</div>
-                  <div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div>
-                </div>
-              ))}
-              {stats.unassignedCount > 0 && (
-                <div onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("__unassigned__"); setTab("debtors"); }}
-                  style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)", cursor: "pointer" }}
-                  onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                  onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
-                  <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--tm)", marginBottom: 2 }}>{stats.unassignedPersons}명</div>
-                  <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.unassignedCount}건)</div>
-                  <div style={{ fontSize: 12, fontWeight: 500, color: "var(--tm)" }}>미배정</div>
-                </div>
-              )}
+            <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid var(--brd)" }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                {config.assignees.map(a => (
+                  <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
+                    style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
+                    <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--acc)", marginBottom: 2 }}>{stats.byAssigneePersons[a] || 0}명</div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.byAssignee[a] || 0}건)</div>
+                    <div style={{ fontSize: 12, fontWeight: 500 }}>{a}</div>
+                  </div>
+                ))}
+                {stats.unassignedCount > 0 && (
+                  <div onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("__unassigned__"); setTab("debtors"); }}
+                    style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)", cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
+                    <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "var(--tm)", marginBottom: 2 }}>{stats.unassignedPersons}명</div>
+                    <div className="mono" style={{ fontSize: 11, color: "var(--tm)", marginBottom: 4 }}>({stats.unassignedCount}건)</div>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: "var(--tm)" }}>미배정</div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
