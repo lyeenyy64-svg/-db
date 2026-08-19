@@ -123,7 +123,7 @@ async function pollChannel(db, ingestPayment, cfg) {
 
   const messages = rawMessages.slice().reverse();
 
-  let processed = 0, success = 0, pending = 0;
+  let processed = 0, success = 0, pending = 0, duplicate = 0;
   let newLastTs = oldest;
 
   for (const msg of messages) {
@@ -152,7 +152,24 @@ async function pollChannel(db, ingestPayment, cfg) {
       });
       if (r.ok) success++;
       else if (r.pendingId) pending++;
-      else if (r.isDuplicate) { /* 중복 — skip */ }
+      else if (r.isDuplicate) {
+        // 같은 채무자에게 같은 날 같은 금액이 실제로 두 번 들어온 경우(진짜 2회 입금)도
+        // 여기서 걸리는데, 예전엔 그냥 버려서 두 번째 입금이 흔적도 없이 사라졌다.
+        // 미매칭 관리 대기열에 넣어 사람이 확인 후 강제 연결할 수 있게 한다.
+        db.prepare(`
+          INSERT INTO pending_payments (payment_date, excel_brand, excel_debtor_name, payer_name,
+                                        total_amount, company_account, cash_charge, welcome_direct,
+                                        note, source, source_ref, reason)
+          VALUES (@payment_date, @brand, @debtor_name, @payer_name, @total, @total, 0, 0,
+                  @note, 'slack', @source_ref, @reason)
+        `).run({
+          payment_date: entry.paymentDate, brand: entry.brand || cfg.brand,
+          debtor_name: r.debtorName || "", payer_name: entry.payerName,
+          total: entry.totalAmount, note: entry.note || null, source_ref: msg.ts,
+          reason: `중복 감지(기존 ${r.existingPaymentId}) — 같은 채무자·날짜·금액의 추가 입금인지 확인 필요`,
+        });
+        duplicate++;
+      }
       processed++;
     }
 
@@ -164,8 +181,8 @@ async function pollChannel(db, ingestPayment, cfg) {
   chStatus.lastTs = newLastTs;
   chStatus.totalScanned += messages.length;
   chStatus.totalIngested += success;
-  chStatus.totalPending += pending;
-  chStatus.lastPollResult = { fetched: messages.length, processed, success, pending };
+  chStatus.totalPending += pending + duplicate;
+  chStatus.lastPollResult = { fetched: messages.length, processed, success, pending, duplicate };
 
   return { channel: cfg.label, ok: true, fetched: messages.length, processed, success, pending };
 }
