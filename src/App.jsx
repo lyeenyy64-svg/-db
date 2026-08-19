@@ -55,6 +55,22 @@ const countDistinctPeople = (arr) => {
   }
   return n;
 };
+// "+항목"(같은 사람에게 항목 하나 더 추가)도 신규 채무자 등록(POST /api/debtors)과 똑같은
+// 경로를 타서 등록일(createdAt) 기준 집계에 같이 잡힌다 — 실제로는 새 사람이 아니라 기존
+// 사람의 추가 항목/분류변경이라 "신규 등록 현황"에는 넣으면 안 된다. countDistinctPeople과
+// 동일한 동일인 판정 기준으로, 그 사람의 가장 이른 항목일 때만 "진짜 신규"로 본다.
+function isFirstEntryForPerson(d, allDebtors) {
+  const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
+  const bc = baseCode(d.hubCode);
+  const earlier = allDebtors.some(x =>
+    x.id !== d.id && x.brand === d.brand && !isConfirmedDifferentPerson(d, x) &&
+    (x.createdAt || "") < (d.createdAt || "") && (
+      (x.name && d.name && x.name.trim() === d.name.trim()) ||
+      (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
+    )
+  );
+  return !earlier;
+}
 // OCR 자동조회(초본/CB보고서)는 후보 파일이 여러 개면 순차로 최대 150초씩 걸릴 수 있고,
 // 서버가 바쁘면 대기까지 더 걸릴 수 있어 여유 있게 5분을 잡는다 — 그래도 무한정 기다리진
 // 않고, 정말 응답이 끊긴 경우엔 실패로 간주해 "조회 중..." 문구가 끝없이 남지 않게 한다.
@@ -4292,7 +4308,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {(() => {
               const { year: ry, month: rm } = regMonthFilter;
               const ym = `${ry}-${String(rm).padStart(2, "0")}`;
-              const regDebtors = data.debtors.filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym);
+              const regDebtors = data.debtors.filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym && isFirstEntryForPerson(d, data.debtors));
               const shiftRegMonth = (delta) => {
                 let y = ry, m = rm + delta;
                 if (m < 1) { m = 12; y -= 1; } else if (m > 12) { m = 1; y += 1; }
@@ -4304,7 +4320,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--brd)" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>등록기준 현황</div>
-                    <span style={{ fontSize: 11, color: "var(--tm)" }}>(해당월에 신규 등록된 채무자)</span>
+                    <span style={{ fontSize: 11, color: "var(--tm)" }}>(해당월에 처음 등록된 사람만 — 기존 채무자의 +항목 추가는 제외)</span>
                     <span style={{ flex: 1 }} />
                     <button onClick={() => shiftRegMonth(-1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>‹</button>
                     <span className="mono" style={{ fontSize: 12, fontWeight: 700, minWidth: 74, textAlign: "center" }}>{ry}년 {rm}월</span>
@@ -4378,7 +4394,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const { year: dy, month: dm, brand: dBrand } = regDrillModal;
           const ym = `${dy}-${String(dm).padStart(2, "0")}`;
           const rows = data.debtors
-            .filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym && (!dBrand || d.brand === dBrand))
+            .filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym && (!dBrand || d.brand === dBrand) && isFirstEntryForPerson(d, data.debtors))
             .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
           const brandLabel = dBrand ? (config.brands.find(b => b.code === dBrand)?.name || dBrand) : "전체";
           return (
