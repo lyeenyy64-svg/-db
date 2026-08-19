@@ -776,6 +776,168 @@ function resolveDebtorCreateActivity(req) {
   return { debtorId: b.id || null, detail: `신규 채무자 등록: ${b.name || "(이름 없음)"}${brandName ? ` (${brandName})` : ""}` };
 }
 
+// 형사고소(등록/수정/진행내역)는 손을 안 대서 요청 본문 크기만 잡히고 무슨 내용인지 전혀
+// 안 보였다 — installments/debtors처럼 "무엇이 저장됐는지" 문구를 만들어준다.
+function resolveComplaintActivity(req) {
+  const b = req.body || {};
+  const p = req.path;
+  const won = (n) => `${(parseInt(n, 10) || 0).toLocaleString()}원`;
+  const complaintDebtor = (id) => { try { const r = db.prepare("SELECT debtor_id FROM complaints WHERE id = ?").get(id); return r ? r.debtor_id : null; } catch { return null; } };
+  const historyComplaint = (histId) => { try { return db.prepare("SELECT complaint_id FROM complaint_history WHERE id = ?").get(histId)?.complaint_id || null; } catch { return null; } };
+  let m;
+  try {
+    if (p === "/api/complaints" && req.method === "POST") {
+      return { debtorId: b.debtorId || null, detail: `형사고소 등록: 고소인 ${b.complainant || "-"}, 혐의 ${b.charge || "-"}${b.goodsAmount ? `, 물품대 ${won(b.goodsAmount)}` : ""}${b.loanAmount ? `, 대여금 ${won(b.loanAmount)}` : ""}` };
+    }
+    if ((m = p.match(/^\/api\/complaints\/([^/]+)$/)) && req.method === "PATCH") {
+      const parts = [];
+      if (b.status !== undefined) parts.push(`상태→${b.status}`);
+      if (b.complainant !== undefined) parts.push(`고소인→${b.complainant}`);
+      if (b.charge !== undefined) parts.push(`혐의→${b.charge}`);
+      if (b.policeStation !== undefined) parts.push(`경찰서→${b.policeStation}`);
+      if (b.complaintDate !== undefined) parts.push(`고소일→${b.complaintDate}`);
+      if (b.investigator !== undefined) parts.push(`수사관→${b.investigator}`);
+      if (b.investigatorContact !== undefined) parts.push(`수사관연락처→${b.investigatorContact}`);
+      if (b.complaintUrl !== undefined) parts.push(`고소장 링크 갱신`);
+      if (b.goodsAmount !== undefined) parts.push(`물품대→${won(b.goodsAmount)}`);
+      if (b.loanAmount !== undefined) parts.push(`대여금→${won(b.loanAmount)}`);
+      return { debtorId: b.debtorId || complaintDebtor(m[1]), detail: parts.join(", ") || null };
+    }
+    if ((m = p.match(/^\/api\/complaints\/([^/]+)\/history$/)) && req.method === "POST") {
+      return { debtorId: complaintDebtor(m[1]), detail: `형사고소 진행내역 등록: ${b.date || ""} ${b.content || ""}${b.assignee ? ` (${b.assignee})` : ""}` };
+    }
+    if ((m = p.match(/^\/api\/complaint-history\/([^/]+)$/)) && req.method === "PATCH") {
+      const parts = [];
+      if (b.date !== undefined) parts.push(`날짜→${b.date}`);
+      if (b.content !== undefined) parts.push(`내용→${b.content}`);
+      if (b.assignee !== undefined) parts.push(`담당자→${b.assignee}`);
+      return { debtorId: complaintDebtor(historyComplaint(m[1])), detail: parts.join(", ") || null };
+    }
+  } catch {}
+  return { debtorId: null, detail: null };
+}
+
+// 입금 등록/재매칭, 담당자·추심상태 일괄수정, 알림규칙, 월별 회수채널, 미매칭 연결 —
+// 각자 audit_logs/debtor_edit_log 등 자기 화면용 이력은 따로 남기지만, 어드민 "다른 활동"
+// 통계(user_activity_log)에는 안 걸려 있어서 같은 자리에서 무슨 입력인지 안 보였다.
+function resolveMiscActivity(req) {
+  const b = req.body || {};
+  const p = req.path;
+  const won = (n) => `${(parseInt(n, 10) || 0).toLocaleString()}원`;
+  let m;
+  try {
+    if (p === "/api/payments" && req.method === "POST") {
+      return { debtorId: b.debtorId || null, detail: `입금 등록: ${b.payerName || "-"} ${won(b.totalAmount)} (${b.paymentDate || "-"})` };
+    }
+    if ((m = p.match(/^\/api\/payments\/([^/]+)\/rematch$/)) && req.method === "PATCH") {
+      const pay = db.prepare("SELECT debtor_id FROM payments WHERE id = ?").get(m[1]);
+      return { debtorId: b.newDebtorId || pay?.debtor_id || null, detail: `입금 재매칭 (id=${m[1]}) → 새 채무자 연결` };
+    }
+    if (p === "/api/debtors/bulk" && req.method === "PATCH") {
+      const ids = Array.isArray(b.ids) ? b.ids : [];
+      const parts = [];
+      if (b.assignee) parts.push(`담당자→${b.assignee}`);
+      if (b.collectionStatus) parts.push(`추심상태→${b.collectionStatus}`);
+      return { debtorId: null, detail: `일괄수정 ${ids.length}건: ${parts.join(", ")}` };
+    }
+    if (p === "/api/alert-rules" && req.method === "POST") {
+      return { debtorId: null, detail: `알림규칙 등록: ${b.name || "-"} (${b.condition || "조건 미설정"})` };
+    }
+    if ((m = p.match(/^\/api\/alert-rules\/([^/]+)$/)) && req.method === "PATCH") {
+      const parts = [];
+      if (b.name !== undefined) parts.push(`이름→${b.name}`);
+      if (b.enabled !== undefined) parts.push(`사용여부→${b.enabled ? "켬" : "끔"}`);
+      if (b.condition !== undefined) parts.push(`조건→${b.condition}`);
+      if (b.channel !== undefined) parts.push(`채널→${b.channel}`);
+      if (b.assignee !== undefined) parts.push(`대상자→${b.assignee}`);
+      return { debtorId: null, detail: parts.join(", ") || null };
+    }
+    if (p === "/api/collection-channels" && req.method === "PUT") {
+      return { debtorId: null, detail: `월별 회수채널 수정: ${b.year || ""}년 ${b.month || ""}월 ${b.brand || ""} ${b.channel || ""} → ${won(b.amount)}` };
+    }
+    if ((m = p.match(/^\/api\/pending-payments\/([^/]+)\/resolve$/)) && req.method === "POST") {
+      const debtor = b.debtorId ? db.prepare("SELECT name FROM debtors WHERE id = ?").get(b.debtorId) : null;
+      return { debtorId: b.debtorId || null, detail: `미매칭 입금 연결 → ${debtor?.name || b.debtorId || "-"}${b.channel ? ` (${b.channel})` : ""}` };
+    }
+  } catch {}
+  return { debtorId: null, detail: null };
+}
+
+// DELETE는 핸들러가 실행되면 대상 행이 사라져 조회가 안 되므로, next() 전에(=삭제되기 전에)
+// "무엇을 지우는지" 미리 조회해 둔다. 본문이 없는 게 정상이라 위 두 리졸버로는 못 잡는다.
+function resolveDeleteActivity(req) {
+  const p = req.path;
+  let m;
+  try {
+    if ((m = p.match(/^\/api\/complaints\/([^/]+)$/))) {
+      const r = db.prepare("SELECT complainant, debtor_id FROM complaints WHERE id = ?").get(m[1]);
+      return { debtorId: r?.debtor_id || null, detail: `형사고소 삭제: ${r?.complainant || m[1]}` };
+    }
+    if ((m = p.match(/^\/api\/complaint-history\/([^/]+)$/))) {
+      const r = db.prepare("SELECT content, complaint_id FROM complaint_history WHERE id = ?").get(m[1]);
+      const cd = r?.complaint_id ? db.prepare("SELECT debtor_id FROM complaints WHERE id = ?").get(r.complaint_id) : null;
+      return { debtorId: cd?.debtor_id || null, detail: `형사고소 진행내역 삭제: ${(r?.content || "").slice(0, 60)}` };
+    }
+    if ((m = p.match(/^\/api\/activities\/([^/]+)$/))) {
+      const r = db.prepare("SELECT content, debtor_id FROM activities WHERE id = ?").get(m[1]);
+      return { debtorId: r?.debtor_id || null, detail: `활동사항 삭제: ${(r?.content || "").slice(0, 60)}` };
+    }
+    if ((m = p.match(/^\/api\/payer-mappings\/([^/]+)$/))) {
+      return { debtorId: null, detail: `입금자명 매핑 삭제: ${decodeURIComponent(m[1])}` };
+    }
+    if ((m = p.match(/^\/api\/pending-payments\/(\d+)$/))) {
+      const r = db.prepare("SELECT payer_name, total_amount FROM pending_payments WHERE id = ?").get(m[1]);
+      return { debtorId: null, detail: r ? `미매칭 항목 삭제: ${r.payer_name || "-"} ${(r.total_amount || 0).toLocaleString()}원` : "미매칭 항목 삭제" };
+    }
+    if ((m = p.match(/^\/api\/documents\/link\/([^/]+)$/))) {
+      const r = db.prepare("SELECT file_name, debtor_id FROM debtor_documents WHERE id = ?").get(m[1]);
+      return { debtorId: r?.debtor_id || null, detail: r ? `서류 연결 해제: ${r.file_name}` : "서류 연결 해제" };
+    }
+    if ((m = p.match(/^\/api\/alert-rules\/([^/]+)$/))) {
+      const r = db.prepare("SELECT name FROM alert_rules WHERE id = ?").get(m[1]);
+      return { debtorId: null, detail: `알림규칙 삭제: ${r?.name || m[1]}` };
+    }
+    if ((m = p.match(/^\/api\/payments\/([^/]+)$/))) {
+      const r = db.prepare("SELECT payer_name, total_amount, debtor_id FROM payments WHERE id = ?").get(m[1]);
+      return { debtorId: r?.debtor_id || null, detail: r ? `입금 삭제: ${r.payer_name || "-"} ${(r.total_amount || 0).toLocaleString()}원` : "입금 삭제" };
+    }
+  } catch {}
+  return { debtorId: null, detail: null };
+}
+
+// 위의 리졸버들이 다루지 않는 나머지 모든 저장 요청(현재/향후 추가되는 엔드포인트 포함)도
+// 최소한 "무엇을 입력/수정했는지"가 보이도록 하는 범용 폴백 — 본문 필드를 "필드명→값"으로
+// 나열한다. id·시스템 식별자·객체/배열 값은 제외(너무 길거나 의미가 없음), "…Amount"로
+// 끝나는 필드는 금액으로 포맷한다.
+const GENERIC_SKIP_FIELDS = new Set([
+  "id", "_userName", "userName", "createdBy", "createdByName", "debtorId", "newDebtorId",
+  "planId", "scheduleId", "complaintId", "source", "sourceRef", "linkedBy", "force", "ids",
+]);
+const GENERIC_FIELD_LABELS = {
+  complainant: "고소인", charge: "혐의", policeStation: "경찰서", complaintDate: "고소일",
+  status: "상태", content: "내용", activityType: "활동유형", activityDate: "활동일자",
+  payerName: "입금자", paymentDate: "입금일", name: "이름", condition: "조건",
+  channel: "채널", assignee: "담당자", memo: "메모", note: "비고", enabled: "사용여부",
+  collectionStatus: "추심상태", trigger: "트리거", target: "발송대상", brand: "브랜드",
+  year: "연도", month: "월", docLabel: "문서분류",
+};
+function genericBodyDetail(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const parts = [];
+  for (const [k, v] of Object.entries(body)) {
+    if (GENERIC_SKIP_FIELDS.has(k)) continue;
+    if (v === undefined || v === null || v === "") continue;
+    if (typeof v === "object") continue;
+    const label = GENERIC_FIELD_LABELS[k] || k;
+    let val;
+    if (/Amount$/.test(k) && !isNaN(Number(v))) val = `${Number(v).toLocaleString()}원`;
+    else if (k === "enabled") val = v ? "켬" : "끔";
+    else { val = String(v); if (val.length > 80) val = val.slice(0, 80) + "…"; }
+    parts.push(`${label}→${val}`);
+  }
+  return parts.length ? parts.join(", ") : null;
+}
+
 app.use((req, res, next) => {
   if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
@@ -792,7 +954,20 @@ app.use((req, res, next) => {
       const r = resolveDebtorCreateActivity(req);
       refDebtorId = r.debtorId;
       detail = r.detail;
+    } else if (req.path.startsWith("/api/complaints") || req.path.startsWith("/api/complaint-history")) {
+      const r = resolveComplaintActivity(req);
+      refDebtorId = r.debtorId;
+      detail = r.detail;
     }
+    if (!detail && req.method !== "DELETE") {
+      const r = resolveMiscActivity(req);
+      if (r.detail) { refDebtorId = r.debtorId; detail = r.detail; }
+    }
+    if (!detail && req.method === "DELETE") {
+      const r = resolveDeleteActivity(req);
+      if (r.detail) { refDebtorId = r.debtorId; detail = r.detail; }
+    }
+    if (!detail) detail = genericBodyDetail(req.body);
     // 요청 본문 전체 크기(JSON.stringify(req.body).length)로 세면 id/구조적 JSON까지 다 잡혀서
     // "이 사람이 실제로 입력한 양"과 안 맞는다(예: 일정 12건 일괄등록 1번이 수천 자로 잡힘) —
     // 화면에 보여줄 내용(detail)이 있으면 그 글자수를 그대로 쓴다. 보이는 텍스트 = 세는 글자수
