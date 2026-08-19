@@ -2806,6 +2806,35 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
   );
 };
 
+// ─── 담당자별 실적 계산 (기준 연/월을 인자로 받음) ──────────
+// assigneeStats(대시보드 "이번달" 기준)와 월별 실적 히스토리 모달이 동일 로직을 공유한다.
+function computeAssigneeStatsForMonth(payments, assignees, assigneeTargets, year, month) {
+  const targetMap = {};
+  (assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t; });
+  const py = month === 1 ? year - 1 : year, pm = month === 1 ? 12 : month - 1;
+  const sumFor = (a, y2, m2) => payments
+    .filter(p => p.assignee === a && p.paymentDate)
+    .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === y2 && pd.getMonth() + 1 === m2; })
+    .reduce((s, p) => s + (p.totalAmount || 0), 0);
+  const sumForYear = (a, y2) => payments
+    .filter(p => p.assignee === a && p.paymentDate)
+    .filter(p => new Date(p.paymentDate).getFullYear() === y2)
+    .reduce((s, p) => s + (p.totalAmount || 0), 0);
+  const rows = assignees.map(a => {
+    const thisMonth = sumFor(a, year, month);
+    const lastMonth = sumFor(a, py, pm);
+    const thisYear = sumForYear(a, year);
+    const momRate = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : (thisMonth > 0 ? 100 : 0);
+    const target = targetMap[a]?.monthlyTarget || 0;
+    const annualTarget = targetMap[a]?.annualTarget || 0;
+    const achieveRate = target > 0 ? (thisMonth / target) * 100 : null;
+    const annualAchieveRate = annualTarget > 0 ? (thisYear / annualTarget) * 100 : null;
+    return { assignee: a, thisMonth, lastMonth, thisYear, momRate, target, annualTarget, achieveRate, annualAchieveRate };
+  });
+  rows.sort((a, b) => b.thisMonth - a.thisMonth);
+  return rows;
+}
+
 export default function App() {
   // ─── Auth & Users ─────────────────────────────────────
   const [currentUser, setCurrentUser] = useState(null);
@@ -3873,32 +3902,8 @@ export default function App() {
     // p.assignee는 백엔드에서 결제일(payment_date) 시점에 유효했던 담당자로 이미
     // 귀속돼서 내려온다(assignee_history 기준) — 채무자의 "현재" 담당자가 아니라
     // 담당자가 바뀌기 전에 발생한 입금은 바뀌기 전 담당자 실적으로 그대로 남는다.
-    const targetMap = {};
-    (data.assigneeTargets || []).forEach(t => { targetMap[t.assignee] = t; });
     const now = new Date();
-    const y = now.getFullYear(), m = now.getMonth() + 1;
-    const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
-    const sumFor = (a, year, month) => data.payments
-      .filter(p => p.assignee === a && p.paymentDate)
-      .filter(p => { const pd = new Date(p.paymentDate); return pd.getFullYear() === year && pd.getMonth() + 1 === month; })
-      .reduce((s, p) => s + (p.totalAmount || 0), 0);
-    const sumForYear = (a, year) => data.payments
-      .filter(p => p.assignee === a && p.paymentDate)
-      .filter(p => new Date(p.paymentDate).getFullYear() === year)
-      .reduce((s, p) => s + (p.totalAmount || 0), 0);
-    const rows = config.assignees.map(a => {
-      const thisMonth = sumFor(a, y, m);
-      const lastMonth = sumFor(a, py, pm);
-      const thisYear = sumForYear(a, y);
-      const momRate = lastMonth > 0 ? ((thisMonth - lastMonth) / lastMonth) * 100 : (thisMonth > 0 ? 100 : 0);
-      const target = targetMap[a]?.monthlyTarget || 0;
-      const annualTarget = targetMap[a]?.annualTarget || 0;
-      const achieveRate = target > 0 ? (thisMonth / target) * 100 : null;
-      const annualAchieveRate = annualTarget > 0 ? (thisYear / annualTarget) * 100 : null;
-      return { assignee: a, thisMonth, lastMonth, thisYear, momRate, target, annualTarget, achieveRate, annualAchieveRate };
-    });
-    rows.sort((a, b) => b.thisMonth - a.thisMonth);
-    return rows;
+    return computeAssigneeStatsForMonth(data.payments, config.assignees, data.assigneeTargets, now.getFullYear(), now.getMonth() + 1);
   }, [data, config]);
 
   // ─── Filtered Debtors ───────────────────────────────────
@@ -4700,15 +4705,21 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             if (m < 1) { m = 12; y -= 1; } else if (m > 12) { m = 1; y += 1; }
             setAssigneeMonthlyModal({ year: y, month: m });
           };
+          // 실적 데이터는 2026년 1월부터 추적 — 그 이전/미래월로는 넘어가지 않게 함
+          const now = new Date();
+          const atMin = year === 2026 && month === 1;
+          const atMax = year === now.getFullYear() && month === now.getMonth() + 1;
+          const monthStats = computeAssigneeStatsForMonth(data.payments, config.assignees, data.assigneeTargets, year, month);
+          const py = month === 1 ? year - 1 : year, pm = month === 1 ? 12 : month - 1;
           return (
-            <Overlay onClose={() => setAssigneeMonthlyModal(null)}>
+            <Overlay onClose={() => setAssigneeMonthlyModal(null)} wide>
               <ModalHeader title="담당자별 월별 회수액" onClose={() => setAssigneeMonthlyModal(null)} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 20 }}>
-                <button onClick={() => shiftMonth(-1)} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>‹</button>
+                <button onClick={() => shiftMonth(-1)} disabled={atMin} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: atMin ? "default" : "pointer", opacity: atMin ? 0.4 : 1, fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>‹</button>
                 <span style={{ fontSize: 15, fontWeight: 700, minWidth: 90, textAlign: "center" }}>{year}년 {month}월</span>
-                <button onClick={() => shiftMonth(1)} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>›</button>
+                <button onClick={() => shiftMonth(1)} disabled={atMax} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: atMax ? "default" : "pointer", opacity: atMax ? 0.4 : 1, fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>›</button>
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 32 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 32, marginBottom: 24 }}>
                 <div style={{ width: 160, height: 160, borderRadius: "50%", background: `conic-gradient(${gradient})`, flexShrink: 0 }} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 160 }}>
                   {total === 0 && <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 월 회수 내역이 없습니다.</div>}
@@ -4721,6 +4732,35 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     </div>
                   ))}
                 </div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: "var(--bg2)" }}>
+                      {["순위", "담당자", `${month}월 회수액`, `${year}년 회수액`, `${pm}월 회수액`, "전월대비", "월간 목표", "연간 목표", "월간 달성률", "연간 달성률"].map((h, i) => (
+                        <th key={h} style={{ padding: "8px 10px", textAlign: i === 1 ? "left" : "center", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthStats.map((a, i) => (
+                      <tr key={a.assignee} style={{ borderBottom: "1px solid var(--brd)" }}>
+                        <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)" }}>{i + 1}</td>
+                        <td style={{ padding: "10px", fontWeight: 600 }}>{a.assignee}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: "var(--acc)" }}>{fmt(a.thisMonth)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisYear)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)" }}>{fmt(a.lastMonth)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)" }}>
+                          {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
+                        </td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.target ? "var(--tp)" : "var(--tm)" }}>{a.target ? a.target.toLocaleString("ko-KR") : "목표 미설정"}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.annualTarget ? "var(--tp)" : "var(--tm)" }}>{a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : "목표 미설정"}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.achieveRate == null ? "var(--tm)" : a.achieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.achieveRate == null ? "-" : `${a.achieveRate.toFixed(1)}%`}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.annualAchieveRate == null ? "var(--tm)" : a.annualAchieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.annualAchieveRate == null ? "-" : `${a.annualAchieveRate.toFixed(1)}%`}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </Overlay>
           );
