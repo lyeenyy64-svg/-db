@@ -826,6 +826,9 @@ function resolveMiscActivity(req) {
   const won = (n) => `${(parseInt(n, 10) || 0).toLocaleString()}원`;
   let m;
   try {
+    if (p === "/api/activities" && req.method === "POST") {
+      return { debtorId: b.debtorId || null, detail: `활동 등록: ${b.activityType || "-"} - ${b.content || ""}${b.assignee ? ` (${b.assignee})` : ""}` };
+    }
     if (p === "/api/payments" && req.method === "POST") {
       return { debtorId: b.debtorId || null, detail: `입금 등록: ${b.payerName || "-"} ${won(b.totalAmount)} (${b.paymentDate || "-"})` };
     }
@@ -2828,8 +2831,11 @@ app.post("/api/activities", (req, res) => {
   try {
     const { id, debtorId, activityDate, activityType, content, assignee, createdBy } = req.body;
     if (!id || !debtorId) return res.status(400).json({ ok: false, error: "id/debtorId 필요" });
+    // created_by는 users(slack_id)를 참조하는 FK라 빈 문자열("")을 넣으면 어떤 slack_id와도
+    // 안 맞아 매번 FOREIGN KEY constraint failed로 저장이 실패했다(프론트가 createdBy를
+    // 안 보내는 게 정상 흐름이라 항상 이 경로를 탐) — NULL은 FK 검사를 통과하므로 null로 폴백.
     db.prepare("INSERT INTO activities (id, debtor_id, activity_date, activity_type, content, assignee, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(id, debtorId, activityDate || "", activityType || "", content || "", assignee || "", createdBy || "");
+      .run(id, debtorId, activityDate || "", activityType || "", content || "", assignee || "", createdBy || null);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
