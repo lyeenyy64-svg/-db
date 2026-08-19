@@ -3027,6 +3027,8 @@ export default function App() {
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [assigneeDrill, setAssigneeDrill] = useState(null); // {assignee, label, year, month(null=연간)} | null
+  const [regMonthFilter, setRegMonthFilter] = useState(() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() + 1 }; });
+  const [regDrillModal, setRegDrillModal] = useState(null); // {year, month, brand(null=전체)} | null
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
@@ -4287,6 +4289,51 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>브랜드별 현황</div>
             {config.brands.map(b => { const bd = stats.byBrand[b.code] || {}; return (<div key={b.code} style={{ marginBottom: 14 }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><BrandBadge code={b.code} brands={config.brands} /><span style={{ fontSize: 13, fontWeight: 500 }}>{b.name}</span><span className="mono" style={{ fontSize: 11, color: "var(--tm)" }}>{bd.count || 0}건</span></div><span className="mono" style={{ fontSize: 12, fontWeight: 600, color: b.color }}>{fmt(bd.remaining)}</span></div><div style={{ height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}><div style={{ height: "100%", width: `${maxBrand > 0 ? ((bd.remaining || 0) / maxBrand) * 100 : 0}%`, background: `linear-gradient(90deg,${b.color},${b.color}88)`, borderRadius: 4 }} /></div></div>); })}
+            {(() => {
+              const { year: ry, month: rm } = regMonthFilter;
+              const ym = `${ry}-${String(rm).padStart(2, "0")}`;
+              const regDebtors = data.debtors.filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym);
+              const shiftRegMonth = (delta) => {
+                let y = ry, m = rm + delta;
+                if (m < 1) { m = 12; y -= 1; } else if (m > 12) { m = 1; y += 1; }
+                setRegMonthFilter({ year: y, month: m });
+              };
+              const now = new Date();
+              const atMax = ry === now.getFullYear() && rm === now.getMonth() + 1;
+              return (
+                <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--brd)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>등록기준 현황</div>
+                    <span style={{ fontSize: 11, color: "var(--tm)" }}>(해당월에 신규 등록된 채무자)</span>
+                    <span style={{ flex: 1 }} />
+                    <button onClick={() => shiftRegMonth(-1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>‹</button>
+                    <span className="mono" style={{ fontSize: 12, fontWeight: 700, minWidth: 74, textAlign: "center" }}>{ry}년 {rm}월</span>
+                    <button onClick={() => shiftRegMonth(1)} disabled={atMax} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: atMax ? "default" : "pointer", opacity: atMax ? 0.4 : 1, fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>›</button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: `repeat(${config.brands.length + 1}, 1fr)`, gap: 8 }}>
+                    <div onClick={() => regDebtors.length > 0 && setRegDrillModal({ year: ry, month: rm, brand: null })}
+                      style={{ textAlign: "center", padding: "10px 6px", borderRadius: 8, background: "var(--bg)", cursor: regDebtors.length > 0 ? "pointer" : "default" }}
+                      onMouseEnter={e => { if (regDebtors.length > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                      <div className="mono" style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>{regDebtors.length}건</div>
+                      <div style={{ fontSize: 11, color: "var(--tm)" }}>total</div>
+                    </div>
+                    {config.brands.map(b => {
+                      const count = regDebtors.filter(d => d.brand === b.code).length;
+                      return (
+                        <div key={b.code} onClick={() => count > 0 && setRegDrillModal({ year: ry, month: rm, brand: b.code })}
+                          style={{ textAlign: "center", padding: "10px 6px", borderRadius: 8, background: "var(--bg)", cursor: count > 0 ? "pointer" : "default" }}
+                          onMouseEnter={e => { if (count > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                          <div className="mono" style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, color: b.color }}>{count}건</div>
+                          <div style={{ fontSize: 11, color: "var(--tm)" }}>{b.name}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>분류별 현황</div>
@@ -4327,6 +4374,40 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         </>)}
+        {regDrillModal && (() => {
+          const { year: dy, month: dm, brand: dBrand } = regDrillModal;
+          const ym = `${dy}-${String(dm).padStart(2, "0")}`;
+          const rows = data.debtors
+            .filter(d => d.createdAt && d.createdAt.slice(0, 7) === ym && (!dBrand || d.brand === dBrand))
+            .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+          const brandLabel = dBrand ? (config.brands.find(b => b.code === dBrand)?.name || dBrand) : "전체";
+          return (
+            <Overlay onClose={() => setRegDrillModal(null)} wide>
+              <ModalHeader title={`${dy}년 ${dm}월 신규 등록 — ${brandLabel} (${rows.length}건)`} onClose={() => setRegDrillModal(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["등록일", "채무자", "브랜드", "담당", "분류", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {rows.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>해당 조건의 등록 내역이 없습니다.</td></tr>}
+                    {rows.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setRegDrillModal(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{(d.createdAt || "").slice(0, 10)}</td>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee || "-"}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
         {/* ── 채권 소멸시효 현황 ── */}
         <SectionHeader sectionId="statute">채권 소멸시효 현황</SectionHeader>
         {!collapsedSections.has("statute") && (<>

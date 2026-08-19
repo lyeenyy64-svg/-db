@@ -1106,6 +1106,7 @@ app.get("/api/debtors", (req, res) => {
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
            final_balance_finance AS finalBalanceFinance,
            final_balance_legal AS finalBalanceLegal,
+           created_at AS createdAt,
            updated_at AS updatedAt,
            (SELECT GROUP_CONCAT(name, ',') FROM debtor_guarantors WHERE debtor_id = vd.id) AS guarantors_str
     FROM v_debtors vd
