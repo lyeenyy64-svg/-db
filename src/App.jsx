@@ -5557,6 +5557,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // "관련 데이터" 탭: 노션/슬랙/이메일을 한꺼번에 다 보여주지 않고, 버튼을 눌러야
     // 그 출처의 데이터가 펼쳐지도록 함(여러 개 동시에 펼쳐놓을 수 있음).
     const [openRelSrc, setOpenRelSrc] = useState({});
+    // 관련 데이터는 배치 백필 이후로는 자동 수집되지 않아(실시간 재검색 없음),
+    // 사용자가 이후 발견한 항목을 직접 추가할 수 있게 하는 수동 입력 폼.
+    const [relAddOpen, setRelAddOpen] = useState(false);
+    const [relAddForm, setRelAddForm] = useState({ source: "email", title: "", summary: "", url: "", occurredAt: today() });
+    const [relAddSaving, setRelAddSaving] = useState(false);
 
     const openDocModal = async (debtorId, keywords, debtorName) => {
       setDocModal({ searching: true, keywords, debtorName });
@@ -5607,6 +5612,30 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       await fetch(`/api/related-data/${id}`, { method: "DELETE" });
       setRelatedData(prev => prev.filter(x => x.id !== id));
       showToast("삭제 완료");
+    };
+
+    const submitRelatedData = async () => {
+      const f = relAddForm;
+      if (!f.title.trim()) return showToast("내용(제목)을 입력하세요");
+      if (!f.url.trim()) return showToast("출처 링크(URL)를 입력하세요");
+      setRelAddSaving(true);
+      try {
+        const rows = await fetch(`/api/related-data/${d.id}`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: f.source, title: f.title.trim(), summary: f.summary.trim() || null,
+            url: f.url.trim(), occurredAt: f.occurredAt || null,
+            createdBy: currentUser?.name || "", shared: false,
+          }),
+        }).then(r => r.json());
+        if (rows.error) { showToast(`추가 실패: ${rows.error}`); setRelAddSaving(false); return; }
+        setRelatedData(rows);
+        setOpenRelSrc(p => ({ ...p, [f.source]: true }));
+        setRelAddForm({ source: f.source, title: "", summary: "", url: "", occurredAt: today() });
+        setRelAddOpen(false);
+        showToast("관련 데이터 추가 완료");
+      } catch (e) { showToast(`추가 실패: ${e.message}`); }
+      setRelAddSaving(false);
     };
 
     const runDocScan = async () => {
@@ -6363,7 +6392,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             const colWidths = [90, undefined, 60, 50, 40];
             return (
               <>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {["notion", "slack", "email"].map(src => {
                     const count = relatedData.filter(r => r.source === src).length;
                     const isOpen = !!openRelSrc[src];
@@ -6376,7 +6405,47 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       </button>
                     );
                   })}
+                  <span style={{ flex: 1 }} />
+                  {canEdit && <button onClick={() => setRelAddOpen(p => !p)}
+                    style={{ padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      border: `2px solid ${relAddOpen ? "var(--acc)" : "var(--brd)"}`,
+                      background: relAddOpen ? "var(--acc)" : "var(--bg2)", color: relAddOpen ? "#fff" : "var(--tp)" }}>
+                    + 항목 추가
+                  </button>}
                 </div>
+                {relAddOpen && canEdit && (
+                  <div style={{ padding: 14, borderRadius: 10, border: "1px solid var(--brd)", background: "var(--bg)", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div style={{ fontSize: 11, color: "var(--tm)" }}>
+                      관련 데이터는 2026-07-31 일괄 백필 이후로는 자동으로 다시 검색되지 않습니다 — 이후 발견한 항목은 여기서 직접 추가하세요.
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 5 }}>
+                        {["notion", "slack", "email"].map(src => (
+                          <button key={src} onClick={() => setRelAddForm(p => ({ ...p, source: src }))}
+                            style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                              border: `1px solid ${relAddForm.source === src ? "#f97316" : "var(--brd)"}`,
+                              background: relAddForm.source === src ? "#f97316" : "var(--bg2)", color: relAddForm.source === src ? "#fff" : "var(--tp)" }}>
+                            {SRC_LABEL[src]}
+                          </button>
+                        ))}
+                      </div>
+                      <input type="date" value={relAddForm.occurredAt} onChange={e => setRelAddForm(p => ({ ...p, occurredAt: e.target.value }))}
+                        style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12 }} />
+                    </div>
+                    <KoreanInput value={relAddForm.title} onChange={e => setRelAddForm(p => ({ ...p, title: e.target.value }))}
+                      placeholder="내용 (예: 메일 제목, 슬랙 메시지 요약)" style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12 }} />
+                    <KoreanInput value={relAddForm.summary} onChange={e => setRelAddForm(p => ({ ...p, summary: e.target.value }))}
+                      placeholder="요약 (선택)" style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12 }} />
+                    <input value={relAddForm.url} onChange={e => setRelAddForm(p => ({ ...p, url: e.target.value }))}
+                      placeholder="원본 링크 URL (메일/슬랙/노션 주소)" style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", fontSize: 12 }} />
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                      <button onClick={() => setRelAddOpen(false)} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
+                      <button onClick={submitRelatedData} disabled={relAddSaving} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: relAddSaving ? "default" : "pointer", opacity: relAddSaving ? 0.6 : 1 }}>
+                        {relAddSaving ? "저장중…" : "추가"}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {["notion", "slack", "email"].filter(src => openRelSrc[src]).map(src => {
                   const rows = relatedData.filter(r => r.source === src);
                   return (
