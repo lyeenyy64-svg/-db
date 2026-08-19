@@ -4712,7 +4712,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const monthStats = computeAssigneeStatsForMonth(data.payments, config.assignees, data.assigneeTargets, year, month);
           const py = month === 1 ? year - 1 : year, pm = month === 1 ? 12 : month - 1;
           return (
-            <Overlay onClose={() => setAssigneeMonthlyModal(null)} wide>
+            <Overlay onClose={() => setAssigneeMonthlyModal(null)} xwide>
               <ModalHeader title="담당자별 월별 회수액" onClose={() => setAssigneeMonthlyModal(null)} />
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 20 }}>
                 <button onClick={() => shiftMonth(-1)} disabled={atMin} style={{ width: 28, height: 28, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", cursor: atMin ? "default" : "pointer", opacity: atMin ? 0.4 : 1, fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>‹</button>
@@ -4745,18 +4745,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <tbody>
                     {monthStats.map((a, i) => (
                       <tr key={a.assignee} style={{ borderBottom: "1px solid var(--brd)" }}>
-                        <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)" }}>{i + 1}</td>
-                        <td style={{ padding: "10px", fontWeight: 600 }}>{a.assignee}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: "var(--acc)" }}>{fmt(a.thisMonth)}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{fmt(a.thisYear)}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)" }}>{fmt(a.lastMonth)}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)" }}>
+                        <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: i === 0 ? "#f59e0b" : "var(--tm)", whiteSpace: "nowrap" }}>{i + 1}</td>
+                        <td style={{ padding: "10px", fontWeight: 600, whiteSpace: "nowrap" }}>{a.assignee}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: "var(--acc)", whiteSpace: "nowrap" }}>{fmt(a.thisMonth)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>{fmt(a.thisYear)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: "var(--tm)", whiteSpace: "nowrap" }}>{fmt(a.lastMonth)}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.momRate > 0 ? "#10b981" : a.momRate < 0 ? "#ef4444" : "var(--tm)", whiteSpace: "nowrap" }}>
                           {a.momRate > 0 ? "▲" : a.momRate < 0 ? "▼" : "–"} {Math.abs(a.momRate).toFixed(1)}%
                         </td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.target ? "var(--tp)" : "var(--tm)" }}>{a.target ? a.target.toLocaleString("ko-KR") : "목표 미설정"}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.annualTarget ? "var(--tp)" : "var(--tm)" }}>{a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : "목표 미설정"}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.achieveRate == null ? "var(--tm)" : a.achieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.achieveRate == null ? "-" : `${a.achieveRate.toFixed(1)}%`}</td>
-                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.annualAchieveRate == null ? "var(--tm)" : a.annualAchieveRate >= 100 ? "#10b981" : "var(--tp)" }}>{a.annualAchieveRate == null ? "-" : `${a.annualAchieveRate.toFixed(1)}%`}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.target ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{a.target ? a.target.toLocaleString("ko-KR") : "목표 미설정"}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", color: a.annualTarget ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{a.annualTarget ? a.annualTarget.toLocaleString("ko-KR") : "목표 미설정"}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.achieveRate == null ? "var(--tm)" : a.achieveRate >= 100 ? "#10b981" : "var(--tp)", whiteSpace: "nowrap" }}>{a.achieveRate == null ? "-" : `${a.achieveRate.toFixed(1)}%`}</td>
+                        <td className="mono" style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: a.annualAchieveRate == null ? "var(--tm)" : a.annualAchieveRate >= 100 ? "#10b981" : "var(--tp)", whiteSpace: "nowrap" }}>{a.annualAchieveRate == null ? "-" : `${a.annualAchieveRate.toFixed(1)}%`}</td>
                       </tr>
                     ))}
                   </tbody>
