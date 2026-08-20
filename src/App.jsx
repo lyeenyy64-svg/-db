@@ -3050,6 +3050,10 @@ export default function App() {
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
   const [legalOpenCaseId, setLegalOpenCaseId] = useState(null);
   const [rehabOpenCaseId, setRehabOpenCaseId] = useState(null);
+  // case_event_{id}(사건 기일)는 localStorage에만 저장되고 React state가 아니라서, 저장/삭제해도
+  // 그 자체로는 [CHECK 사항] "민/형사 이벤트" 집계가 다시 계산되지 않는다 — 다른 이유로 화면이
+  // 리렌더될 때까지 이전 집계 값이 그대로 남아있던 버그의 원인. 이 값을 bump해 강제로 리렌더시킨다.
+  const [caseEventVersion, setCaseEventVersion] = useState(0);
   // AI 종합분석 — 탭 전환해도 대화 유지
   const [aiMessages, setAiMessages] = useState([]);
   const [aiInput, setAiInput] = useState("");
@@ -8325,6 +8329,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!selCase) return;
       saveCaseEventDate(selCase.id, eventDateDraft || null);
       setEventDateSaved(eventDateDraft);
+      setCaseEventVersion(v => v + 1);
       showToast("이벤트 날짜 저장됨");
     };
     useEffect(() => {
@@ -9209,6 +9214,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!selRehab) return;
       saveCaseEventDate(selRehab.id, eventDateDraft || null);
       setEventDateSaved(eventDateDraft);
+      setCaseEventVersion(v => v + 1);
       showToast("이벤트 날짜 저장됨");
     };
     const handleAddNote = () => {
@@ -11261,6 +11267,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       if (!selCase) return;
       saveCaseEventDate(selCase.id, eventDateDraft || null);
       setEventDateSaved(eventDateDraft);
+      setCaseEventVersion(v => v + 1);
       showToast("이벤트 날짜 저장됨");
     };
 
