@@ -2541,7 +2541,7 @@ const AddScheduleModal = ({ date, onSave, onClose }) => {
   );
 };
 
-const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclosures, rehabilitations, addKeyIssue, updateKeyIssue, deleteKeyIssue, setTab, setMinsaOpenCaseId, setLegalOpenCaseId, setRehabOpenCaseId }) => {
+const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclosures, rehabilitations, addKeyIssue, updateKeyIssue, deleteKeyIssue, setTab, setMinsaOpenCaseId, setLegalOpenCaseId, setRehabOpenCaseId, caseEventVersion }) => {
   const todayStr = today();
   const [viewMonth, setViewMonth] = useState(todayStr.slice(0, 7));
   const [dayPopup, setDayPopup] = useState(null); // "YYYY-MM-DD"
@@ -2591,7 +2591,11 @@ const MonthlyScheduleCalendar = ({ schedule, legalCases, minsaCases, assetDisclo
     pushAll(assetDisclosures, "legal", c => `${c.debtorName || c.defendant || "-"} (재산명시)`, c => { setTab("legal"); setLegalOpenCaseId(c.id); });
     pushAll(rehabilitations, "rehab", c => `${c.debtorName || "-"} (${c.type || "회생/파산"})`, c => { setTab("rehabBankruptcy"); setRehabOpenCaseId(c.id); });
     return list;
-  }, [minsaCases, legalCases, assetDisclosures, rehabilitations]);
+  // caseEventVersion은 실제로 읽지는 않지만, 사건 화면에서 기일을 저장/삭제할 때마다 bump되는
+  // 값이라 의존성에 넣어야 한다 — 안 그러면 case_event_{id}(getCaseEventDate) 자체는 React
+  // state가 아니라서 값이 바뀌어도 이 useMemo가 그걸 알 방법이 없어, 삭제한 기일이 이 달력에
+  // 계속 남아있는 버그가 있었다.
+  }, [minsaCases, legalCases, assetDisclosures, rehabilitations, caseEventVersion]);
 
   const itemsByDate = useMemo(() => {
     const map = {};
@@ -4967,6 +4971,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           legalCases={data.legalCases} minsaCases={data.minsaCases} assetDisclosures={data.assetDisclosures} rehabilitations={data.rehabilitations}
           addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue}
           setTab={setTab} setMinsaOpenCaseId={setMinsaOpenCaseId} setLegalOpenCaseId={setLegalOpenCaseId} setRehabOpenCaseId={setRehabOpenCaseId}
+          caseEventVersion={caseEventVersion}
         />
       </div>
     );
@@ -12716,10 +12721,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               { tab: "rehabBankruptcy", cases: rehabEventCases, setOpenId: setRehabOpenCaseId },
             ];
             const civilCriminalEventCount = minsaEventCases.length + legalEventCases.length + rehabEventCases.length;
+            // 그룹 순서(민사→법적절차→회생파산)상 앞선 그룹의 첫 항목을 그냥 여는 게 아니라,
+            // 전체 중 기일이 가장 임박한 사건으로 이동한다 — 안 그러면 더 급한 사건이 뒤 그룹에
+            // 있어도 무시되고, 같은 그룹 안에서도 원본 배열 순서라 날짜와 무관한 항목이 열렸다.
             const goToFirstCivilCriminalEvent = () => {
-              const g = civilCriminalEventGroups.find(x => x.cases.length > 0) || civilCriminalEventGroups[0];
+              let soonest = null;
+              for (const g of civilCriminalEventGroups) {
+                for (const c of g.cases) {
+                  const ev = getCaseEventDate(c.id);
+                  if (!soonest || ev < soonest.ev) soonest = { ev, tab: g.tab, id: c.id, setOpenId: g.setOpenId };
+                }
+              }
+              const g = soonest || civilCriminalEventGroups[0];
               setTab(g.tab);
-              if (g.cases[0]) g.setOpenId(g.cases[0].id);
+              if (soonest) g.setOpenId(g.id);
             };
             // "월간 주요일정"(주요현안 탭) 달력에 오늘 날짜로 표시되는 항목 수 — 수동 등록한
             // 연차/메모/회의(기간이 오늘을 포함하는 것) + 사건별 기일이 정확히 오늘인 것을 합친다.
