@@ -3049,6 +3049,7 @@ export default function App() {
   const [assigneeDrill, setAssigneeDrill] = useState(null); // {assignee, label, year, month(null=연간)} | null
   const [regMonthFilter, setRegMonthFilter] = useState(() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() + 1 }; });
   const [regDrillModal, setRegDrillModal] = useState(null); // {year, month, brand(null=전체), type('new'|'add')} | null
+  const [ccEventDrillOpen, setCcEventDrillOpen] = useState(false); // "민/형사 이벤트" 클릭 시 전체 목록 표시
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
   const [minsaOpenCaseId, setMinsaOpenCaseId] = useState(null);
@@ -12713,28 +12714,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               const diffDays = Math.round((new Date(ev) - new Date(todayStr)) / 86400000);
               return diffDays >= 0 && diffDays <= 7;
             });
-            // 민사소송/법적절차/회생파산 이벤트를 "민/형사 이벤트" 한 줄로 합친다 — 클릭하면
-            // 앞에서부터 실제로 이벤트가 있는 첫 카테고리로 이동(비어있는 카테고리는 건너뜀).
+            // 민사소송/법적절차/회생파산 이벤트를 "민/형사 이벤트" 한 줄로 합친다.
             const civilCriminalEventGroups = [
               { tab: "minsa", cases: minsaEventCases, setOpenId: setMinsaOpenCaseId },
               { tab: "legal", cases: legalEventCases, setOpenId: setLegalOpenCaseId },
               { tab: "rehabBankruptcy", cases: rehabEventCases, setOpenId: setRehabOpenCaseId },
             ];
             const civilCriminalEventCount = minsaEventCases.length + legalEventCases.length + rehabEventCases.length;
-            // 그룹 순서(민사→법적절차→회생파산)상 앞선 그룹의 첫 항목을 그냥 여는 게 아니라,
-            // 전체 중 기일이 가장 임박한 사건으로 이동한다 — 안 그러면 더 급한 사건이 뒤 그룹에
-            // 있어도 무시되고, 같은 그룹 안에서도 원본 배열 순서라 날짜와 무관한 항목이 열렸다.
-            const goToFirstCivilCriminalEvent = () => {
-              let soonest = null;
-              for (const g of civilCriminalEventGroups) {
-                for (const c of g.cases) {
-                  const ev = getCaseEventDate(c.id);
-                  if (!soonest || ev < soonest.ev) soonest = { ev, tab: g.tab, id: c.id, setOpenId: g.setOpenId };
-                }
-              }
-              const g = soonest || civilCriminalEventGroups[0];
-              setTab(g.tab);
-              if (soonest) g.setOpenId(g.id);
+            // 클릭하면 임박순으로 전체 목록을 보여준다 — 여러 건이 걸려있을 때 그중 하나만
+            // 열고 나머지는 못 보게 하면 안 된다(2건인데 1건만 보여준다는 피드백으로 변경).
+            const GROUP_KIND_LABEL = { minsa: "민사소송", legal: "법적절차", rehabBankruptcy: "회생/파산" };
+            const civilCriminalEventList = civilCriminalEventGroups
+              .flatMap(g => g.cases.map(c => ({
+                ev: getCaseEventDate(c.id), tab: g.tab, id: c.id, setOpenId: g.setOpenId,
+                kindLabel: GROUP_KIND_LABEL[g.tab],
+                name: c.defendant || c.debtorName || "-",
+                court: c.court || "-",
+                caseNumber: c.caseNumber || "-",
+              })))
+              .sort((a, b) => (a.ev || "").localeCompare(b.ev || ""));
+            const goToCivilCriminalEvent = (item) => {
+              setTab(item.tab);
+              item.setOpenId(item.id);
+              setCcEventDrillOpen(false);
             };
             // "월간 주요일정"(주요현안 탭) 달력에 오늘 날짜로 표시되는 항목 수 — 수동 등록한
             // 연차/메모/회의(기간이 오늘을 포함하는 것) + 사건별 기일이 정확히 오늘인 것을 합친다.
@@ -12754,21 +12756,49 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               { l: "오늘 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === todayStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(todayStr); } },
               { l: "오늘 입금 건수", v: `${data.payments.filter(p => p.paymentDate === todayStr).length}건`, onClick: () => { setTab("payments"); setPaymentsFocusDate(todayStr); } },
               { l: "내일 분할상환 대상자", v: `${scheds.filter(s => s.dueDate === tmrwStr && s.status !== "이월").length}건`, onClick: () => { setTab("installments"); setInstallmentsFocusDate(tmrwStr); } },
-              { l: "민/형사 이벤트", v: `${civilCriminalEventCount}건`, onClick: goToFirstCivilCriminalEvent },
+              { l: "민/형사 이벤트", v: `${civilCriminalEventCount}건`, onClick: () => civilCriminalEventCount > 0 && setCcEventDrillOpen(true) },
               { l: "주요일정 이벤트", v: `${todayScheduleCount}건`, onClick: () => {
                 setTab("issues");
                 setTimeout(() => { document.getElementById("monthly-schedule-calendar")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 50);
               } },
             ];
-            return items.map((x, i) => (
-              <div key={i} onClick={x.onClick}
-                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: "2px 6px", margin: "0 -6px", borderRadius: 6 }}>
-                <div style={{ fontSize: 11, color: "#000" }}>{x.l}</div>
-                <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{x.v}</div>
-              </div>
-            ));
+            return (
+              <>
+                {items.map((x, i) => (
+                  <div key={i} onClick={x.onClick}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", padding: "2px 6px", margin: "0 -6px", borderRadius: 6 }}>
+                    <div style={{ fontSize: 11, color: "#000" }}>{x.l}</div>
+                    <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{x.v}</div>
+                  </div>
+                ))}
+                {ccEventDrillOpen && (
+                  <Overlay onClose={() => setCcEventDrillOpen(false)} wide>
+                    <ModalHeader title={`민/형사 이벤트 (${civilCriminalEventList.length}건)`} onClose={() => setCcEventDrillOpen(false)} />
+                    <div style={{ maxHeight: 460, overflow: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead><tr style={{ background: "var(--bg2)" }}>{["기일", "구분", "대상자", "법원", "사건번호"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                        <tbody>
+                          {civilCriminalEventList.map(item => (
+                            <tr key={`${item.tab}_${item.id}`} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                              onClick={() => goToCivilCriminalEvent(item)}
+                              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                              <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: "#ef4444" }}>{item.ev}</td>
+                              <td style={{ padding: "8px 10px" }}>{item.kindLabel}</td>
+                              <td style={{ padding: "8px 10px", fontWeight: 500 }}>{item.name}</td>
+                              <td style={{ padding: "8px 10px" }}>{item.court}</td>
+                              <td style={{ padding: "8px 10px" }}>{item.caseNumber}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </Overlay>
+                )}
+              </>
+            );
           })()}
         </div>
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--brd)", display: "flex", alignItems: "center", gap: 10 }}>
