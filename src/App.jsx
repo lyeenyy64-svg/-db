@@ -8534,7 +8534,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       const liveGoods = isEditingComplaint ? cmpEdit.goodsAmount : c.goodsAmount;
       const liveLoan  = isEditingComplaint ? cmpEdit.loanAmount  : c.loanAmount;
       const total = (Number(liveLoan) || 0) + (Number(liveGoods) || 0);
-      const statusOptions = ["준비중", "수사중", "기소", "불송치", "취하"];
+      const statusOptions = ["준비중", "수사중", "기소", "불송치", "혐의없음", "취하"];
       const today2 = () => new Date().toISOString().slice(0, 10);
       const Stat = ({ label, editing }) => (
         <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>{label}</div>{editing}</div>
