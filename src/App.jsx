@@ -3130,22 +3130,34 @@ export default function App() {
     try {
       // DB → localStorage 동기화 (공유 데이터 최신화)
       try {
-        const kvAll = await fetch("/api/kv-all").then(r => r.ok ? r.json() : {});
-        for (const [key, value] of Object.entries(kvAll)) {
-          // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호).
-          // localStorage뿐 아니라 React 상태(users)도 같이 갱신해야 다른 기기·브라우저에서
-          // 바뀐 권한(예: 관리자 승격)이 이 세션에도 반영된다 — useState 초기값은 마운트 시
-          // 1회만 읽고 끝나서, 여기서 갱신 안 하면 어드민 탭이 계속 안 보일 수 있다.
-          if (key === APP_USERS_KEY) {
-            if (Array.isArray(value) && value.length > 0) {
+        const kvRes = await fetch("/api/kv-all");
+        const kvAll = kvRes.ok ? await kvRes.json() : null;
+        if (kvAll) {
+          for (const [key, value] of Object.entries(kvAll)) {
+            // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호).
+            // localStorage뿐 아니라 React 상태(users)도 같이 갱신해야 다른 기기·브라우저에서
+            // 바뀐 권한(예: 관리자 승격)이 이 세션에도 반영된다 — useState 초기값은 마운트 시
+            // 1회만 읽고 끝나서, 여기서 갱신 안 하면 어드민 탭이 계속 안 보일 수 있다.
+            if (key === APP_USERS_KEY) {
+              if (Array.isArray(value) && value.length > 0) {
+                localStorage.setItem(key, JSON.stringify(value));
+                // 실제로 내용이 달라졌을 때만 setUsers — 매번 새 배열을 만들면 [users] 이펙트가
+                // 매 로드마다 kvPut을 다시 쏴서 서버에 같은 값을 계속 재전송하게 된다.
+                const next = normalizeUsers(value);
+                setUsers(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+              }
+            } else {
               localStorage.setItem(key, JSON.stringify(value));
-              // 실제로 내용이 달라졌을 때만 setUsers — 매번 새 배열을 만들면 [users] 이펙트가
-              // 매 로드마다 kvPut을 다시 쏴서 서버에 같은 값을 계속 재전송하게 된다.
-              const next = normalizeUsers(value);
-              setUsers(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
             }
-          } else {
-            localStorage.setItem(key, JSON.stringify(value));
+          }
+          // case_event_{id}(사건 기일)는 kvPut이 네트워크 오류 등으로 조용히 실패해도
+          // localStorage에는 이미 저장된 채로 남아, 그 사건이 서버 데이터엔 없는데도 이
+          // 브라우저에서만 계속 [CHECK 사항] "민/형사 이벤트" 집계에 잡히는 문제가 있었다.
+          // kv-all 조회가 성공했을 때만(위 kvAll 존재 시) 서버에 없는 case_event_ 키를
+          // 로컬에서도 정리해 그 잔재를 없앤다.
+          for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith("case_event_") && !(k in kvAll)) localStorage.removeItem(k);
           }
         }
       } catch {}
