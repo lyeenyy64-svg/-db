@@ -127,9 +127,24 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
     ["resident_address_lng",       "REAL"],
     ["resident_source_date",       "TEXT"],
     ["credit_source_date",         "TEXT"],
+    // 이름만으로 CB/초본 문서를 찾다가 동명이인(다른 사람) 데이터가 섞였다고 사람이 직접
+    // 확인한 경우, 그 항목의 이름매칭 자동조회/표시를 끈다. 기존 값은 지우지 않고 그대로
+    // 두므로(숨김만) 다시 끄면(제외 해제) 즉시 원래대로 복원된다.
+    ["cb_match_excluded",           "INTEGER NOT NULL DEFAULT 0"],
+    ["resident_match_excluded",     "INTEGER NOT NULL DEFAULT 0"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
+    }
+  }
+
+  const guarantorCols = db.prepare("PRAGMA table_info(debtor_guarantors)").all().map(c => c.name);
+  for (const [col, type] of [
+    ["cb_match_excluded",       "INTEGER NOT NULL DEFAULT 0"],
+    ["resident_match_excluded", "INTEGER NOT NULL DEFAULT 0"],
+  ]) {
+    if (!guarantorCols.includes(col)) {
+      db.exec(`ALTER TABLE debtor_guarantors ADD COLUMN ${col} ${type}`);
     }
   }
 
@@ -1101,6 +1116,8 @@ app.get("/api/debtors", (req, res) => {
            resident_issued_date AS residentIssuedDate,
            credit_phone AS creditPhone,
            credit_queried_date AS creditQueriedDate,
+           cb_match_excluded AS cbMatchExcluded,
+           resident_match_excluded AS residentMatchExcluded,
            sales_rep AS salesRep,
            key_notes AS keyNotes,
            principal_balance AS principalBalance, adjustment, collected_amount AS collectedAmount,
@@ -4018,6 +4035,22 @@ function hasNameCollision(debtorId, name) {
   return !!row;
 }
 
+// 사람이 "동명이인 데이터"라고 직접 확인해서 제외 처리한 항목인지 확인.
+// field: "cb"(신용조회) | "resident"(초본) — 채무자 본인 기준.
+function isNameMatchExcluded(debtorId, field) {
+  const col = field === "cb" ? "cb_match_excluded" : "resident_match_excluded";
+  const row = db.prepare(`SELECT ${col} AS v FROM debtors WHERE id = ?`).get(debtorId);
+  return !!(row && row.v);
+}
+
+// 연대보증인 버전 — debtor_guarantors 행 id 기준(이름이 아니라 행으로 구분해야
+// 같은 채무자에게 동명 연대보증인이 두 명 등록된 경우에도 안전하다).
+function isGuarantorMatchExcluded(guarantorId, field) {
+  const col = field === "cb" ? "cb_match_excluded" : "resident_match_excluded";
+  const row = db.prepare(`SELECT ${col} AS v FROM debtor_guarantors WHERE id = ?`).get(guarantorId);
+  return !!(row && row.v);
+}
+
 // 이름으로 CB(신용정보) 보고서 PDF를 찾아 OCR로 점수를 추출.
 // /api/debtor/:id/credit-score 화면 표시와 AI 종합분석(연대보증인 신용점수)이 각자
 // 따로 검색하다가 서로 다른 값을 보여주던 문제가 있어 이 함수로 통합했다.
@@ -4062,6 +4095,7 @@ async function findCreditScoreForName(name, limit, priority) {
 // 초본에서 최근 주소/등록일/비고/발급일을 찾아 비어있는 컬럼만 채운다.
 // (예전 로직이 잘못 저장해둔 값은 덮어쓰지 않으므로, 그걸 고치려면 먼저 컬럼을 비워야 한다 — /resident-number/refresh 참고)
 async function lookupResidentDetails(debtorId, debtor, priority) {
+  if (isNameMatchExcluded(debtorId, "resident")) return { ok: false, excluded: true, error: "동명이인으로 제외됨" };
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
   const ambiguous = hasNameCollision(debtorId, debtor.name);
@@ -4112,83 +4146,96 @@ async function lookupResidentDetails(debtorId, debtor, priority) {
 app.get("/api/debtor/:id/resident-number", async (req, res) => {
   try {
     const debtor = db.prepare(
-      `SELECT d.name, d.resident_number,
-              d.resident_address, d.resident_registered_date, d.resident_note, d.resident_issued_date,
-              (SELECT GROUP_CONCAT(g.name, ',') FROM debtor_guarantors g WHERE g.debtor_id = d.id) AS guarantors_str
+      `SELECT d.name, d.resident_number, d.resident_match_excluded,
+              d.resident_address, d.resident_registered_date, d.resident_note, d.resident_issued_date
        FROM debtors d WHERE d.id = ?`
     ).get(req.params.id);
     if (!debtor) return res.json({ ok: false, entries: [], residentDetails: null });
-    const ambiguous = hasNameCollision(req.params.id, debtor.name);
+    const guarantorRows = db.prepare("SELECT id, name, resident_match_excluded FROM debtor_guarantors WHERE debtor_id = ?").all(req.params.id);
 
     const entries = [];
     let residentDetails = null;
 
-    // 주채무자 — 주민등록번호 + 최근주소/등록일/비고/발급일 (같은 초본 1회 OCR로 함께 추출)
-    const detailsComplete = !!(debtor.resident_address && debtor.resident_registered_date && debtor.resident_issued_date);
-    if (debtor.resident_number && detailsComplete) {
-      entries.push({ name: debtor.name, number: debtor.resident_number, source: "db" });
-      residentDetails = {
-        address: debtor.resident_address, registeredDate: debtor.resident_registered_date,
-        note: debtor.resident_note, issuedDate: debtor.resident_issued_date,
-      };
+    if (debtor.resident_match_excluded) {
+      // 사람이 "동명이인 데이터"라고 확인해서 제외한 상태 — 자동조회를 건너뛰고
+      // 화면에는 "제외됨" + 다시 포함할 수 있는 상태만 표시한다.
+      entries.push({ name: debtor.name, number: null, source: "excluded", excluded: true, target: "self" });
     } else {
-      const kor = korName3(debtor.name);
-      if (kor) {
-        const rows = db.prepare(
-          `SELECT file_path, filename, parsed_date FROM file_index
-           WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-           AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
-           AND ext = 'pdf'
-           ORDER BY parsed_date DESC LIMIT 5`
-        ).all(`%${kor}%`, `%${kor}%`);
-        for (const c of rows) {
-          const r = await ocrPdfForResident(c.file_path);
-          const gotNumber = r.ok && r.number;
-          const gotDetails = r.address || r.registeredDate;
-          if (!gotNumber && !gotDetails) continue;
+      const ambiguous = hasNameCollision(req.params.id, debtor.name);
 
-          if (gotNumber) entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename, ambiguous });
-
-          // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다 — 단, 동명이인이 있으면
-          // 이 문서가 그 사람 것일 수 있어 DB에는 쓰지 않고 화면에만 "확인 필요"로 보여준다.
-          const updates = [], vals = [];
-          if (!ambiguous) {
-            if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
-            if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
-            if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
-            if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
-            if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
-          }
-          if (updates.length) {
-            db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, req.params.id);
-          }
-
-          residentDetails = {
-            address: debtor.resident_address || (ambiguous ? null : r.address) || null,
-            registeredDate: debtor.resident_registered_date || (ambiguous ? null : r.registeredDate) || null,
-            note: debtor.resident_note || (ambiguous ? null : r.note) || null,
-            issuedDate: debtor.resident_issued_date || (ambiguous ? null : r.issuedDate) || null,
-            ambiguous,
-          };
-          if (gotNumber) break; // 번호까지 찾았으면 더 오래된 파일은 볼 필요 없음
-        }
-      }
-      if (!entries.length && debtor.resident_number) {
-        entries.push({ name: debtor.name, number: debtor.resident_number, source: "db" });
-      }
-      if (!residentDetails && detailsComplete) {
+      // 주채무자 — 주민등록번호 + 최근주소/등록일/비고/발급일 (같은 초본 1회 OCR로 함께 추출)
+      const detailsComplete = !!(debtor.resident_address && debtor.resident_registered_date && debtor.resident_issued_date);
+      if (debtor.resident_number && detailsComplete) {
+        entries.push({ name: debtor.name, number: debtor.resident_number, source: "db", target: "self" });
         residentDetails = {
           address: debtor.resident_address, registeredDate: debtor.resident_registered_date,
           note: debtor.resident_note, issuedDate: debtor.resident_issued_date,
         };
+      } else {
+        const kor = korName3(debtor.name);
+        if (kor) {
+          const rows = db.prepare(
+            `SELECT file_path, filename, parsed_date FROM file_index
+             WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
+             AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
+             AND ext = 'pdf'
+             ORDER BY parsed_date DESC LIMIT 5`
+          ).all(`%${kor}%`, `%${kor}%`);
+          for (const c of rows) {
+            const r = await ocrPdfForResident(c.file_path);
+            const gotNumber = r.ok && r.number;
+            const gotDetails = r.address || r.registeredDate;
+            if (!gotNumber && !gotDetails) continue;
+
+            if (gotNumber) entries.push({ name: debtor.name, number: r.number, source: "ocr", filename: c.filename, ambiguous, target: "self" });
+
+            // 이미 DB에 있는 값은 덮어쓰지 않고, 비어있는 컬럼만 채운다 — 단, 동명이인이 있으면
+            // 이 문서가 그 사람 것일 수 있어 DB에는 쓰지 않고 화면에만 "확인 필요"로 보여준다.
+            const updates = [], vals = [];
+            if (!ambiguous) {
+              if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+              if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
+              if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
+              if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
+              if (!debtor.resident_issued_date && r.issuedDate) { updates.push("resident_issued_date = ?"); vals.push(r.issuedDate); }
+            }
+            if (updates.length) {
+              db.prepare(`UPDATE debtors SET ${updates.join(", ")} WHERE id = ?`).run(...vals, req.params.id);
+            }
+
+            residentDetails = {
+              address: debtor.resident_address || (ambiguous ? null : r.address) || null,
+              registeredDate: debtor.resident_registered_date || (ambiguous ? null : r.registeredDate) || null,
+              note: debtor.resident_note || (ambiguous ? null : r.note) || null,
+              issuedDate: debtor.resident_issued_date || (ambiguous ? null : r.issuedDate) || null,
+              ambiguous,
+            };
+            if (gotNumber) break; // 번호까지 찾았으면 더 오래된 파일은 볼 필요 없음
+          }
+        }
+        if (!entries.length && debtor.resident_number) {
+          entries.push({ name: debtor.name, number: debtor.resident_number, source: "db", target: "self" });
+        }
+        if (!residentDetails && detailsComplete) {
+          residentDetails = {
+            address: debtor.resident_address, registeredDate: debtor.resident_registered_date,
+            note: debtor.resident_note, issuedDate: debtor.resident_issued_date,
+          };
+        }
       }
     }
 
     // 연대보증인
-    const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
-    for (const gName of guarantors) {
-      const kor = korName3(gName);
+    for (const g of guarantorRows) {
+      if (g.resident_match_excluded) {
+        entries.push({ name: g.name, number: null, source: "excluded", excluded: true, target: "guarantor", guarantorId: g.id });
+        continue;
+      }
+      const kor = korName3(g.name);
       if (!kor) continue;
+      // 이 연대보증인과 이름이 같은 다른 채무자가 이미 있으면(동명이인), 아래에서 이름만으로
+      // 찾은 초본이 사실 그 사람 것일 수 있다 — 주채무자 항목과 동일하게 경고를 붙인다.
+      const gAmbiguous = hasNameCollision(req.params.id, g.name);
       const rows = db.prepare(
         `SELECT file_path, filename FROM file_index
          WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
@@ -4198,7 +4245,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
       ).all(`%${kor}%`, `%${kor}%`);
       for (const c of rows) {
         const r = await ocrPdfForResident(c.file_path);
-        if (r.ok && r.number) { entries.push({ name: gName, number: r.number, source: "ocr", filename: c.filename }); break; }
+        if (r.ok && r.number) { entries.push({ name: g.name, number: r.number, source: "ocr", filename: c.filename, ambiguous: gAmbiguous, target: "guarantor", guarantorId: g.id }); break; }
       }
     }
 
@@ -4231,37 +4278,70 @@ app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
 // ─── 신용점수 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
 app.get("/api/debtor/:id/credit-score", async (req, res) => {
   try {
-    const debtor = db.prepare(
-      `SELECT d.name, d.credit_grade,
-              (SELECT GROUP_CONCAT(g.name, ',') FROM debtor_guarantors g WHERE g.debtor_id = d.id) AS guarantors_str
-       FROM debtors d WHERE d.id = ?`
-    ).get(req.params.id);
+    const debtor = db.prepare("SELECT d.name, d.credit_grade, d.cb_match_excluded FROM debtors d WHERE d.id = ?").get(req.params.id);
     if (!debtor) return res.json({ ok: false, entries: [] });
-    const ambiguous = hasNameCollision(req.params.id, debtor.name);
+    const guarantorRows = db.prepare("SELECT id, name, cb_match_excluded FROM debtor_guarantors WHERE debtor_id = ?").all(req.params.id);
 
     const entries = [];
 
-    // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
-    // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
-    // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다. 동명이인이 있으면(다른 채무자와 이름이
-    // 같으면) 이 CB 파일이 그 사람 것일 수 있어 DB에는 저장하지 않고 화면에만 표시한다.
-    const mainResult = await findCreditScoreForName(debtor.name, 5);
-    if (mainResult) {
-      entries.push({ name: debtor.name, ...mainResult, source: "ocr", ambiguous: mainResult.ambiguous || ambiguous });
-      if (!debtor.credit_grade && !ambiguous) {
-        db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
+    if (debtor.cb_match_excluded) {
+      entries.push({ name: debtor.name, score: null, source: "excluded", excluded: true, target: "self" });
+    } else {
+      const ambiguous = hasNameCollision(req.params.id, debtor.name);
+      // 주채무자 — OCR로 찾은 점수를 DB에도 저장해둔다(예전엔 화면에만 잠깐 띄우고 저장을 안 해서,
+      // AI 종합분석이 읽는 credit_grade 컬럼은 항상 비어있어 "확인 필요"로만 나오던 문제가 있었다).
+      // 이미 값이 있으면(수동 입력 등) 덮어쓰지 않는다. 동명이인이 있으면(다른 채무자와 이름이
+      // 같으면) 이 CB 파일이 그 사람 것일 수 있어 DB에는 저장하지 않고 화면에만 표시한다.
+      const mainResult = await findCreditScoreForName(debtor.name, 5);
+      if (mainResult) {
+        entries.push({ name: debtor.name, ...mainResult, source: "ocr", ambiguous: mainResult.ambiguous || ambiguous, target: "self" });
+        if (!debtor.credit_grade && !ambiguous) {
+          db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
+        }
       }
     }
 
     // 연대보증인
-    const guarantors = debtor.guarantors_str ? debtor.guarantors_str.split(",").filter(Boolean) : [];
-    for (const gName of guarantors) {
-      const r = await findCreditScoreForName(gName, 5);
-      if (r) entries.push({ name: gName, ...r, source: "ocr" });
+    for (const g of guarantorRows) {
+      if (g.cb_match_excluded) {
+        entries.push({ name: g.name, score: null, source: "excluded", excluded: true, target: "guarantor", guarantorId: g.id });
+        continue;
+      }
+      const r = await findCreditScoreForName(g.name, 5);
+      if (r) {
+        // 이 연대보증인과 이름이 같은 다른 채무자가 이미 있으면(동명이인), 완전일치로 찾은
+        // CB 파일이라도 사실 그 사람 것일 수 있다 — 주채무자 항목과 동일하게 경고를 붙인다.
+        const gAmbiguous = r.ambiguous || hasNameCollision(req.params.id, g.name);
+        entries.push({ name: g.name, ...r, ambiguous: gAmbiguous, source: "ocr", target: "guarantor", guarantorId: g.id });
+      }
     }
 
     res.json({ ok: true, entries });
   } catch (e) { res.status(500).json({ ok: false, entries: [], error: e.message }); }
+});
+
+// 이름만으로 찾은 CB/초본 데이터가 동명이인(다른 사람) 것이라고 사람이 직접 확인했을 때
+// 켜고 끄는 스위치. 켜면(excluded=true) 해당 항목의 이름매칭 자동조회/표시를 끄고,
+// 꺼도(excluded=false) 되돌릴 수 있도록 기존 DB 값은 지우지 않고 그대로 둔다.
+// guarantorId를 안 보내면 채무자 본인 기준, 보내면 그 연대보증인(행 id) 기준으로 처리한다.
+app.post("/api/debtor/:id/name-match-exclude", (req, res) => {
+  try {
+    const { field, excluded, guarantorId } = req.body;
+    if (field !== "cb" && field !== "resident") return res.status(400).json({ ok: false, error: "field는 cb 또는 resident여야 합니다" });
+    const col = field === "cb" ? "cb_match_excluded" : "resident_match_excluded";
+    const val = excluded ? 1 : 0;
+
+    if (guarantorId) {
+      const row = db.prepare("SELECT id FROM debtor_guarantors WHERE id = ? AND debtor_id = ?").get(guarantorId, req.params.id);
+      if (!row) return res.status(404).json({ ok: false, error: "연대보증인을 찾을 수 없습니다" });
+      db.prepare(`UPDATE debtor_guarantors SET ${col} = ? WHERE id = ?`).run(val, guarantorId);
+    } else {
+      const row = db.prepare("SELECT id FROM debtors WHERE id = ?").get(req.params.id);
+      if (!row) return res.status(404).json({ ok: false, error: "채무자를 찾을 수 없습니다" });
+      db.prepare(`UPDATE debtors SET ${col} = ? WHERE id = ?`).run(val, req.params.id);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ─── 최신 주소지 자동 추출 (CB종합보고서 PDF → Python Windows OCR) ──
@@ -4271,6 +4351,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
 // 그래서 예전(수정 전) OCR 로직이 잘못 저장해둔 값은 이 함수만으로는 고쳐지지 않는다.
 // 잘못된 캐시를 다시 뽑으려면 먼저 해당 컬럼을 비워야 하고, 그건 /credit-address/refresh가 한다.
 async function lookupCreditAddress(debtor, priority) {
+  if (isNameMatchExcluded(debtor.id, "cb")) return { ok: false, excluded: true, error: "동명이인으로 제외됨" };
   const kor = korName3(debtor.name);
   if (!kor) return { ok: false, error: "이름 인식 불가" };
   const ambiguous = hasNameCollision(debtor.id, debtor.name);
@@ -5109,7 +5190,8 @@ async function generateDebtorAnalysisText(debtorId, priority) {
     const d = db.prepare("SELECT * FROM debtors WHERE id = ?").get(debtorId);
     if (!d) return { ok: false, error: "채무자 없음" };
 
-    const guarantorNames = db.prepare("SELECT name FROM debtor_guarantors WHERE debtor_id = ?").all(d.id).map(r => r.name);
+    const guarantorRows = db.prepare("SELECT id, name, cb_match_excluded FROM debtor_guarantors WHERE debtor_id = ?").all(d.id);
+    const guarantorNames = guarantorRows.map(r => r.name);
     const acts = db.prepare("SELECT * FROM activities WHERE debtor_id=? ORDER BY activity_date DESC LIMIT 20").all(d.id);
     const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(d.id);
     const rehabs = db.prepare("SELECT * FROM rehabilitations WHERE debtor_id=? ORDER BY id DESC LIMIT 3").all(d.id);
@@ -5127,11 +5209,16 @@ async function generateDebtorAnalysisText(debtorId, priority) {
     // /api/debtor/:id/credit-score와 같은 findCreditScoreForName을 공유해서, 두 화면이
     // 서로 다른 파일을 골라 서로 다른 점수를 보여주는 일이 없도록 한다.
     const guarantorScores = [];
-    for (const gName of guarantorNames) {
-      const result = await findCreditScoreForName(gName, 3, priority);
-      // ambiguous=true면 이름 앞 2~3글자만 겹치는 동명이인 CB 파일이 섞여있을 수 있다는 뜻이라,
-      // AI가 그 점수를 근거로 단정하지 않도록 함께 표시한다 (점수 자체는 참고용으로 남겨둠).
-      if (result) guarantorScores.push(`${gName}: ${result.score}점${result.ambiguous ? " (동명이인 파일 혼재 가능 — 확인 필요)" : ""}`);
+    for (const g of guarantorRows) {
+      if (g.cb_match_excluded) continue; // 동명이인 데이터로 확인되어 제외된 항목 — 근거로 쓰지 않음
+      const result = await findCreditScoreForName(g.name, 3, priority);
+      if (!result) continue;
+      // 이 연대보증인과 이름이 같은 다른 채무자가 이미 있으면(동명이인), 완전일치로 찾은
+      // CB 파일이라도 그 사람 것일 수 있다 — /credit-score API와 동일하게 함께 확인한다.
+      const ambiguous = result.ambiguous || hasNameCollision(d.id, g.name);
+      // ambiguous=true면 동명이인 CB 파일이 섞여있을 수 있다는 뜻이라, AI가 그 점수를
+      // 근거로 단정하지 않도록 함께 표시한다 (점수 자체는 참고용으로 남겨둠).
+      guarantorScores.push(`${g.name}: ${result.score}점${ambiguous ? " (동명이인 파일 혼재 가능 — 확인 필요)" : ""}`);
     }
 
     const contextText = `
@@ -5139,7 +5226,7 @@ async function generateDebtorAnalysisText(debtorId, priority) {
 이름: ${d.name} | 브랜드: ${d.brand_code || "-"} | 담당자: ${d.assignee || "-"} | 수금상태: ${d.collection_status || "-"}
 원금: ${fmt(d.principal_balance)}원 | 회수액: ${fmt(d.collected_amount)}원 | 법무기준잔액: ${fmt(d.final_balance_legal)}원
 채무발생원인: ${d.debt_cause || "-"} | 대여일자: ${d.loan_date || "-"}
-${isCorporate ? "채무자 유형: 법인 (개인 CB 신용점수 대상 아님)" : `채무자 신용점수: ${d.credit_grade || "확인 안됨"}`}
+${isCorporate ? "채무자 유형: 법인 (개인 CB 신용점수 대상 아님)" : `채무자 신용점수: ${d.cb_match_excluded ? "확인 안됨 (동명이인으로 제외됨)" : (d.credit_grade || "확인 안됨")}`}
 연대보증인: ${guarantorNames.length ? guarantorNames.join(", ") : "없음"}
 연대보증인 신용점수: ${guarantorScores.length ? guarantorScores.join(" / ") : "확인 안됨"}
 

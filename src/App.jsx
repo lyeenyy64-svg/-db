@@ -5869,6 +5869,50 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const EXT_ICONS = { pdf: "📄", docx: "📝", doc: "📝", xlsx: "📊", xls: "📊", hwp: "📋", hwpx: "📋", jpg: "🖼", jpeg: "🖼", png: "🖼", zip: "🗜" };
 
+    // 이름만으로 찾은 CB/초본 데이터를 "동명이인 것"으로 제외하거나 다시 포함시킨다.
+    // 기존 DB 값은 서버에서 지우지 않고 그대로 두므로, 언제든 다시 껐다 켜서 되돌릴 수 있다.
+    const toggleNameMatchExclude = async (field, excluded, guarantorId) => {
+      try {
+        const res = await fetch(`/api/debtor/${d.id}/name-match-exclude`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ field, excluded, guarantorId }),
+        });
+        const result = await res.json();
+        if (!result.ok) { showToast("변경 실패"); return; }
+
+        // 본인 기준 항목이면 신용조회상 연락처/최신주소, 초본상 최신주소 블록도 즉시
+        // 반영되도록 d.cbMatchExcluded/residentMatchExcluded도 같이 갱신한다.
+        if (!guarantorId) {
+          const patch = field === "cb" ? { cbMatchExcluded: excluded } : { residentMatchExcluded: excluded };
+          setData(prev => ({ ...prev, debtors: prev.debtors.map(x => x.id === d.id ? { ...x, ...patch } : x) }));
+          setSel(prev => (prev && prev.id === d.id) ? { ...prev, ...patch } : prev);
+        }
+
+        if (field === "resident") {
+          const resData = await fetchWithTimeout(`/api/debtor/${d.id}/resident-number`).then(r => r.json());
+          setAutoResidentNums(prev => ({ ...prev, [d.id]: (resData.ok && resData.entries?.length) ? resData.entries : [] }));
+          setAutoResidentDetails(prev => ({ ...prev, [d.id]: resData.residentDetails || false }));
+        } else {
+          const scoreData = await fetchWithTimeout(`/api/debtor/${d.id}/credit-score`).then(r => r.json());
+          setAutoCreditScores(prev => ({ ...prev, [d.id]: (scoreData.ok && scoreData.entries?.length) ? scoreData.entries : [] }));
+          if (!guarantorId) {
+            const addr = await fetchWithTimeout(`/api/debtor/${d.id}/credit-address`).then(r => r.json()).catch(() => null);
+            setAutoAddresses(prev => ({ ...prev, [d.id]: addr && addr.ok ? { address: addr.address, phone: addr.phone, queriedDate: addr.queriedDate, filename: addr.filename } : false }));
+          }
+        }
+        showToast(excluded ? "동명이인으로 제외했습니다" : "다시 포함했습니다");
+      } catch { showToast("변경 실패"); }
+    };
+
+    const ExcludeToggle = ({ excluded, onToggle }) => (
+      <span
+        onClick={onToggle}
+        title={excluded ? "다시 이름매칭 자동조회에 포함" : "동명이인 데이터로 확인 — 이 항목 제외"}
+        style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, color: excluded ? "#1d4ed8" : "var(--tm)", background: excluded ? "#3b82f618" : "var(--bg2)", border: `1px solid ${excluded ? "#3b82f630" : "var(--brd)"}`, borderRadius: 5, padding: "1px 6px", cursor: "pointer", userSelect: "none" }}
+      >{excluded ? "↺ 복원" : "✕ 동명이인 제외"}</span>
+    );
+
     const dtabs = [
       { k: "히스토리", count: allHistory.length },
       { k: "입금내역", count: debtorPayments.length },
@@ -5949,11 +5993,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const entries = autoResidentNums[d.id];
                 const allEntries = (() => {
                   const base = Array.isArray(entries) ? entries : [];
-                  if (d.residentNumber && !base.find(e => e.name === d.name)) return [{ name: d.name, number: d.residentNumber, source: "db" }, ...base];
+                  if (d.residentNumber && !base.find(e => e.name === d.name)) return [{ name: d.name, number: d.residentNumber, source: "db", target: "self" }, ...base];
                   return base;
                 })();
                 if (!allEntries.length) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{entries === null ? "조회 중..." : "없음"}</span>;
                 const renderEntry = (entry, idx) => {
+                  const onExcludeToggle = () => toggleNameMatchExclude("resident", !entry.excluded, entry.target === "guarantor" ? entry.guarantorId : undefined);
+                  if (entry.excluded) {
+                    return <div key={idx}>
+                      <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>동명이인으로 제외됨</span>
+                      {canEdit && <ExcludeToggle excluded onToggle={onExcludeToggle} />}
+                    </div>;
+                  }
                   const clean = entry.number.replace(/[-\s]/g, "");
                   const front = clean.slice(0, 6), back = clean.slice(6);
                   const revealKey = `${d.id}_${idx}`;
@@ -5968,6 +6020,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <span title="이름이 같은 다른 채무자가 있어 초본 파일을 이름만으로 찾다가 그 사람의 정보가 섞였을 수 있습니다 — '초본 보기'로 실제 문서를 확인하세요."
                         style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
                     )}
+                    {canEdit && (entry.target === "self" || entry.target === "guarantor") && <ExcludeToggle excluded={false} onToggle={onExcludeToggle} />}
                     <div style={{ fontSize: 10, color: "var(--ts)" }}>{century}{yy}.{mm}.{dd2} 생 {(() => { const by=parseInt(century+yy,10),bm=parseInt(mm,10),bd=parseInt(dd2,10),now=new Date(); const age=now.getFullYear()-by-(now.getMonth()+1<bm||(now.getMonth()+1===bm&&now.getDate()<bd)?1:0); return `(만 ${age}세)`; })()}</div>
                   </div>;
                 };
@@ -5982,6 +6035,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             {/* 초본 발급일 / 초본상 등록일 / 비고 */}
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               {(() => {
+                if (d.residentMatchExcluded) return <>
+                  <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>초본 발급일 / 초본 등록일 / 비고</div>
+                  <span style={{ fontSize: 12, color: "var(--tm)" }}>동명이인으로 제외됨 — 주민등록번호 항목에서 복원하면 다시 표시됩니다</span>
+                </>;
                 const details = autoResidentDetails[d.id];
                 const registeredDate = d.residentRegisteredDate || (details && details.registeredDate) || null;
                 const note = d.residentNote || (details && details.note) || null;
@@ -6013,20 +6070,29 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 const scoreEntries = autoCreditScores[d.id];
                 const allEntries = (() => {
                   const base = Array.isArray(scoreEntries) ? scoreEntries : [];
-                  if (d.creditGrade && !base.find(e => String(e.name||"").replace(/[^가-힣]/g,"").slice(0,3) === String(d.name||"").replace(/[^가-힣]/g,"").slice(0,3))) return [{ name: d.name, score: d.creditGrade, source: "db" }, ...base];
+                  if (d.creditGrade && !base.find(e => String(e.name||"").replace(/[^가-힣]/g,"").slice(0,3) === String(d.name||"").replace(/[^가-힣]/g,"").slice(0,3))) return [{ name: d.name, score: d.creditGrade, source: "db", target: "self" }, ...base];
                   return base;
                 })();
                 if (!allEntries.length) return <span style={{ fontSize: 12, color: "var(--tm)" }}>{scoreEntries === null ? "조회 중..." : "없음"}</span>;
-                const renderScore = (entry, idx) => (
-                  <div key={idx}>
+                const renderScore = (entry, idx) => {
+                  const onExcludeToggle = () => toggleNameMatchExclude("cb", !entry.excluded, entry.target === "guarantor" ? entry.guarantorId : undefined);
+                  if (entry.excluded) {
+                    return <div key={idx}>
+                      <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
+                      <span style={{ fontSize: 11, color: "var(--tm)" }}>동명이인으로 제외됨</span>
+                      {canEdit && <ExcludeToggle excluded onToggle={onExcludeToggle} />}
+                    </div>;
+                  }
+                  return <div key={idx}>
                     <div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 1 }}>{entry.name}</div>
                     <span style={{ fontSize: 12, fontWeight: 700, color: parseInt(entry.score)>=700 ? "var(--ok)" : parseInt(entry.score)>=400 ? "var(--warn)" : "var(--err)" }}>{entry.score}점</span>
                     {entry.ambiguous && (
                       <span title="이름 앞 2~3글자만 겹치는 CB 파일로 찾은 결과라 동명이인(다른 사람)의 점수가 섞였을 수 있습니다 — 'CB 보기'로 실제 문서를 확인하세요."
                         style={{ marginLeft: 4, fontSize: 10, fontWeight: 700, color: "var(--warn)", cursor: "help" }}>⚠ 동명이인 확인필요</span>
                     )}
-                  </div>
-                );
+                    {canEdit && (entry.target === "self" || entry.target === "guarantor") && <ExcludeToggle excluded={false} onToggle={onExcludeToggle} />}
+                  </div>;
+                };
                 if (allEntries.length === 1) return renderScore(allEntries[0], 0);
                 const half = Math.ceil(allEntries.length / 2);
                 return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 16px" }}>
@@ -6039,6 +6105,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 6 }}>신용조회상 연락처</div>
               {(() => {
+                if (d.cbMatchExcluded) return <span style={{ fontSize: 12, color: "var(--tm)" }}>동명이인으로 제외됨 — 신용조회 항목에서 복원하면 다시 표시됩니다</span>;
                 const addrResult = autoAddresses[d.id];
                 const phone = d.creditPhone || (addrResult && addrResult.phone) || null;
                 if (phone) return <span>
@@ -6077,6 +6144,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 >재조회</button>}
               </div>
               {(() => {
+                if (d.cbMatchExcluded) return <span style={{ fontSize: 12, color: "var(--tm)" }}>동명이인으로 제외됨 — 신용조회 항목에서 복원하면 다시 표시됩니다</span>;
                 const addrResult = autoAddresses[d.id];
                 const address = d.latestAddress || (addrResult && addrResult.address) || null;
                 if (address) return <span>
@@ -6089,6 +6157,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 return <span style={{ fontSize: 12, color: "var(--tm)" }}>{addrResult === null ? "CB보고서에서 자동 조회 중..." : "없음 — CB 보기로 확인 후 '수정'에서 직접 입력 가능"}</span>;
               })()}
               {(() => {
+                if (d.cbMatchExcluded) return null;
                 const queriedDate = d.creditQueriedDate || (autoAddresses[d.id] && autoAddresses[d.id].queriedDate) || null;
                 return queriedDate ? <div style={{ fontSize: 10, color: "var(--ts)", marginTop: 2 }}>CB 조회일자 {queriedDate} 기준</div> : null;
               })()}
@@ -6117,6 +6186,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 >재조회</button>}
               </div>
               {(() => {
+                if (d.residentMatchExcluded) return <span style={{ fontSize: 12, color: "var(--tm)" }}>동명이인으로 제외됨 — 주민등록번호 항목에서 복원하면 다시 표시됩니다</span>;
                 const details = autoResidentDetails[d.id];
                 const address = d.residentAddress || (details && details.address) || null;
                 if (address) return <span style={{ fontSize: 12, fontWeight: 500 }}>{address}</span>;
