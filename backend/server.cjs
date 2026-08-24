@@ -3158,11 +3158,26 @@ function diffDetailText(oldVal, newVal) {
     if (item.debtorName != null) return String(item.debtorName) + (item.result ? ` — ${item.result}` : "");
     return JSON.stringify(item);
   };
+  // 이전 텍스트와 새 텍스트에서 실제로 달라진(늘어난) 가운데 부분만 뽑아낸다 — 앞/뒤로
+  // 겹치는 부분은 그대로 잘라내므로, 메모 한 줄만 고치거나 끝에 몇 줄 추가해도 그 부분만 잡힌다.
+  const diffTextMiddle = (oldText, newText) => {
+    oldText = String(oldText ?? "");
+    newText = String(newText ?? "");
+    const maxStart = Math.min(oldText.length, newText.length);
+    let start = 0;
+    while (start < maxStart && oldText[start] === newText[start]) start++;
+    let endOld = oldText.length, endNew = newText.length;
+    while (endOld > start && endNew > start && oldText[endOld - 1] === newText[endNew - 1]) { endOld--; endNew--; }
+    return newText.slice(start, endNew);
+  };
   // task/result/status/assignee 조합(To Do List·강제집행 등 업무현안 표)을 "수정"할 때는 실제로
   // 바뀐 필드만 나열한다 — 상태 드롭다운 클릭 한 번만 해도 매번 pickText()가 task+result+assignee
   // 전체 문장을 다시 만들어내서, 클릭 1번이 그 항목 전체 글자수(수십 자)로 부풀려지는 문제가 있었다.
+  // 메모/히스토리 같은 자유 텍스트 항목도 마찬가지 이유로, 수정 시 전체 글자수를 다시 세지 않고
+  // diffTextMiddle로 뽑아낸 "실제로 늘어난 부분"만 카운팅한다 — 늘어난 부분이 없으면(삭제/필드만
+  // 변경) 통계에서 새로 입력한 글자가 없다는 뜻이므로 전체 텍스트로 되돌아가지 않는다.
   const pickChangedFieldsText = (prev, item) => {
-    if (item.task == null) return pickText(item);
+    if (item.task == null) return diffTextMiddle(pickText(prev), pickText(item));
     const parts = [];
     if (String(prev.task ?? "") !== String(item.task ?? "")) parts.push(`업무내용→${item.task || "(비움)"}`);
     if (String(prev.result ?? "") !== String(item.result ?? "")) parts.push(`결과→${item.result || "(비움)"}`);
