@@ -470,6 +470,23 @@ function applyRehabOverrides(rehabs) {
   return rehabs.map(r => ov[r.id] !== undefined ? { ...r, debtorId: ov[r.id] } : r);
 }
 
+// ─── 회생/파산 사건 삭제 (엑셀원본+수동추가 공통 — id를 삭제목록에 기록) ─
+const REHAB_DELETED_KEY = "rehab_deleted_ids";
+function getRehabDeleted() { try { return JSON.parse(localStorage.getItem(REHAB_DELETED_KEY) || "[]"); } catch { return []; } }
+function addRehabDeleted(id) {
+  const del = getRehabDeleted();
+  if (!del.includes(id)) {
+    const next = [...del, id];
+    localStorage.setItem(REHAB_DELETED_KEY, JSON.stringify(next));
+    kvPut(REHAB_DELETED_KEY, next);
+  }
+}
+function filterRehabDeleted(rehabs) {
+  const del = getRehabDeleted();
+  if (!del.length) return rehabs;
+  return rehabs.filter(r => !del.includes(r.id));
+}
+
 // 채무자 목록(기준)을 받아 회생파산 데이터의 debtorId를 재매칭
 // 채무자 관리가 마스터 데이터 → 카테고리 '회생/파산'인 채무자를 최우선 매칭
 function matchRehabsToDebtors(rehabs, debtors) {
@@ -967,7 +984,7 @@ function loadExcelData(cfg) {
     installmentPlans:     getMR(MK.installmentPlans),
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
-    rehabilitations:  applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)])),
+    rehabilitations:  filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]))),
     legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
     minsaCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]),
     assetDisclosures:  applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]),
@@ -3193,7 +3210,7 @@ export default function App() {
       });
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
-      const rehabilitations = applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)]));
+      const rehabilitations = filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)])));
       const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
       const minsaCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]);
       const assetDisclosures  = applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]);
@@ -3594,7 +3611,7 @@ export default function App() {
       });
       // 실DB 채무자를 기준으로 회생파산 debtorId 재매칭 + 수동 override/수동 추가 건 적용
       // (loadData와 동일하게 처리해야 입금 등록/삭제 후에도 연대보증인·히스토리·수동 회생파산건이 유지된다)
-      const rehabilitations = applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, debtors), ...getMR(MK.rehabilitations)]));
+      const rehabilitations = filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, debtors), ...getMR(MK.rehabilitations)])));
       setData(prev => ({ ...prev, debtors, payments: paymentsRes, rehabilitations }));
       setLastSaved(new Date());
       if (sel) {
@@ -9417,6 +9434,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setIsEditingCase(false);
         showToast("저장 완료");
       };
+      const handleDeleteRehab = () => {
+        if (!confirm(`"${r.debtorName}" 사건(${r.caseNumber || "사건번호 없음"})을 삭제하시겠습니까?`)) return;
+        addRehabDeleted(r.id);
+        delMR(MK.rehabilitations, r.id);
+        setData(prev => ({ ...prev, rehabilitations: prev.rehabilitations.filter(x => x.id !== r.id) }));
+        setSelRehab(null);
+        showToast("삭제 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
@@ -9561,16 +9586,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            {debtor && (
-              <button
-                onClick={() => { navigateToDebtor(debtor, "회생파산"); setSelRehab(null); }}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
-              >
-                <I name="users" size={14} /> 채무자 페이지로 가기
-              </button>
-            )}
-            <button onClick={() => setSelRehab(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {canDeleteRecord(r) && (
+                <button onClick={handleDeleteRehab}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, background: "#fef2f2", color: "#b91c1c", fontSize: 13, fontWeight: 600, border: "1px solid #fecaca", cursor: "pointer" }}>
+                  <I name="trash" size={13} /> 삭제
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {debtor && (
+                <button
+                  onClick={() => { navigateToDebtor(debtor, "회생파산"); setSelRehab(null); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+                >
+                  <I name="users" size={14} /> 채무자 페이지로 가기
+                </button>
+              )}
+              <button onClick={() => setSelRehab(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+            </div>
           </div>
         </Overlay>
       );
