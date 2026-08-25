@@ -487,6 +487,28 @@ function filterRehabDeleted(rehabs) {
   return rehabs.filter(r => !del.includes(r.id));
 }
 
+// ─── 지급명령/압류/재산명시/민사소송 사건 삭제 (회생파산과 동일한 패턴 —
+// 엑셀원본+수동추가 공통으로 id를 삭제목록에 기록해 병합 목록에서 제외) ─
+function makeCaseDeletedTracker(storageKey) {
+  const get = () => { try { return JSON.parse(localStorage.getItem(storageKey) || "[]"); } catch { return []; } };
+  const add = (id) => {
+    const del = get();
+    if (!del.includes(id)) {
+      const next = [...del, id];
+      localStorage.setItem(storageKey, JSON.stringify(next));
+      kvPut(storageKey, next);
+    }
+  };
+  const filter = (items) => {
+    const del = get();
+    return del.length ? items.filter(x => !del.includes(x.id)) : items;
+  };
+  return { add, filter };
+}
+const legalCaseDeleted = makeCaseDeletedTracker("legal_deleted_ids");
+const minsaCaseDeleted = makeCaseDeletedTracker("minsa_deleted_ids");
+const adCaseDeleted     = makeCaseDeletedTracker("ad_deleted_ids");
+
 // 채무자 목록(기준)을 받아 회생파산 데이터의 debtorId를 재매칭
 // 채무자 관리가 마스터 데이터 → 카테고리 '회생/파산'인 채무자를 최우선 매칭
 function matchRehabsToDebtors(rehabs, debtors) {
@@ -985,9 +1007,9 @@ function loadExcelData(cfg) {
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
     rehabilitations:  filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]))),
-    legalCases:       applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])),
-    minsaCases:       applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]),
-    assetDisclosures:  applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]),
+    legalCases:       legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]))),
+    minsaCases:       minsaCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)])),
+    assetDisclosures:  adCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)])),
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
     forcedExecutions: getMR(MK.forcedExecutions),
     creditAnalyses:   getMR(MK.creditAnalyses),
@@ -3211,9 +3233,9 @@ export default function App() {
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)])));
-      const legalCases      = applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]));
-      const minsaCases      = applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]);
-      const assetDisclosures  = applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]);
+      const legalCases      = legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])));
+      const minsaCases      = minsaCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]));
+      const assetDisclosures  = adCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]));
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
       const installmentSchedules = installmentsRes.flatMap(p =>
         (p.schedules || []).map(s => ({ ...s, debtorId: p.debtorId, debtorName: p.debtorName, brand: p.brand, assignee: p.assignee, hubCode: p.hubCode, hubName: p.hubName }))
@@ -8632,6 +8654,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       } catch { showToast("저장 실패"); }
     };
 
+    const handleDeleteComplaint = async () => {
+      if (!selComplaint) return;
+      if (!confirm(`"${selComplaint.debtorName}" 형사고소 사건(${selComplaint.charge || "죄명 없음"})을 삭제하시겠습니까?`)) return;
+      try {
+        await fetch(`/api/complaints/${selComplaint.id}`, { method: "DELETE" });
+      } catch { /* 서버 반영 실패해도 로컬 목록에서는 지운다 */ }
+      delMR(MK.complaints, selComplaint.id);
+      setData(prev => ({ ...prev, complaints: prev.complaints.filter(x => x.id !== selComplaint.id) }));
+      setSelComplaint(null);
+      showToast("삭제 완료");
+    };
+
     const ComplaintDetailModal = () => {
       if (!selComplaint) return null;
       const c = selComplaint;
@@ -8653,6 +8687,11 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ fontSize: 15, fontWeight: 700 }}>{c.debtorName}</div>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
                 <Badge status={c.charge} />
+                {canDeleteRecord() && (
+                  <button onClick={handleDeleteComplaint} title="삭제" style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", cursor: "pointer" }}>
+                    <I name="trash" size={11} /> 삭제
+                  </button>
+                )}
                 {isEditingComplaint
                   ? <button onClick={saveComplaintEdit} style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
                   : <button onClick={() => setIsEditingComplaint(true)} style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
@@ -9004,6 +9043,17 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setIsEditingCase(false);
         showToast("저장 완료");
       };
+      const handleDeleteCase = () => {
+        const label = isAD ? selCase.debtorName : selCase.defendant;
+        if (!confirm(`"${label}" 사건(${selCase.caseNumber || "사건번호 없음"})을 삭제하시겠습니까?`)) return;
+        const listKey = isAD ? "assetDisclosures" : "legalCases";
+        const tracker = isAD ? adCaseDeleted : legalCaseDeleted;
+        tracker.add(selCase.id);
+        delMR(isAD ? MK.assetDisclosures : MK.legalCases, selCase.id);
+        setData(prev => ({ ...prev, [listKey]: prev[listKey].filter(x => x.id !== selCase.id) }));
+        setSelCase(null);
+        showToast("삭제 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
@@ -9185,16 +9235,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            {debtor && (
-              <button
-                onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
-              >
-                <I name="users" size={14} /> 채무자 페이지로 가기
-              </button>
-            )}
-            <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {canDeleteRecord() && (
+                <button onClick={handleDeleteCase}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, background: "#fef2f2", color: "#b91c1c", fontSize: 13, fontWeight: 600, border: "1px solid #fecaca", cursor: "pointer" }}>
+                  <I name="trash" size={13} /> 삭제
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {debtor && (
+                <button
+                  onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+                >
+                  <I name="users" size={14} /> 채무자 페이지로 가기
+                </button>
+              )}
+              <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+            </div>
           </div>
         </Overlay>
       );
@@ -11563,6 +11623,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setIsEditingCase(false);
         showToast("저장 완료");
       };
+      const handleDeleteCase = () => {
+        if (!confirm(`"${selCase.defendant}" 사건(${selCase.caseNumber || "사건번호 없음"})을 삭제하시겠습니까?`)) return;
+        minsaCaseDeleted.add(selCase.id);
+        delMR(MK.minsaCases, selCase.id);
+        setData(prev => ({ ...prev, minsaCases: prev.minsaCases.filter(x => x.id !== selCase.id) }));
+        setSelCase(null);
+        showToast("삭제 완료");
+      };
       const DL = ({ label, val }) => val ? (
         <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
           <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
@@ -11673,16 +11741,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 </div>
             }
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            {debtor && (
-              <button
-                onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
-              >
-                <I name="users" size={14} /> 채무자 페이지로 가기
-              </button>
-            )}
-            <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {canDeleteRecord() && (
+                <button onClick={handleDeleteCase}
+                  style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, background: "#fef2f2", color: "#b91c1c", fontSize: 13, fontWeight: 600, border: "1px solid #fecaca", cursor: "pointer" }}>
+                  <I name="trash" size={13} /> 삭제
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {debtor && (
+                <button
+                  onClick={() => { navigateToDebtor(debtor, "법적절차내역"); setSelCase(null); }}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: "pointer" }}
+                >
+                  <I name="users" size={14} /> 채무자 페이지로 가기
+                </button>
+              )}
+              <button onClick={() => setSelCase(null)} style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg2)", color: "var(--tp)", fontSize: 13, fontWeight: 500, border: "1px solid var(--brd)", cursor: "pointer" }}>닫기</button>
+            </div>
           </div>
         </Overlay>
       );
