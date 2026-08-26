@@ -12,6 +12,9 @@ const Database = require("better-sqlite3");
 const path = require("path");
 const os = require("os");
 let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = null; }
+// Power Automate 등 외부에서 /api/todo-list/from-outlook-flag 호출 시 검증할 공유 비밀값.
+// .env에 OUTLOOK_FLAG_SECRET을 지정하지 않으면 검증 없이 허용(로컬 테스트용).
+const OUTLOOK_FLAG_SECRET = process.env.OUTLOOK_FLAG_SECRET || "";
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
@@ -3352,6 +3355,41 @@ app.put("/api/kv/:key", (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(key, JSON.stringify(req.body));
   res.json({ ok: true });
+});
+
+// POST /api/todo-list/from-outlook-flag — Outlook에서 메일에 플래그를 걸면 Power Automate가
+// 이 엔드포인트를 호출해 To Do List에 항목 하나를 추가한다. outlookMessageId로 같은 메일이
+// 이미 등록됐는지 확인해 중복 등록을 막는다(플로우가 같은 메일을 두 번 감지해도 안전).
+app.post("/api/todo-list/from-outlook-flag", (req, res) => {
+  if (OUTLOOK_FLAG_SECRET && req.get("x-webhook-secret") !== OUTLOOK_FLAG_SECRET) {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  const subject = String(req.body?.subject || "").trim();
+  const messageId = req.body?.messageId ? String(req.body.messageId) : null;
+  const assignee = String(req.body?.assignee || "배현진").trim();
+  if (!subject) return res.status(400).json({ ok: false, error: "subject 필요" });
+  const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
+  const arr = row ? JSON.parse(row.value) : [];
+  if (messageId && arr.some(x => x.outlookMessageId === messageId)) {
+    return res.json({ ok: true, skipped: true });
+  }
+  const item = {
+    id: `TODO${Date.now()}${Math.floor(Math.random() * 900 + 100)}`,
+    assignee,
+    task: subject,
+    result: "",
+    status: "진행중",
+    createdAt: new Date().toISOString().split("T")[0],
+    completedAt: null,
+    deleted: false,
+    outlookMessageId: messageId,
+  };
+  arr.push(item);
+  db.prepare(`
+    INSERT INTO kv_store (key, value, updated_at) VALUES ('manual_todo_list', ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(JSON.stringify(arr));
+  res.json({ ok: true, id: item.id });
 });
 
 // ─── 서류 연결 (Document Links) ──────────────────────────────
