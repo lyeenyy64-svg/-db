@@ -3135,7 +3135,7 @@ export default function App() {
       if (main?.score) autoGrade = main.score;
     }
     const subResult = autoSubrogationDates[debtor.id];
-    const autoSubDate = debtor.subrogationMonth || (subResult && subResult.date) || "";
+    const autoSubDate = debtor.subrogationMonth || (!debtor.subrogationMonthCleared && subResult && subResult.date) || "";
     const addrResult = autoAddresses[debtor.id];
     const autoAddress = debtor.latestAddress || (addrResult && addrResult.address) || "";
     const autoCreditPhone = debtor.creditPhone || (addrResult && addrResult.phone) || "";
@@ -6270,7 +6270,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대위변제일</span>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {(() => {
-                  const sub = autoSubrogationDates[d.id];
+                  const sub = d.subrogationMonthCleared ? false : autoSubrogationDates[d.id];
                   const displayDate = d.subrogationMonth || (sub && sub.date) || null;
                   return <span style={{ fontSize: 12, fontWeight: displayDate ? 500 : 400, color: displayDate ? "var(--tp)" : "var(--tm)" }}>
                     {displayDate ? displayDate : (sub === null ? "조회 중..." : "없음")}

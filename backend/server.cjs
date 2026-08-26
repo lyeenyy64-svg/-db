@@ -132,6 +132,10 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
     // 두므로(숨김만) 다시 끄면(제외 해제) 즉시 원래대로 복원된다.
     ["cb_match_excluded",           "INTEGER NOT NULL DEFAULT 0"],
     ["resident_match_excluded",     "INTEGER NOT NULL DEFAULT 0"],
+    // 대위변제일을 사람이 명시적으로 지운 경우 표시. 이 플래그가 없으면 빈 값과
+    // "한 번도 입력 안 한 상태"를 구분할 수 없어서, 지워도 대위변제증명서 OCR
+    // 자동추출 결과가 화면에 다시 채워지는 문제가 있었다. 값을 다시 채우면 해제된다.
+    ["subrogation_month_cleared",   "INTEGER NOT NULL DEFAULT 0"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -1101,6 +1105,7 @@ app.get("/api/debtors", (req, res) => {
            collection_status AS collectionStatus, exec_title AS execTitle,
            exec_title_url AS execTitleUrl,
            loan_date AS loanDate, subrogation_month AS subrogationMonth,
+           subrogation_month_cleared AS subrogationMonthCleared,
            subrogation_doc_url AS subrogationDocUrl,
            credit_check_date AS creditCheck, credit_grade AS creditGrade,
            credit_report_url AS creditReportUrl,
@@ -2623,6 +2628,12 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
   }
   if (changedJsKeys.includes('residentAddress')) {
     fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
+  }
+  // 대위변제일을 사람이 비워서 저장하면 "명시적으로 지움" 플래그를 세워, 대위변제증명서
+  // OCR 자동추출 결과로 다시 채워지지 않게 한다. 값을 다시 입력하면 플래그는 해제된다.
+  if (changedJsKeys.includes('subrogationMonth') && DEBTOR_TABLE_COLS.has('subrogation_month_cleared')) {
+    fields.push("subrogation_month_cleared = ?");
+    vals.push(coercedVals.subrogationMonth ? 0 : 1);
   }
   fields.push("updated_at = datetime('now','localtime')");
   vals.push(id);
