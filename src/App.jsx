@@ -2085,7 +2085,7 @@ const compareSortVal = (a, b) => {
 // showComplete=false인 표(주요 협의 대상자)는 완료 개념이 없어 완료 버튼을 숨긴다
 // filterBar: 헤더 아래 검색창 등 추가 UI(옵션). customBody: 기본 <table>{children} 대신
 // 직접 만든 레이아웃(예: 월별 아코디언)을 넣고 싶을 때 사용 — 지정하면 children은 무시됨.
-const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, filterBar, customBody, children }) => {
+const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComplete = true, filterBar, customBody, extraActions, children }) => {
   const toggle = (mode) => setViewMode(viewMode === mode ? "all" : mode);
   const btn = (active) => ({ width: 46, boxSizing: "border-box", padding: "5px 0", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: "pointer", background: active ? "#000" : "var(--bg2)", color: active ? "#fff" : "var(--acc)" });
   // 완료/삭제 화면에서 [등록]을 누르면 곧바로 새 항목을 만들지 않고, 우선 등록현황(전체) 화면으로
@@ -2096,6 +2096,7 @@ const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComple
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: "#000", flexShrink: 0 }} />{title} <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 400 }}>{count}건</span></div>
         <div style={{ display: "flex", gap: 6 }}>
+          {extraActions}
           <button onClick={handleAddClick} style={btn(false)}>등록</button>
           {showComplete && <button onClick={() => toggle("completed")} style={btn(viewMode === "completed")}>완료</button>}
           <button onClick={() => toggle("trash")} style={btn(viewMode === "trash")}>삭제</button>
@@ -2342,7 +2343,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
   );
 };
 
-const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
+const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, reloadFromBackend, showToast }) => {
   // 완료 처리일은 평소 화면(등록현황/삭제)에는 항상 "-"만 보여 불필요하므로 숨기고, "완료" 화면
   // (월별 아코디언)에서만 보여준다 — 그래서 두 화면이 열 구성이 다르다.
   const cols = ["등록일", "담당자", "업무 내용", "결과", "진행상태", "삭제"];
@@ -2422,6 +2423,22 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   // 돌리면 더 이상 유효하지 않으니 비운다 — 나중에 다시 완료로 바꾸면 그때 날짜로 갱신됨.
   const onStatusChange = (r, newStatus) => {
     updateKeyIssue("todoList", r.id, { status: newStatus, completedAt: newStatus === "완료" ? today() : null });
+  };
+
+  const [notionImporting, setNotionImporting] = useState(false);
+  const doImportFromNotion = async () => {
+    setNotionImporting(true);
+    try {
+      const res = await fetch("/api/todo-list/from-notion-flag", { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        showToast(`노션에서 가져오기 완료: 신규 ${data.imported}건 / 이미 등록됨 ${data.skipped}건`);
+        if (data.imported > 0) await reloadFromBackend();
+      } else {
+        showToast(`가져오기 실패: ${data.error}`);
+      }
+    } catch (e) { showToast(`오류: ${e.message}`); }
+    setNotionImporting(false);
   };
 
   const strike = (r, extra) => ({ ...issueTd, position: "relative", ...extra });
@@ -2515,6 +2532,12 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
 
   return (
     <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} filterBar={filterBar} customBody={customBody}
+      extraActions={
+        <button onClick={doImportFromNotion} disabled={notionImporting}
+          style={{ padding: "5px 10px", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: notionImporting ? "default" : "pointer", background: "var(--bg2)", color: "var(--acc)", opacity: notionImporting ? 0.6 : 1 }}>
+          {notionImporting ? "가져오는 중..." : "노션에서 가져오기"}
+        </button>
+      }
       onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", createdAt: today(), completedAt: null, deleted: false })}>
       {theadEl}
       <tbody>
@@ -5005,7 +5028,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
         <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} currentUserName={currentUser?.name} />
-        <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
+        <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} reloadFromBackend={reloadFromBackend} showToast={showToast} />
         <MonthlyScheduleCalendar
           schedule={data.monthlySchedule || []}
           legalCases={data.legalCases} minsaCases={data.minsaCases} assetDisclosures={data.assetDisclosures} rehabilitations={data.rehabilitations}

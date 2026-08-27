@@ -15,6 +15,9 @@ let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = nul
 // Power Automate 등 외부에서 /api/todo-list/from-outlook-flag 호출 시 검증할 공유 비밀값.
 // .env에 OUTLOOK_FLAG_SECRET을 지정하지 않으면 검증 없이 허용(로컬 테스트용).
 const OUTLOOK_FLAG_SECRET = process.env.OUTLOOK_FLAG_SECRET || "";
+// 노션 "플래그 메일함" 데이터베이스에서 제목을 To Do List로 가져오기 위한 설정.
+const NOTION_API_KEY = process.env.NOTION_API_KEY || "";
+const NOTION_FLAG_DB_ID = process.env.NOTION_FLAG_DB_ID || "";
 const matcher = require("./matcher.cjs");
 const slackParser = require("./slackParser.cjs");
 const slackBot = require("./slackBot.cjs");
@@ -3390,6 +3393,72 @@ app.post("/api/todo-list/from-outlook-flag", (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(JSON.stringify(arr));
   res.json({ ok: true, id: item.id });
+});
+
+// POST /api/todo-list/from-notion-flag — "플래그 메일함" 노션 데이터베이스에 쌓인 항목들의
+// 제목만 To Do List에 담당자(요청한 사용자)로 등록한다. 수동 버튼 트리거이며, notionPageId로
+// 이미 가져온 항목은 건너뛰어 같은 메일이 중복 등록되지 않게 한다.
+app.post("/api/todo-list/from-notion-flag", async (req, res) => {
+  if (!NOTION_API_KEY || !NOTION_FLAG_DB_ID) {
+    return res.status(400).json({ ok: false, error: "NOTION_API_KEY / NOTION_FLAG_DB_ID가 설정되지 않았습니다" });
+  }
+  const assignee = extractUserName(req);
+  if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
+  try {
+    const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
+    const arr = row ? JSON.parse(row.value) : [];
+    const already = new Set(arr.filter(x => x.notionPageId).map(x => x.notionPageId));
+
+    const pages = [];
+    let cursor = undefined;
+    do {
+      const notionRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_FLAG_DB_ID}/query`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${NOTION_API_KEY}`,
+          "Notion-Version": "2022-06-28",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(cursor ? { start_cursor: cursor, page_size: 100 } : { page_size: 100 }),
+      });
+      const notionData = await notionRes.json();
+      if (!notionRes.ok) {
+        return res.status(502).json({ ok: false, error: `노션 API 오류: ${notionData?.message || notionRes.status}` });
+      }
+      pages.push(...(notionData.results || []));
+      cursor = notionData.has_more ? notionData.next_cursor : undefined;
+    } while (cursor);
+
+    let imported = 0, skipped = 0;
+    for (const page of pages) {
+      if (already.has(page.id)) { skipped++; continue; }
+      const titleProp = Object.values(page.properties || {}).find(p => p.type === "title");
+      const subject = (titleProp?.title || []).map(t => t.plain_text || "").join("").trim();
+      if (!subject) { skipped++; continue; }
+      arr.push({
+        id: `TODO${Date.now()}${Math.floor(Math.random() * 900 + 100)}`,
+        assignee,
+        task: subject,
+        result: "",
+        status: "진행중",
+        createdAt: new Date().toISOString().split("T")[0],
+        completedAt: null,
+        deleted: false,
+        notionPageId: page.id,
+      });
+      already.add(page.id);
+      imported++;
+    }
+    if (imported > 0) {
+      db.prepare(`
+        INSERT INTO kv_store (key, value, updated_at) VALUES ('manual_todo_list', ?, datetime('now', 'localtime'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(JSON.stringify(arr));
+    }
+    res.json({ ok: true, imported, skipped });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 // ─── 서류 연결 (Document Links) ──────────────────────────────
