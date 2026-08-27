@@ -3457,7 +3457,7 @@ export default function App() {
     }
     return changes;
   };
-  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
+  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", statuteExtensionDate: "채권 소멸시효 연장일", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
 
   // ─── Excel Download ─────────────────────────────────────
   const downloadCSV = (filename, headers, rows) => {
@@ -3969,23 +3969,26 @@ export default function App() {
   }, [data]);
 
   // ─── 채권 소멸시효 현황 ─────────────────────────────────────
-  // 대여일자(=대여금 지급시기)를 기준으로 집행권원이 있으면 +10년, 없으면 +5년 뒤가 소멸시효
-  // 완성일이다. 완성일까지 남은 일수가 짧을수록 시급하게 시효 연장(소송·압류 등) 조치가 필요하다.
+  // 기준일(대여일자=대여금 지급시기, 단 채권 소멸시효 연장일을 사람이 지정했으면 그 날짜)을
+  // 기준으로 집행권원이 있으면 +10년, 없으면 +5년 뒤가 소멸시효 완성일이다. 연장일을
+  // 지정하지 않은 채무자는 대여일자 기준 계산이 그대로 유지된다. 완성일까지 남은 일수가
+  // 짧을수록 시급하게 시효 연장(소송·압류 등) 조치가 필요하다.
   const statuteStats = useMemo(() => {
     const nowMs = new Date(today() + "T00:00:00").getTime();
     const buckets = STATUTE_BUCKETS.map(b => ({ ...b, count: 0, amount: 0, items: [] }));
     const noAnchorItems = [];
     data.debtors.filter(d => !["완료", "대손채권", "회생/파산"].includes(d.category)).forEach(d => {
-      const loanMs = d.loanDate ? new Date(d.loanDate + "T00:00:00").getTime() : NaN;
-      if (!d.loanDate || isNaN(loanMs)) { noAnchorItems.push(d); return; }
+      const anchorDate = d.statuteExtensionDate || d.loanDate;
+      const anchorMs = anchorDate ? new Date(anchorDate + "T00:00:00").getTime() : NaN;
+      if (!anchorDate || isNaN(anchorMs)) { noAnchorItems.push(d); return; }
       const years = d.execTitle ? 10 : 5;
-      const expiry = new Date(loanMs);
+      const expiry = new Date(anchorMs);
       expiry.setFullYear(expiry.getFullYear() + years);
       const daysLeft = Math.floor((expiry.getTime() - nowMs) / 86400000);
       const bucket = buckets.find(b => daysLeft >= b.min && daysLeft < b.max) || buckets[buckets.length - 1];
       bucket.count++;
       bucket.amount += (d.finalBalanceLegal || 0);
-      bucket.items.push({ ...d, daysLeft, statuteYears: years, expiryDate: expiry.toISOString().split("T")[0] });
+      bucket.items.push({ ...d, daysLeft, statuteYears: years, expiryDate: expiry.toISOString().split("T")[0], anchorDate, isExtended: !!d.statuteExtensionDate });
     });
     buckets.forEach(b => b.items.sort((a, c) => a.daysLeft - c.daysLeft));
     noAnchorItems.sort((a, c) => (c.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0));
@@ -4187,7 +4190,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       brand: config.brands[0]?.code || "B", category: config.categories[0], assignee: config.assignees[0],
       name: "", phone: "", hubCode: "", hubName: "", debtCause: config.debtCauses[0] || "",
       collectionStatus: config.collStatuses[0], execTitle: false, execTitleType: "", execTitleUrl: "",
-      loanDate: today(), principalBalance: 0, adjustment: 0, collectedAmount: 0,
+      loanDate: today(), statuteExtensionDate: "", principalBalance: 0, adjustment: 0, collectedAmount: 0,
       salesRep: "", residentNumber: "",
       keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
       ...modal.data, // "+항목"으로 넘어온 brand/name/category/assignee/hubName 기본값 적용
@@ -4260,6 +4263,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <Field label="조정액(법무비용)"><input type="text" value={f.adjustment === 0 || f.adjustment == null ? "" : Number(f.adjustment).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("adjustment", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
           <Field label="회수액"><input type="text" value={f.collectedAmount === 0 || f.collectedAmount == null ? "" : Number(f.collectedAmount).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("collectedAmount", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
           <Field label="대여일자"><input type="date" value={f.loanDate} onChange={e => set("loanDate", e.target.value)} style={inp} /></Field>
+          <Field label="채권 소멸시효 연장일"><input type="date" value={f.statuteExtensionDate || ""} onChange={e => set("statuteExtensionDate", e.target.value)} style={inp} /></Field>
           <Field label="집행권원 종류"><select value={f.execTitleType || ""} onChange={e => { set("execTitleType", e.target.value); set("execTitle", e.target.value ? 1 : 0); }} style={inp}><option value="">없음</option><option value="공정증서+집행문">공정증서+집행문</option><option value="지급명령결정정본">지급명령결정정본</option><option value="판결정본+집행문+송달증명원+확정증명원">판결정본+집행문+송달증명원+확정증명원</option></select></Field>
           <Field label="집행권원 PDF (OneDrive)"><KoreanInput value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
           <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
@@ -4540,6 +4544,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
           <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 14 }}>
             대여일자(대여금 지급시기) 기준, 집행권원이 있으면 +10년 / 없으면 +5년 뒤 소멸시효 완성 — 완성까지 남은 기간 기준
+            (채권 소멸시효 연장일을 지정한 채무자는 대여일자 대신 그 날짜 기준으로 계산)
           </div>
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${statuteStats.buckets.length}, 1fr)`, gap: 12 }}>
             {statuteStats.buckets.map(b => (
@@ -4555,7 +4560,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
           {statuteStats.noAnchorCount > 0 && (
             <div onClick={() => setStatuteModalReason("noAnchor")} style={{ marginTop: 10, fontSize: 11, color: "var(--tm)", cursor: "pointer", textDecoration: "underline" }}>
-              * 대여일자 정보가 없어 집계에서 제외된 채권 {statuteStats.noAnchorCount}건
+              * 대여일자(또는 연장일) 정보가 없어 집계에서 제외된 채권 {statuteStats.noAnchorCount}건
             </div>
           )}
         </div>
@@ -4568,7 +4573,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <ModalHeader title={`${bucket.label} 채권 (${bucket.count}건, ${fmt(bucket.amount)})`} onClose={() => setStatuteModalBucket(null)} />
               <div style={{ maxHeight: 460, overflow: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "집행권원", "대여일", "시효완성일", "남은기간", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "집행권원", "기준일", "시효완성일", "남은기간", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
                   <tbody>
                     {bucket.items.map(d => (
                       <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
@@ -4579,7 +4584,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
                         <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
                         <td style={{ padding: "8px 10px" }}>{d.execTitle ? `O (${d.statuteYears}년)` : `X (${d.statuteYears}년)`}</td>
-                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.loanDate)}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>
+                          {fmtDate(d.anchorDate)}{d.isExtended && <span style={{ marginLeft: 5, fontSize: 10, fontWeight: 600, color: "#3b82f6" }}>연장</span>}
+                        </td>
                         <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.expiryDate)}</td>
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.daysLeft < 0 ? `${-d.daysLeft}일 경과` : `${d.daysLeft}일 남음`}</td>
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
@@ -4595,7 +4602,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           const items = statuteStats.noAnchorItems;
           return (
             <Overlay onClose={() => setStatuteModalReason(null)} wide>
-              <ModalHeader title={`대여일자 정보 없어 제외된 채권 (${items.length}건)`} onClose={() => setStatuteModalReason(null)} />
+              <ModalHeader title={`대여일자(또는 연장일) 정보 없어 제외된 채권 (${items.length}건)`} onClose={() => setStatuteModalReason(null)} />
               <div style={{ maxHeight: 460, overflow: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "분류", "집행권원", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
@@ -6287,6 +6294,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대여일자</span>
               <span className="mono" style={{ fontSize: 12, fontWeight: 500 }}>{fmtDate(d.loanDate)}</span>
+            </div>
+            {/* 채권 소멸시효 연장일 — 지정된 경우, 소멸시효 계산이 대여일자 대신 이 날짜를 기준으로 바뀐다 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>채권 소멸시효 연장일</span>
+              <span className="mono" style={{ fontSize: 12, fontWeight: d.statuteExtensionDate ? 600 : 400, color: d.statuteExtensionDate ? "#3b82f6" : "var(--tm)" }}>
+                {d.statuteExtensionDate ? fmtDate(d.statuteExtensionDate) : "-"}
+              </span>
             </div>
             {/* 대위변제일 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>

@@ -142,6 +142,10 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
     // "한 번도 입력 안 한 상태"를 구분할 수 없어서, 지워도 대위변제증명서 OCR
     // 자동추출 결과가 화면에 다시 채워지는 문제가 있었다. 값을 다시 채우면 해제된다.
     ["subrogation_month_cleared",   "INTEGER NOT NULL DEFAULT 0"],
+    // 사람이 직접 지정하는 채권 소멸시효 연장일(시효중단/재판 등으로 시효가 새로
+    // 시작되는 날짜). 값이 있으면 대여일자 대신 이 날짜를 기준으로 소멸시효를 계산한다 —
+    // 지정하지 않은 채무자는 기존 대여일자 기준 계산이 그대로 유지된다.
+    ["statute_extension_date",      "TEXT"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -1110,7 +1114,8 @@ app.get("/api/debtors", (req, res) => {
            phone, hub_code AS hubCode, hub_name AS hubName, debt_cause AS debtCause,
            collection_status AS collectionStatus, exec_title AS execTitle,
            exec_title_url AS execTitleUrl,
-           loan_date AS loanDate, subrogation_month AS subrogationMonth,
+           loan_date AS loanDate, statute_extension_date AS statuteExtensionDate,
+           subrogation_month AS subrogationMonth,
            subrogation_month_cleared AS subrogationMonthCleared,
            subrogation_doc_url AS subrogationDocUrl,
            credit_check_date AS creditCheck, credit_grade AS creditGrade,
@@ -2575,6 +2580,7 @@ const DEBTOR_FIELD_MAP = {
   category:"category",assignee:"assignee",name:"name",phone:"phone",
   hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
   execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
+  statuteExtensionDate:"statute_extension_date",
   subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
   creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
   residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
@@ -2589,6 +2595,7 @@ const DEBTOR_FIELD_LABELS = {
   category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
   hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
   execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
+  statuteExtensionDate:"채권 소멸시효 연장일",
   subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
   creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
   residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",
