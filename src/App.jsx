@@ -6302,6 +6302,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 {d.statuteExtensionDate ? fmtDate(d.statuteExtensionDate) : "-"}
               </span>
             </div>
+            {/* 집행권원 종류 — 있으면 소멸시효가 10년, 없으면 5년으로 계산된다 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>집행권원 종류</span>
+              <span style={{ fontSize: 12, fontWeight: d.execTitle ? 600 : 400, color: d.execTitle ? "var(--ok)" : "var(--tm)" }}>
+                {d.execTitle ? (d.execTitleType || "O") : "없음"}
+              </span>
+            </div>
+            {/* 집행권원 링크 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>집행권원 링크</span>
+              {d.execTitleUrl
+                ? <a href={d.execTitleUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", textDecoration: "none" }}>OneDrive 열기 ↗</a>
+                : <span style={{ fontSize: 12, color: "var(--tm)" }}>-</span>}
+            </div>
             {/* 대위변제일 */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>대위변제일</span>
