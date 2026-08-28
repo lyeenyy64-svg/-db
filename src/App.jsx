@@ -12901,7 +12901,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     { k: "rehabBankruptcy", l: "회생/파산",        i: "shield",  sub: rehabSubItems,   subState: rehabSubTab,  setSub: (v) => { setRehabSubTab(v); setTab("rehabBankruptcy"); } },
     { k: "minsa",           l: "민사소송",         i: "scale" },
     { k: "aiDocs",          l: "문건 자동 생성",   i: "fileText" },
-    { k: "aiAnalysis",      l: "AI 종합분석",      i: "sparkles" },
+    { k: "aiAnalysis",      l: "분석/보고서",      i: "sparkles" },
     ...(isAdmin ? [{ k: "admin", l: "어드민", i: "settings" }] : []),
   ];
 
@@ -13503,7 +13503,6 @@ function AiAnalysisView({
       {/* 헤더 */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
         <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
-        <span style={{ fontSize: 18, fontWeight: 700, color: "var(--tp)" }}>AI 종합분석</span>
         {aiSubTab === "debtor" && aiMessages.length > 0 && (
           <button onClick={() => setAiMessages([])} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tm)", fontSize: 11, cursor: "pointer" }}>
             대화 초기화
