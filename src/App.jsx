@@ -2347,9 +2347,9 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   // 완료 처리일은 평소 화면(등록현황/삭제)에는 항상 "-"만 보여 불필요하므로 숨기고, "완료" 화면
   // (월별 아코디언)에서만 보여준다 — 그래서 두 화면이 열 구성이 다르다.
   const cols = ["등록일", "담당자", "분류", "업무 내용", "결과", "진행상태", "삭제"];
-  const colWidths = [84, 90, 70, undefined, 220, 90, 46];
+  const colWidths = [84, 90, 88, undefined, 220, 90, 46];
   const completedCols = ["등록일", "담당자", "분류", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
-  const completedColWidths = [84, 90, 70, undefined, 220, 84, 90, 46];
+  const completedColWidths = [84, 90, 88, undefined, 220, 84, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
   const [searchQ, setSearchQ] = useState("");
