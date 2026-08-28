@@ -1683,12 +1683,27 @@ const ReportSection = ({ title, children, last }) => (
     {children}
   </div>
 );
-const SubBullet = ({ label, items, render }) => (
-  <div style={{ marginBottom: 10 }}>
-    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>· {label}</div>
-    {(!items || items.length === 0)
-      ? <div style={{ fontSize: 12, color: "var(--tm)", paddingLeft: 12 }}>해당 없음</div>
-      : <ul style={{ margin: 0, paddingLeft: 22, fontSize: 12, color: "var(--tp)", lineHeight: 1.7 }}>{items.map((it, i) => <li key={i}>{render(it)}</li>)}</ul>}
+const DataTable = ({ columns, rows, cells }) => {
+  if (!Array.isArray(rows) || rows.length === 0) return <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 없음</div>;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: "left", padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri}>{cells(r).map((v, ci) => <td key={ci} style={{ padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tp)" }}>{v}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+const SubTable = ({ label, columns, rows, cells }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ts)", marginBottom: 6 }}>· {label}</div>
+    <DataTable columns={columns} rows={rows} cells={cells} />
   </div>
 );
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -13723,50 +13738,57 @@ function AiAnalysisView({
             <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 18 }}>{activeReport.created_by || "-"} 작성 · {(activeReport.created_at || "").slice(0, 16)}</div>
 
             <ReportSection title="1. 채권추심 현황">
-              {(activeReport.parsed.collection?.brands || []).length === 0
-                ? <div style={{ fontSize: 12, color: "var(--tm)" }}>데이터 없음</div>
-                : (activeReport.parsed.collection?.brands || []).map((b, i) => (
-                  <div key={i} style={{ fontSize: 13, marginBottom: 4 }}>
-                    <b>{b.brandName || b.brandCode}</b> — 잔액 {fmtWon(b.balance)}, 기간 입금 {fmtWon(b.periodCollected)}
-                  </div>
-                ))}
+              <DataTable columns={["브랜드", "잔액", "기간 입금액"]}
+                rows={activeReport.parsed.collection?.brands}
+                cells={b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]} />
             </ReportSection>
 
             <ReportSection title="2. 주요현안">
-              <SubBullet label="강제집행 대상자 중 등록 1주 이상 미완료"
-                items={activeReport.parsed.issues?.forcedExecOverdue}
-                render={r => `${r.debtorName} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) — 등록 ${r.daysElapsed}일 경과`} />
-              <SubBullet label="신용분석 대상자 중 요청 1주 이상 미조회"
-                items={activeReport.parsed.issues?.creditCheckOverdue}
-                render={r => `${r.target} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) — 요청 ${r.daysElapsed}일 경과`} />
-              <SubBullet label="주요협의 대상자 현황"
-                items={activeReport.parsed.issues?.negotiations}
-                render={r => `${r.debtorName} — ${r.note || "-"}`} />
-              <SubBullet label="이번 기간 등록된 업무"
-                items={activeReport.parsed.issues?.todoRegistered}
-                render={r => `[${r.priority}] ${r.task} (${r.assignee || "-"}, ${r.createdAt})`} />
-              <SubBullet label="이번 기간 완료된 업무"
-                items={activeReport.parsed.issues?.todoCompleted}
-                render={r => `[${r.priority}] ${r.task} (${r.assignee || "-"}, ${r.completedAt})`} />
-              <SubBullet label="다음 기간 주요일정"
-                items={activeReport.parsed.issues?.nextPeriodSchedule}
-                render={r => `${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""} [${r.type}] ${r.text}`} />
+              <SubTable label="강제집행 대상자 중 등록 1주 이상 미완료"
+                columns={["채무자", "브랜드", "담당자", "경과"]}
+                rows={activeReport.parsed.issues?.forcedExecOverdue}
+                cells={r => [r.debtorName, r.brand || "-", r.assignee || "-", `${r.daysElapsed}일`]} />
+              <SubTable label="신용분석 대상자 중 요청 1주 이상 미조회"
+                columns={["대상", "브랜드", "담당자", "경과"]}
+                rows={activeReport.parsed.issues?.creditCheckOverdue}
+                cells={r => [r.target, r.brand || "-", r.assignee || "-", `${r.daysElapsed}일`]} />
+              <SubTable label="주요협의 대상자 현황"
+                columns={["채무자", "메모"]}
+                rows={activeReport.parsed.issues?.negotiations}
+                cells={r => [r.debtorName, r.note || "-"]} />
+              <SubTable label="이번 기간 등록된 업무"
+                columns={["분류", "업무내용", "담당자", "등록일"]}
+                rows={activeReport.parsed.issues?.todoRegistered}
+                cells={r => [r.priority, r.task, r.assignee || "-", r.createdAt]} />
+              <SubTable label="이번 기간 완료된 업무"
+                columns={["분류", "업무내용", "담당자", "완료일"]}
+                rows={activeReport.parsed.issues?.todoCompleted}
+                cells={r => [r.priority, r.task, r.assignee || "-", r.completedAt]} />
+              <SubTable label="다음 기간 주요일정"
+                columns={["일정", "구분", "내용"]}
+                rows={activeReport.parsed.issues?.nextPeriodSchedule}
+                cells={r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, r.type, r.text]} />
             </ReportSection>
 
             <ReportSection title="3. 채무자관리">
-              <SubBullet label="연체 120일 이상 채무자 (담당자별 무작위 5명)"
-                items={activeReport.parsed.debtorMgmt?.aging120PlusByAssignee}
-                render={g => `${g.assignee} — ${g.picks.map(p => `${p.name}(${p.agingDays}일, ${fmtWon(p.balance)})`).join(", ")}`} />
-              <SubBullet label="이전 기간 분할상환 미입금"
-                items={activeReport.parsed.debtorMgmt?.installmentOverduePrevPeriod}
-                render={r => `${r.debtorName} (${r.assignee || "-"}) — ${r.dueDate} ${fmtWon(r.scheduledAmount)} 중 ${fmtWon(r.paidAmount)} 납부 [${r.status}]`} />
-              <SubBullet label="이번 기간 분할상환 대상자 현황"
-                items={activeReport.parsed.debtorMgmt?.installmentThisPeriod}
-                render={r => `${r.debtorName} (${r.assignee || "-"}) — ${r.dueDate} ${fmtWon(r.scheduledAmount)} [${r.status}]`} />
+              <SubTable label="연체 120일 이상 채무자 (담당자별 무작위 5명)"
+                columns={["담당자", "채무자", "연체일", "잔액"]}
+                rows={(activeReport.parsed.debtorMgmt?.aging120PlusByAssignee || []).flatMap(g => g.picks.map(p => ({ assignee: g.assignee, ...p })))}
+                cells={r => [r.assignee, r.name, `${r.agingDays}일`, fmtWon(r.balance)]} />
+              <SubTable label="이전 기간 분할상환 미입금"
+                columns={["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"]}
+                rows={activeReport.parsed.debtorMgmt?.installmentOverduePrevPeriod}
+                cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), fmtWon(r.paidAmount), r.status]} />
+              <SubTable label="이번 기간 분할상환 대상자 현황"
+                columns={["채무자", "담당자", "납부기한", "예정액", "상태"]}
+                rows={activeReport.parsed.debtorMgmt?.installmentThisPeriod}
+                cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]} />
             </ReportSection>
 
             <ReportSection title="4. 종합현황" last>
-              <div style={{ fontSize: 13, lineHeight: 1.8, whiteSpace: "pre-wrap", color: "var(--tp)" }}>{activeReport.parsed.overview}</div>
+              <DataTable columns={["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"]}
+                rows={activeReport.parsed.overview}
+                cells={r => [r.category, r.good || "-", r.concern || "-", r.checkpoint || "-"]} />
             </ReportSection>
           </div>
         )}

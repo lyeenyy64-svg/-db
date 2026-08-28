@@ -5489,60 +5489,107 @@ app.post("/api/reports/generate", async (req, res) => {
     const installmentOverduePrevPeriod = installmentRowsFor(prevStart, prevEnd).filter(r => r.status === "미납" || r.status === "지연");
     const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd);
 
-    // 4. 종합현황 — 위 항목들의 집계 수치만 근거로 AI가 짧게 정리 (없는 내용은 지어내지 않도록 제약)
-    const histRows = db.prepare("SELECT value FROM kv_store WHERE key LIKE 'hist_m_%'").all();
+    // 4. 종합현황 — 단순 건수 요약이 아니라 실제 내용(히스토리 문구·구체 항목)을 근거로 AI가 판단
+    // (잘된 점/우려되는 점/체크할 사항)을 내리도록, 건수뿐 아니라 실제 항목 샘플까지 프롬프트에 싣는다.
+    const histRows = db.prepare("SELECT key, value FROM kv_store WHERE key LIKE 'hist_m_%'").all();
     let histCount = 0, histDebtorCount = 0;
+    const histSamples = [];
     for (const row of histRows) {
       let arr;
       try { arr = JSON.parse(row.value); } catch { continue; }
       if (!Array.isArray(arr)) continue;
       const inPeriod = arr.filter(h => h && h.createdAt && h.createdAt.slice(0, 10) >= periodStart && h.createdAt.slice(0, 10) <= periodEnd);
-      if (inPeriod.length > 0) { histCount += inPeriod.length; histDebtorCount++; }
+      if (inPeriod.length > 0) {
+        histCount += inPeriod.length; histDebtorCount++;
+        const debtorId = row.key.slice("hist_m_".length);
+        const dName = debtorNameById.get(debtorId) || debtorId;
+        for (const h of inPeriod.slice(0, 3)) histSamples.push(`${dName}: ${String(h.content || "").slice(0, 90)}`);
+      }
     }
     const activityByUser = db.prepare(`
       SELECT user_name, COUNT(*) AS cnt FROM user_activity_log
       WHERE ts >= ? AND ts <= ? GROUP BY user_name ORDER BY cnt DESC LIMIT 10
     `).all(`${periodStart} 00:00:00`, `${periodEnd} 23:59:59`);
 
+    const lines = (arr, fmt, limit = 30) => (arr && arr.length) ? arr.slice(0, limit).map(fmt).join("\n") : "없음";
     const digest = `
-[채권추심현황] ${brands.map(b => `${b.brandName || b.brandCode}: 잔액 ${Number(b.balance || 0).toLocaleString("ko-KR")}원, 기간입금 ${Number(b.periodCollected || 0).toLocaleString("ko-KR")}원`).join(" / ") || "데이터 없음"}
-[주요현안] 강제집행 1주+ 미완료 ${forcedExecOverdue.length}건, 신용조회 1주+ 미조회 ${creditCheckOverdue.length}건, 협의대상자 ${negotiations.length}건, ${label} 등록업무 ${todoRegistered.length}건, 완료업무 ${todoCompleted.length}건
-[채무자관리] 연체 120일+ 담당자 ${aging120PlusByAssignee.length}명, 이전기간 분할상환 미입금 ${installmentOverduePrevPeriod.length}건, ${label} 분할상환 대상 ${installmentThisPeriod.length}건
-[히스토리] ${label} 활동기록 ${histCount}건 (${histDebtorCount}명 채무자)
+[채권추심현황]
+${lines(brands, b => `- ${b.brandName || b.brandCode}: 잔액 ${Number(b.balance || 0).toLocaleString("ko-KR")}원, 기간입금 ${Number(b.periodCollected || 0).toLocaleString("ko-KR")}원`)}
+
+[강제집행 대상자 중 등록 1주 이상 미완료] (${forcedExecOverdue.length}건)
+${lines(forcedExecOverdue, r => `- ${r.debtorName} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) 등록 ${r.daysElapsed}일 경과`)}
+
+[신용분석 대상자 중 요청 1주 이상 미조회] (${creditCheckOverdue.length}건)
+${lines(creditCheckOverdue, r => `- ${r.target} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) 요청 ${r.daysElapsed}일 경과`)}
+
+[주요협의 대상자] (${negotiations.length}건)
+${lines(negotiations, n => `- ${n.debtorName}: ${n.note || "-"}`)}
+
+[${label} 등록된 업무] (${todoRegistered.length}건)
+${lines(todoRegistered, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"})`)}
+
+[${label} 완료된 업무] (${todoCompleted.length}건)
+${lines(todoCompleted, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"})`)}
+
+[다음 기간 주요일정] (${nextPeriodSchedule.length}건)
+${lines(nextPeriodSchedule, s => `- ${s.date}${s.endDate && s.endDate !== s.date ? `~${s.endDate}` : ""} [${s.type}] ${s.text}`)}
+
+[연체 120일 이상 — 담당자별 샘플] (담당자 ${aging120PlusByAssignee.length}명)
+${lines(aging120PlusByAssignee, g => `- ${g.assignee}: ${g.picks.map(p => `${p.name}(${p.agingDays}일)`).join(", ")}`)}
+
+[이전 기간 분할상환 미입금] (${installmentOverduePrevPeriod.length}건)
+${lines(installmentOverduePrevPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) 예정 ${Number(r.scheduledAmount || 0).toLocaleString("ko-KR")}원 중 ${Number(r.paidAmount || 0).toLocaleString("ko-KR")}원 납부 [${r.status}]`)}
+
+[${label} 분할상환 대상 현황] (${installmentThisPeriod.length}건)
+${lines(installmentThisPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) ${r.dueDate} [${r.status}]`)}
+
+[채무자 히스토리 샘플] (총 ${histCount}건, ${histDebtorCount}명)
+${lines(histSamples, s => `- ${s}`, 40)}
+
 [CMS 사용] ${activityByUser.map(u => `${u.user_name} ${u.cnt}건`).join(", ") || "기록 없음"}
 `.trim();
 
-    let overview;
+    let overviewRows;
     const openaiClient = getOpenAIClient();
     if (openaiClient) {
-      const prompt = `아래는 ${label} 보고서(${periodStart}~${periodEnd})에 쓸 각 항목의 집계 수치입니다. 이 수치만 근거로 "종합현황" 섹션을 4개 항목으로 간단히 정리하세요 — 없는 내용을 지어내지 말고, 수치가 0이거나 없으면 "특이사항 없음"이라고 쓰세요.
-1) 채무자 히스토리를 보면서 체크할 사항
-2) 주요현안에서 체크할 사항
-3) 주요일정 상 체크할 사항
-4) 기타 전반적인 CMS 사용에 대한 업무 평가(활동 건수 기준으로만 언급하고, 성과 판단은 하지 마세요)
+      const prompt = `아래는 ${label} 보고서(${periodStart}~${periodEnd})의 실제 데이터입니다. 건수를 그대로 나열하지 말고, 데이터 안의 구체적인 이름·내용을 근거로 "잘 진행된 점"과 "우려되거나 놓친 점"을 실제로 판단해서 짚어주세요. 근거 없는 내용은 절대 지어내지 말고, 판단할 근거가 없으면 "특이사항 없음"이라고 쓰세요.
 
+다음 4개 구분에 대해 각각 판단하세요:
+1) 채무자 히스토리 — 협상·약속 이행, 연락 상태 등에서 잘된 점/우려되는 점
+2) 주요현안 — 강제집행·신용조회 지연 대응, 업무 등록·완료 속도에서 잘된 점/놓친 점
+3) 주요일정 — 다음 기간 일정 관련 체크할 사항
+4) CMS 사용 — 담당자 간 활동 편중이나 저활동 등 특이 패턴(활동량으로 성과 순위를 매기지는 마세요)
+
+반드시 아래 JSON 형식으로만, 다른 말 없이 답하세요:
+{"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."}]}
+
+[데이터]
 ${digest}`;
       try {
         const completion = await openaiClient.chat.completions.create({
           model: "gpt-4o-mini",
+          response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "당신은 채권관리 조직의 보고서 작성 보조자입니다. 한국어로, 주어진 수치 범위 안에서만 간결하게 답하세요." },
+            { role: "system", content: "당신은 채권관리 조직의 보고서 작성 보조자입니다. 한국어로, 주어진 데이터 범위 안에서만 근거를 갖고 판단해 답하세요." },
             { role: "user", content: prompt },
           ],
-          max_tokens: 700,
+          max_tokens: 900,
           temperature: 0.3,
         });
-        overview = completion.choices[0].message.content;
-      } catch (e) { overview = "(AI 종합현황 생성 실패: " + e.message + ")"; }
+        const parsed = JSON.parse(completion.choices[0].message.content);
+        overviewRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+      } catch (e) {
+        overviewRows = [{ category: "종합현황", good: "-", concern: "-", checkpoint: "AI 종합현황 생성 실패: " + e.message }];
+      }
     } else {
-      overview = "(OPENAI_API_KEY 미설정 — 종합현황은 생성되지 않았습니다)";
+      overviewRows = [{ category: "종합현황", good: "-", concern: "-", checkpoint: "OPENAI_API_KEY 미설정 — 종합현황은 생성되지 않았습니다" }];
     }
 
     const content = JSON.stringify({
       collection: { brands },
       issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
       debtorMgmt: { aging120PlusByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
-      overview,
+      overview: overviewRows,
     });
     const title = `${label} 보고서 (${periodStart} ~ ${periodEnd})`;
     const createdBy = extractUserName(req);
