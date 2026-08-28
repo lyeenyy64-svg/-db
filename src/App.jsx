@@ -1676,6 +1676,21 @@ const Overlay = ({ children, onClose, wide, xwide }) => (
     <div className="anim" onClick={e => e.stopPropagation()} style={{ background: "var(--card)", borderRadius: 16, width: xwide ? 1040 : wide ? 720 : 560, maxHeight: "85vh", overflow: "auto", padding: 24, border: "1px solid var(--brd)" }}>{children}</div>
   </div>
 );
+// AI 종합분석 > 보고서 탭 렌더링용 (섹션 제목 + 하위 항목 목록, 항목 없으면 "해당 없음")
+const ReportSection = ({ title, children, last }) => (
+  <div style={{ marginBottom: last ? 0 : 22, paddingBottom: last ? 0 : 18, borderBottom: last ? "none" : "1px solid var(--brd)" }}>
+    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--acc)", marginBottom: 10 }}>{title}</div>
+    {children}
+  </div>
+);
+const SubBullet = ({ label, items, render }) => (
+  <div style={{ marginBottom: 10 }}>
+    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ts)", marginBottom: 4 }}>· {label}</div>
+    {(!items || items.length === 0)
+      ? <div style={{ fontSize: 12, color: "var(--tm)", paddingLeft: 12 }}>해당 없음</div>
+      : <ul style={{ margin: 0, paddingLeft: 22, fontSize: 12, color: "var(--tp)", lineHeight: 1.7 }}>{items.map((it, i) => <li key={i}>{render(it)}</li>)}</ul>}
+  </div>
+);
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const pad2 = n => String(n).padStart(2, "0");
 function HeaderClock({ currentUser, lastSaved, compact }) {
@@ -13239,6 +13254,88 @@ function AiAnalysisView({
       || (h.created_by || "").toLowerCase().includes(hq);
   });
 
+  // 보고서(주간/월간/반기/연간) — 읽기 전용, 생성될 때마다 서버에 저장되어 검색/재열람 가능
+  const [reportsList, setReportsList] = useState([]);
+  const [reportSearch, setReportSearch] = useState("");
+  const [reportPeriodType, setReportPeriodType] = useState("weekly");
+  const [reportStart, setReportStart] = useState("");
+  const [reportEnd, setReportEnd] = useState("");
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [activeReport, setActiveReport] = useState(null); // { id, period_type, period_start, period_end, title, created_by, created_at, parsed }
+
+  useEffect(() => {
+    fetch("/api/reports").then(r => r.json()).then(rows => { if (Array.isArray(rows)) setReportsList(rows); }).catch(() => {});
+  }, []);
+
+  // 기간유형별 기본 시작/종료일 계산 — 주간: 화요일~다음주 월요일, 월간: 이번달 1일~말일,
+  // 반기: 상반기(1~6월)/하반기(7~12월), 연간: 올해 1/1~12/31
+  const computeDefaultPeriod = (type) => {
+    const now = new Date();
+    const iso = d => d.toISOString().slice(0, 10);
+    if (type === "weekly") {
+      const dow = now.getDay(); // 0=일 ... 2=화
+      const diffToTue = (dow - 2 + 7) % 7;
+      const start = new Date(now); start.setDate(now.getDate() - diffToTue);
+      const end = new Date(start); end.setDate(start.getDate() + 6);
+      return { start: iso(start), end: iso(end) };
+    }
+    if (type === "monthly") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      return { start: iso(start), end: iso(end) };
+    }
+    if (type === "half") {
+      const h1 = now.getMonth() < 6;
+      const start = new Date(now.getFullYear(), h1 ? 0 : 6, 1);
+      const end = new Date(now.getFullYear(), h1 ? 6 : 12, 0);
+      return { start: iso(start), end: iso(end) };
+    }
+    const start = new Date(now.getFullYear(), 0, 1);
+    const end = new Date(now.getFullYear(), 11, 31);
+    return { start: iso(start), end: iso(end) };
+  };
+
+  useEffect(() => {
+    const { start, end } = computeDefaultPeriod(reportPeriodType);
+    setReportStart(start); setReportEnd(end);
+  }, [reportPeriodType]);
+
+  const generateReport = async () => {
+    if (!reportStart || !reportEnd || reportGenerating) return;
+    setReportGenerating(true);
+    try {
+      const res = await fetch("/api/reports/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ periodType: reportPeriodType, periodStart: reportStart, periodEnd: reportEnd }),
+      });
+      const row = await res.json();
+      if (row.error) { showToast?.(row.error); setReportGenerating(false); return; }
+      let parsed = {};
+      try { parsed = JSON.parse(row.content); } catch {}
+      setActiveReport({ ...row, parsed });
+      setReportsList(prev => [row, ...prev]);
+    } catch {
+      showToast?.("보고서 생성 중 오류가 발생했습니다.");
+    }
+    setReportGenerating(false);
+  };
+
+  const openSavedReport = (row) => {
+    let parsed = {};
+    try { parsed = JSON.parse(row.content); } catch {}
+    setActiveReport({ ...row, parsed });
+  };
+
+  const filteredReports = reportsList.filter(r => {
+    const rq = reportSearch.trim().toLowerCase();
+    if (!rq) return true;
+    return (r.title || "").toLowerCase().includes(rq) || (r.created_by || "").toLowerCase().includes(rq);
+  });
+
+  const PERIOD_TYPES = [{ k: "weekly", l: "주간" }, { k: "monthly", l: "월간" }, { k: "half", l: "반기" }, { k: "yearly", l: "연간" }];
+  const fmtWon = v => v != null ? Number(v).toLocaleString("ko-KR") + "원" : "0원";
+
   const filteredDebtors = aiDebtorQ.trim().length > 0
     ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
     : [];
@@ -13342,37 +13439,63 @@ function AiAnalysisView({
 
   return (
     <div className="anim" style={{ display: "flex", height: "calc(100vh - 120px)", padding: "0 16px", gap: 16 }}>
-      {/* 검색 히스토리 사이드바 — 언제 누가 누구를/무엇을 검색했는지, 클릭하면 그때 결과를 볼 수 있다 */}
+      {/* 좌측 사이드바 — 검색히스토리(채무자/문건 분석) 또는 보고서 목록, 클릭하면 그때 결과를 볼 수 있다 */}
       <div style={{ width: 230, flexShrink: 0, display: "flex", flexDirection: "column", paddingTop: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tm)", marginBottom: 8 }}>검색 히스토리</div>
-        <input
-          value={historySearch}
-          onChange={e => setHistorySearch(e.target.value)}
-          placeholder={historyKind === "document" ? "파일명·질문 검색..." : "채무자·질문 검색..."}
-          style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, marginBottom: 8 }}
-        />
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, paddingRight: 2 }}>
-          {filteredHistory.length === 0 && (
-            <div style={{ fontSize: 11, color: "var(--tm)", padding: "8px 2px" }}>
-              {historySearch.trim() ? "검색 결과가 없습니다" : "아직 기록된 검색이 없습니다"}
-            </div>
-          )}
-          {filteredHistory.map(h => (
-            <div key={h.id} onClick={() => setViewHistoryItem(h)}
-              style={{ padding: "8px 8px", borderRadius: 8, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)" }}
-              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-              onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {h.target_name || (historyKind === "document" ? "(문서명 없음)" : "(채무자 미지정)")}
-                </span>
-                <span className="mono" style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0 }}>{(h.created_at || "").slice(5, 16)}</span>
+        {aiSubTab === "report" ? <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tm)", marginBottom: 8 }}>보고서 목록</div>
+          <input
+            value={reportSearch}
+            onChange={e => setReportSearch(e.target.value)}
+            placeholder="제목·작성자 검색..."
+            style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, marginBottom: 8 }}
+          />
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, paddingRight: 2 }}>
+            {filteredReports.length === 0 && (
+              <div style={{ fontSize: 11, color: "var(--tm)", padding: "8px 2px" }}>
+                {reportSearch.trim() ? "검색 결과가 없습니다" : "아직 생성된 보고서가 없습니다"}
               </div>
-              <div style={{ fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{h.question}</div>
-              <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{h.created_by || "-"}</div>
-            </div>
-          ))}
-        </div>
+            )}
+            {filteredReports.map(r => (
+              <div key={r.id} onClick={() => openSavedReport(r)}
+                style={{ padding: "8px 8px", borderRadius: 8, cursor: "pointer", border: activeReport?.id === r.id ? "1px solid var(--acc)" : "1px solid var(--brd)", background: "var(--card)" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{r.title}</div>
+                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{r.created_by || "-"} · {(r.created_at || "").slice(0, 16)}</div>
+              </div>
+            ))}
+          </div>
+        </> : <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tm)", marginBottom: 8 }}>검색 히스토리</div>
+          <input
+            value={historySearch}
+            onChange={e => setHistorySearch(e.target.value)}
+            placeholder={historyKind === "document" ? "파일명·질문 검색..." : "채무자·질문 검색..."}
+            style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, marginBottom: 8 }}
+          />
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, paddingRight: 2 }}>
+            {filteredHistory.length === 0 && (
+              <div style={{ fontSize: 11, color: "var(--tm)", padding: "8px 2px" }}>
+                {historySearch.trim() ? "검색 결과가 없습니다" : "아직 기록된 검색이 없습니다"}
+              </div>
+            )}
+            {filteredHistory.map(h => (
+              <div key={h.id} onClick={() => setViewHistoryItem(h)}
+                style={{ padding: "8px 8px", borderRadius: 8, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)" }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {h.target_name || (historyKind === "document" ? "(문서명 없음)" : "(채무자 미지정)")}
+                  </span>
+                  <span className="mono" style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0 }}>{(h.created_at || "").slice(5, 16)}</span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{h.question}</div>
+                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{h.created_by || "-"}</div>
+              </div>
+            ))}
+          </div>
+        </>}
       </div>
 
       {/* 본문 */}
@@ -13395,7 +13518,7 @@ function AiAnalysisView({
 
       {/* 서브탭 */}
       <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)", marginBottom: 12 }}>
-        {[{ k: "debtor", l: "채무자 분석" }, { k: "document", l: "문건 분석" }].map(t => (
+        {[{ k: "debtor", l: "채무자 분석" }, { k: "document", l: "문건 분석" }, { k: "report", l: "보고서" }].map(t => (
           <button key={t.k} onClick={() => setAiSubTab(t.k)} style={{ flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: aiSubTab === t.k ? "var(--bg)" : "transparent", color: aiSubTab === t.k ? "var(--acc)" : "var(--tm)", border: "none", cursor: "pointer" }}>{t.l}</button>
         ))}
       </div>
@@ -13560,6 +13683,93 @@ function AiAnalysisView({
           <div ref={docBottomRef} />
         </div>
       </>}
+      </>}
+
+      {aiSubTab === "report" && <>
+      {/* 기간 선택 */}
+      <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 10, padding: "12px 14px", marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          {PERIOD_TYPES.map(t => (
+            <button key={t.k} onClick={() => setReportPeriodType(t.k)}
+              style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: `1px solid ${reportPeriodType === t.k ? "var(--acc)" : "var(--brd)"}`, background: reportPeriodType === t.k ? "var(--acc)" : "var(--bg)", color: reportPeriodType === t.k ? "#fff" : "var(--tm)", cursor: "pointer" }}>
+              {t.l}
+            </button>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input type="date" value={reportStart} onChange={e => setReportStart(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
+          <span style={{ color: "var(--tm)", fontSize: 12 }}>~</span>
+          <input type="date" value={reportEnd} onChange={e => setReportEnd(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
+          <button onClick={generateReport} disabled={reportGenerating}
+            style={{ marginLeft: "auto", padding: "8px 18px", borderRadius: 10, background: reportGenerating ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: reportGenerating ? "default" : "pointer" }}>
+            {reportGenerating ? "생성 중..." : "보고서 생성"}
+          </button>
+        </div>
+      </div>
+
+      {/* 생성/선택된 보고서 */}
+      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 16 }}>
+        {!activeReport ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 60, border: "1px dashed var(--brd)", borderRadius: 12 }}>
+            <I name="fileText" size={32} style={{ color: "var(--tm)" }} />
+            <div style={{ fontSize: 13, color: "var(--tm)" }}>기간을 선택하고 보고서 생성을 눌러주세요.</div>
+          </div>
+        ) : (
+          <div style={{ background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 12, padding: "20px 24px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{activeReport.title}</div>
+            <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 18 }}>{activeReport.created_by || "-"} 작성 · {(activeReport.created_at || "").slice(0, 16)}</div>
+
+            <ReportSection title="1. 채권추심 현황">
+              {(activeReport.parsed.collection?.brands || []).length === 0
+                ? <div style={{ fontSize: 12, color: "var(--tm)" }}>데이터 없음</div>
+                : (activeReport.parsed.collection?.brands || []).map((b, i) => (
+                  <div key={i} style={{ fontSize: 13, marginBottom: 4 }}>
+                    <b>{b.brandName || b.brandCode}</b> — 잔액 {fmtWon(b.balance)}, 기간 입금 {fmtWon(b.periodCollected)}
+                  </div>
+                ))}
+            </ReportSection>
+
+            <ReportSection title="2. 주요현안">
+              <SubBullet label="강제집행 대상자 중 등록 1주 이상 미완료"
+                items={activeReport.parsed.issues?.forcedExecOverdue}
+                render={r => `${r.debtorName} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) — 등록 ${r.daysElapsed}일 경과`} />
+              <SubBullet label="신용분석 대상자 중 요청 1주 이상 미조회"
+                items={activeReport.parsed.issues?.creditCheckOverdue}
+                render={r => `${r.target} (${r.brand || "-"}, 담당 ${r.assignee || "-"}) — 요청 ${r.daysElapsed}일 경과`} />
+              <SubBullet label="주요협의 대상자 현황"
+                items={activeReport.parsed.issues?.negotiations}
+                render={r => `${r.debtorName} — ${r.note || "-"}`} />
+              <SubBullet label="이번 기간 등록된 업무"
+                items={activeReport.parsed.issues?.todoRegistered}
+                render={r => `[${r.priority}] ${r.task} (${r.assignee || "-"}, ${r.createdAt})`} />
+              <SubBullet label="이번 기간 완료된 업무"
+                items={activeReport.parsed.issues?.todoCompleted}
+                render={r => `[${r.priority}] ${r.task} (${r.assignee || "-"}, ${r.completedAt})`} />
+              <SubBullet label="다음 기간 주요일정"
+                items={activeReport.parsed.issues?.nextPeriodSchedule}
+                render={r => `${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""} [${r.type}] ${r.text}`} />
+            </ReportSection>
+
+            <ReportSection title="3. 채무자관리">
+              <SubBullet label="연체 120일 이상 채무자 (담당자별 무작위 5명)"
+                items={activeReport.parsed.debtorMgmt?.aging120PlusByAssignee}
+                render={g => `${g.assignee} — ${g.picks.map(p => `${p.name}(${p.agingDays}일, ${fmtWon(p.balance)})`).join(", ")}`} />
+              <SubBullet label="이전 기간 분할상환 미입금"
+                items={activeReport.parsed.debtorMgmt?.installmentOverduePrevPeriod}
+                render={r => `${r.debtorName} (${r.assignee || "-"}) — ${r.dueDate} ${fmtWon(r.scheduledAmount)} 중 ${fmtWon(r.paidAmount)} 납부 [${r.status}]`} />
+              <SubBullet label="이번 기간 분할상환 대상자 현황"
+                items={activeReport.parsed.debtorMgmt?.installmentThisPeriod}
+                render={r => `${r.debtorName} (${r.assignee || "-"}) — ${r.dueDate} ${fmtWon(r.scheduledAmount)} [${r.status}]`} />
+            </ReportSection>
+
+            <ReportSection title="4. 종합현황" last>
+              <div style={{ fontSize: 13, lineHeight: 1.8, whiteSpace: "pre-wrap", color: "var(--tp)" }}>{activeReport.parsed.overview}</div>
+            </ReportSection>
+          </div>
+        )}
+      </div>
       </>}
       </div>
 

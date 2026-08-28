@@ -674,6 +674,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_analysis_log_kind ON ai_analysis_log(kind);
 `);
 
+// 주간/월간/반기/연간 보고서 (AI 종합분석 > 보고서 탭)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_reports (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_type   TEXT NOT NULL,
+    period_start  TEXT NOT NULL,
+    period_end    TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    content       TEXT NOT NULL,
+    created_by    TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_reports_period ON ai_reports(period_type);
+`);
+
 const app = express();
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
@@ -5356,6 +5371,196 @@ app.post("/api/ai/doc-chat", async (req, res) => {
 app.get("/api/ai-analysis-log", (req, res) => {
   try {
     const rows = db.prepare("SELECT * FROM ai_analysis_log ORDER BY id DESC LIMIT 1000").all();
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════ 주간/월간/반기/연간 보고서 ═══════════════
+const PERIOD_LABELS = { weekly: "주간", monthly: "월간", half: "반기", yearly: "연간" };
+
+function getKvArray(key) {
+  const row = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
+  if (!row) return [];
+  try { const v = JSON.parse(row.value); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function daysBetween(a, b) { return Math.floor((new Date(b) - new Date(a)) / 86400000); }
+function shiftDate(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// Fisher-Yates로 무작위 n개 추출 (담당자별 연체 120일+ 채무자 샘플링용)
+function pickRandom(arr, n) {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+}
+
+app.post("/api/reports/generate", async (req, res) => {
+  try {
+    const { periodType, periodStart, periodEnd } = req.body || {};
+    if (!PERIOD_LABELS[periodType] || !periodStart || !periodEnd) {
+      return res.status(400).json({ error: "periodType(weekly/monthly/half/yearly), periodStart, periodEnd 필요" });
+    }
+    const label = PERIOD_LABELS[periodType];
+    // "이전/다음 기간" = 같은 기간 길이만큼 앞/뒤로 이동한 구간 (주간이면 정확히 저번주/다음주,
+    // 월/반기/연간은 달력 경계와 살짜 어긋날 수 있지만 보고서 안에 날짜 범위를 그대로 표기하므로 무해함)
+    const spanDays = daysBetween(periodStart, periodEnd) + 1;
+    const prevStart = shiftDate(periodStart, -spanDays);
+    const prevEnd = shiftDate(periodEnd, -spanDays);
+    const nextStart = shiftDate(periodEnd, 1);
+    const nextEnd = shiftDate(periodEnd, spanDays);
+
+    // 1. 채권추심현황 — 브랜드별 잔액(현재 시점 스냅샷) + 기간 내 입금액
+    const brandTotals = db.prepare(`
+      SELECT brand_code AS brandCode, MAX(brand_name) AS brandName,
+             SUM(principal_balance) AS totalPrincipal,
+             SUM(principal_balance + adjustment - collected_amount) AS balance
+      FROM debtors GROUP BY brand_code
+    `).all();
+    const brandCollectedRows = db.prepare(`
+      SELECT d.brand_code AS brandCode, SUM(p.total_amount) AS periodCollected
+      FROM payments p JOIN debtors d ON d.id = p.debtor_id
+      WHERE p.payment_date >= ? AND p.payment_date <= ?
+      GROUP BY d.brand_code
+    `).all(periodStart, periodEnd);
+    const collectedMap = new Map(brandCollectedRows.map(r => [r.brandCode, r.periodCollected]));
+    const brands = brandTotals.map(b => ({ ...b, periodCollected: collectedMap.get(b.brandCode) || 0 }));
+
+    // 2. 주요현안
+    const forcedExecOverdue = getKvArray("manual_forced_executions")
+      .filter(r => r && !r.deleted && !r.completed && r.registeredDate && daysBetween(r.registeredDate, periodEnd) >= 7)
+      .map(r => ({ debtorName: r.debtorName, brand: r.brand, assignee: r.assignee, registeredDate: r.registeredDate, daysElapsed: daysBetween(r.registeredDate, periodEnd) }));
+
+    const creditCheckOverdue = getKvArray("manual_credit_analyses")
+      .filter(r => r && !r.deleted && !r.completed && !r.checkDate && r.requestDate && daysBetween(r.requestDate, periodEnd) >= 7)
+      .map(r => ({ target: r.target, brand: r.brand, assignee: r.assignee, requestDate: r.requestDate, daysElapsed: daysBetween(r.requestDate, periodEnd) }));
+
+    const debtorNameById = new Map(db.prepare("SELECT id, name FROM debtors").all().map(d => [d.id, d.name]));
+    const negotiations = getKvArray("manual_negotiations")
+      .filter(r => r && !r.deleted)
+      .map(r => ({ debtorName: debtorNameById.get(r.debtorId) || r.debtorId, note: r.note }));
+
+    const todoAll = getKvArray("manual_todo_list").filter(r => r && !r.deleted);
+    const todoRegistered = todoAll
+      .filter(r => r.createdAt && r.createdAt >= periodStart && r.createdAt <= periodEnd)
+      .map(r => ({ assignee: r.assignee, task: r.task, priority: r.priority, createdAt: r.createdAt }));
+    const todoCompleted = todoAll
+      .filter(r => r.status === "완료" && r.completedAt && r.completedAt >= periodStart && r.completedAt <= periodEnd)
+      .map(r => ({ assignee: r.assignee, task: r.task, priority: r.priority, completedAt: r.completedAt }));
+
+    const nextPeriodSchedule = getKvArray("manual_monthly_schedule")
+      .filter(r => r && !r.deleted && r.date && r.date <= nextEnd && (r.endDate || r.date) >= nextStart)
+      .map(r => ({ date: r.date, endDate: r.endDate, type: r.type, text: r.text }));
+
+    // 3. 채무자관리
+    const debtorRows = db.prepare(`
+      SELECT d.id, d.name, d.assignee, d.principal_balance, d.adjustment, d.collected_amount,
+             COALESCE(MAX(p.payment_date), d.loan_date) AS anchorDate
+      FROM debtors d LEFT JOIN payments p ON p.debtor_id = d.id
+      WHERE d.category NOT IN ('완료', '대손채권', '회생/파산')
+      GROUP BY d.id
+    `).all();
+    const agingByAssignee = new Map();
+    for (const d of debtorRows) {
+      const balance = (d.principal_balance || 0) + (d.adjustment || 0) - (d.collected_amount || 0);
+      if (balance <= 0 || !d.anchorDate) continue;
+      const agingDays = daysBetween(d.anchorDate, periodEnd);
+      if (agingDays < 120) continue;
+      const key = d.assignee || "미배정";
+      if (!agingByAssignee.has(key)) agingByAssignee.set(key, []);
+      agingByAssignee.get(key).push({ name: d.name, agingDays, balance });
+    }
+    const aging120PlusByAssignee = [...agingByAssignee.entries()].map(([assignee, list]) => ({
+      assignee, picks: pickRandom(list, 5),
+    }));
+
+    const installmentRowsFor = (from, to) => db.prepare(`
+      SELECT s.due_date AS dueDate, s.scheduled_amount AS scheduledAmount, s.paid_amount AS paidAmount,
+             s.status, d.name AS debtorName, d.assignee
+      FROM installment_schedules s
+      JOIN installment_plans p ON s.plan_id = p.id
+      JOIN debtors d ON p.debtor_id = d.id
+      WHERE s.due_date >= ? AND s.due_date <= ?
+    `).all(from, to);
+    const installmentOverduePrevPeriod = installmentRowsFor(prevStart, prevEnd).filter(r => r.status === "미납" || r.status === "지연");
+    const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd);
+
+    // 4. 종합현황 — 위 항목들의 집계 수치만 근거로 AI가 짧게 정리 (없는 내용은 지어내지 않도록 제약)
+    const histRows = db.prepare("SELECT value FROM kv_store WHERE key LIKE 'hist_m_%'").all();
+    let histCount = 0, histDebtorCount = 0;
+    for (const row of histRows) {
+      let arr;
+      try { arr = JSON.parse(row.value); } catch { continue; }
+      if (!Array.isArray(arr)) continue;
+      const inPeriod = arr.filter(h => h && h.createdAt && h.createdAt.slice(0, 10) >= periodStart && h.createdAt.slice(0, 10) <= periodEnd);
+      if (inPeriod.length > 0) { histCount += inPeriod.length; histDebtorCount++; }
+    }
+    const activityByUser = db.prepare(`
+      SELECT user_name, COUNT(*) AS cnt FROM user_activity_log
+      WHERE ts >= ? AND ts <= ? GROUP BY user_name ORDER BY cnt DESC LIMIT 10
+    `).all(`${periodStart} 00:00:00`, `${periodEnd} 23:59:59`);
+
+    const digest = `
+[채권추심현황] ${brands.map(b => `${b.brandName || b.brandCode}: 잔액 ${Number(b.balance || 0).toLocaleString("ko-KR")}원, 기간입금 ${Number(b.periodCollected || 0).toLocaleString("ko-KR")}원`).join(" / ") || "데이터 없음"}
+[주요현안] 강제집행 1주+ 미완료 ${forcedExecOverdue.length}건, 신용조회 1주+ 미조회 ${creditCheckOverdue.length}건, 협의대상자 ${negotiations.length}건, ${label} 등록업무 ${todoRegistered.length}건, 완료업무 ${todoCompleted.length}건
+[채무자관리] 연체 120일+ 담당자 ${aging120PlusByAssignee.length}명, 이전기간 분할상환 미입금 ${installmentOverduePrevPeriod.length}건, ${label} 분할상환 대상 ${installmentThisPeriod.length}건
+[히스토리] ${label} 활동기록 ${histCount}건 (${histDebtorCount}명 채무자)
+[CMS 사용] ${activityByUser.map(u => `${u.user_name} ${u.cnt}건`).join(", ") || "기록 없음"}
+`.trim();
+
+    let overview;
+    const openaiClient = getOpenAIClient();
+    if (openaiClient) {
+      const prompt = `아래는 ${label} 보고서(${periodStart}~${periodEnd})에 쓸 각 항목의 집계 수치입니다. 이 수치만 근거로 "종합현황" 섹션을 4개 항목으로 간단히 정리하세요 — 없는 내용을 지어내지 말고, 수치가 0이거나 없으면 "특이사항 없음"이라고 쓰세요.
+1) 채무자 히스토리를 보면서 체크할 사항
+2) 주요현안에서 체크할 사항
+3) 주요일정 상 체크할 사항
+4) 기타 전반적인 CMS 사용에 대한 업무 평가(활동 건수 기준으로만 언급하고, 성과 판단은 하지 마세요)
+
+${digest}`;
+      try {
+        const completion = await openaiClient.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            { role: "system", content: "당신은 채권관리 조직의 보고서 작성 보조자입니다. 한국어로, 주어진 수치 범위 안에서만 간결하게 답하세요." },
+            { role: "user", content: prompt },
+          ],
+          max_tokens: 700,
+          temperature: 0.3,
+        });
+        overview = completion.choices[0].message.content;
+      } catch (e) { overview = "(AI 종합현황 생성 실패: " + e.message + ")"; }
+    } else {
+      overview = "(OPENAI_API_KEY 미설정 — 종합현황은 생성되지 않았습니다)";
+    }
+
+    const content = JSON.stringify({
+      collection: { brands },
+      issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
+      debtorMgmt: { aging120PlusByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
+      overview,
+    });
+    const title = `${label} 보고서 (${periodStart} ~ ${periodEnd})`;
+    const createdBy = extractUserName(req);
+    const info = db.prepare(
+      "INSERT INTO ai_reports (period_type, period_start, period_end, title, content, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(periodType, periodStart, periodEnd, title, content, createdBy === "알수없음" ? null : createdBy);
+    const saved = db.prepare("SELECT * FROM ai_reports WHERE id = ?").get(info.lastInsertRowid);
+    res.json(saved);
+  } catch (err) {
+    console.error("report generate error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 보고서 목록 — 검색은 프론트에서 처리
+app.get("/api/reports", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 300").all();
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
