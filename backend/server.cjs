@@ -5418,8 +5418,8 @@ app.post("/api/reports/generate", async (req, res) => {
     const brandTotals = db.prepare(`
       SELECT brand_code AS brandCode, MAX(brand_name) AS brandName,
              SUM(principal_balance) AS totalPrincipal,
-             SUM(principal_balance + adjustment - collected_amount) AS balance
-      FROM debtors GROUP BY brand_code
+             SUM(final_balance_legal) AS balance
+      FROM v_debtors GROUP BY brand_code
     `).all();
     const brandCollectedRows = db.prepare(`
       SELECT d.brand_code AS brandCode, SUM(p.total_amount) AS periodCollected
