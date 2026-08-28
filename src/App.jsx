@@ -2346,14 +2346,17 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
 const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, reloadFromBackend, showToast }) => {
   // 완료 처리일은 평소 화면(등록현황/삭제)에는 항상 "-"만 보여 불필요하므로 숨기고, "완료" 화면
   // (월별 아코디언)에서만 보여준다 — 그래서 두 화면이 열 구성이 다르다.
-  const cols = ["등록일", "담당자", "업무 내용", "결과", "진행상태", "삭제"];
-  const colWidths = [84, 90, undefined, 220, 90, 46];
-  const completedCols = ["등록일", "담당자", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
-  const completedColWidths = [84, 90, undefined, 220, 84, 90, 46];
+  const cols = ["등록일", "담당자", "분류", "업무 내용", "결과", "진행상태", "삭제"];
+  const colWidths = [84, 90, 70, undefined, 220, 90, 46];
+  const completedCols = ["등록일", "담당자", "분류", "업무 내용", "결과", "완료 처리일", "진행상태", "삭제"];
+  const completedColWidths = [84, 90, 70, undefined, 220, 84, 90, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
   const [searchQ, setSearchQ] = useState("");
   const [openMonths, setOpenMonths] = useState({});
+  const isTrash = viewMode === "trash";
+  const [checkedIds, setCheckedIds] = useState(new Set());
+  useEffect(() => { setCheckedIds(new Set()); }, [viewMode]);
   // 기본은 등록일 최신순 — "등록일"/"담당자" 헤더를 누르면 그 기준으로 정렬을 바꿀 수 있다.
   const [sortField, setSortField] = useState("createdAt"); // "createdAt" | "assignee"
   const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
@@ -2364,7 +2367,17 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   };
   const sortArrow = (field) => sortField === field ? (sortDir === "asc" ? " ▲" : " ▼") : "";
   const renderThead = (headers, widths) => (
-    <thead><tr>{headers.map((h, i) => {
+    <thead><tr>
+      {isTrash && (
+        <th style={{ ...issueTh, width: 30, textAlign: "center" }}>
+          <input type="checkbox"
+            checked={shown.length > 0 && checkedIds.size === shown.length}
+            ref={el => { if (el) el.indeterminate = checkedIds.size > 0 && checkedIds.size < shown.length; }}
+            onChange={e => setCheckedIds(e.target.checked ? new Set(shown.map(r => r.id)) : new Set())}
+            style={{ cursor: "pointer" }} />
+        </th>
+      )}
+      {headers.map((h, i) => {
       const field = SORTABLE_HEADERS[h];
       return (
         <th key={i}
@@ -2425,6 +2438,13 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
     updateKeyIssue("todoList", r.id, { status: newStatus, completedAt: newStatus === "완료" ? today() : null });
   };
 
+  const doBulkPurge = () => {
+    if (checkedIds.size === 0) return;
+    if (!confirm(`선택한 ${checkedIds.size}건을 영구 삭제하시겠습니까? 복구할 수 없습니다.`)) return;
+    checkedIds.forEach(id => deleteKeyIssue("todoList", id));
+    setCheckedIds(new Set());
+  };
+
   const [notionImporting, setNotionImporting] = useState(false);
   const doImportFromNotion = async () => {
     setNotionImporting(true);
@@ -2451,6 +2471,13 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
     const onDeleteClick = () => updateKeyIssue("todoList", r.id, { deleted: true });
     return (
       <tr key={r.id}>
+        {isTrash && (
+          <td style={{ ...issueTd, width: 30, textAlign: "center" }}>
+            <input type="checkbox" checked={checkedIds.has(r.id)}
+              onChange={e => setCheckedIds(prev => { const n = new Set(prev); e.target.checked ? n.add(r.id) : n.delete(r.id); return n; })}
+              style={{ cursor: "pointer" }} />
+          </td>
+        )}
         <td style={strike(r, { width: w[0] })}><input type="date" value={r.createdAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { createdAt: e.target.value })} style={issueInp} /></td>
         <td style={strike(r, { width: w[1] })}>
           <select value={r.assignee || ""} onChange={e => updateKeyIssue("todoList", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
@@ -2458,10 +2485,17 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
             {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
           </select>
         </td>
-        <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left" }} placeholder="업무 내용" />{strikeLine(r)}</td>
-        <td style={strike(r, { width: w[3] })}><KoreanInput value={fieldValue(r, "result")} onChange={e => scheduleFieldSave(r, "result", e.target.value)} onBlur={() => flushFieldSave(r, "result")} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
-        {showCompletedCol && <td style={strike(r, { width: w[4] })}><input type="date" value={r.completedAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { completedAt: e.target.value })} style={issueInp} /></td>}
-        <td style={strike(r, { width: showCompletedCol ? w[5] : w[4] })}>
+        <td style={strike(r, { width: w[2] })}>
+          <select value={r.priority || "보통"} onChange={e => updateKeyIssue("todoList", r.id, { priority: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)", color: r.priority === "긴급" ? "#ef4444" : r.priority === "중요" ? "#d97706" : undefined, fontWeight: r.priority === "긴급" ? 700 : 400 }}>
+            <option value="보통">보통</option>
+            <option value="중요">중요</option>
+            <option value="긴급">긴급</option>
+          </select>
+        </td>
+        <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left", color: r.priority === "긴급" ? "#ef4444" : undefined }} placeholder="업무 내용" />{strikeLine(r)}</td>
+        <td style={strike(r, { width: w[4] })}><KoreanInput value={fieldValue(r, "result")} onChange={e => scheduleFieldSave(r, "result", e.target.value)} onBlur={() => flushFieldSave(r, "result")} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
+        {showCompletedCol && <td style={strike(r, { width: w[5] })}><input type="date" value={r.completedAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { completedAt: e.target.value })} style={issueInp} /></td>}
+        <td style={strike(r, { width: showCompletedCol ? w[6] : w[5] })}>
           <select value={r.status || "진행중"} onChange={e => onStatusChange(r, e.target.value)} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
             <option value="진행중">진행중</option>
             <option value="지속">지속</option>
@@ -2469,7 +2503,7 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
             <option value="완료">완료</option>
           </select>
         </td>
-        <td style={strike(r, { width: viewMode === "trash" ? 88 : (showCompletedCol ? w[6] : w[5]), textAlign: "center" })}>
+        <td style={strike(r, { width: viewMode === "trash" ? 88 : (showCompletedCol ? w[7] : w[6]), textAlign: "center" })}>
           {canDelete && (viewMode === "trash"
             ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                 <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
@@ -2533,15 +2567,22 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   return (
     <IssueTableCard title="To Do List" count={shown.length} viewMode={viewMode} setViewMode={setViewMode} filterBar={filterBar} customBody={customBody}
       extraActions={
-        <button onClick={doImportFromNotion} disabled={notionImporting}
-          style={{ padding: "5px 10px", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: notionImporting ? "default" : "pointer", background: "var(--bg2)", color: "var(--acc)", opacity: notionImporting ? 0.6 : 1 }}>
-          {notionImporting ? "가져오는 중..." : "노션에서 가져오기"}
-        </button>
+        <>
+          {isTrash && checkedIds.size > 0 && (
+            <button onClick={doBulkPurge} style={{ fontSize: 12, padding: "5px 12px", borderRadius: 6, background: "#ef444415", color: "var(--err)", border: "1px solid #ef444430", fontWeight: 600, cursor: "pointer" }}>
+              <I name="trash" size={12} /> 선택 삭제 ({checkedIds.size})
+            </button>
+          )}
+          <button onClick={doImportFromNotion} disabled={notionImporting}
+            style={{ padding: "5px 10px", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: notionImporting ? "default" : "pointer", background: "var(--bg2)", color: "var(--acc)", opacity: notionImporting ? 0.6 : 1 }}>
+            {notionImporting ? "가져오는 중..." : "노션에서 가져오기"}
+          </button>
+        </>
       }
-      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", task: "", result: "", status: "진행중", createdAt: today(), completedAt: null, deleted: false })}>
+      onAdd={() => addKeyIssue("todoList", { id: uid("TODO"), assignee: "", priority: "보통", task: "", result: "", status: "진행중", createdAt: today(), completedAt: null, deleted: false })}>
       {theadEl}
       <tbody>
-        {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
+        {shown.length === 0 && <tr><td colSpan={cols.length + (isTrash ? 1 : 0)} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
         {shown.map(r => renderRow(r, false))}
       </tbody>
     </IssueTableCard>
