@@ -659,6 +659,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_debtor_related_data ON debtor_related_data(debtor_id);
 `);
 
+// AI 종합분석(채무자 분석/문건 분석) 질문·답변 히스토리 — 언제 누가 무엇을 물어봤는지 조회/검색용
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ai_analysis_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT NOT NULL,
+    target_name  TEXT,
+    debtor_id    TEXT,
+    question     TEXT NOT NULL,
+    answer       TEXT,
+    created_by   TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_analysis_log_kind ON ai_analysis_log(kind);
+`);
+
 const app = express();
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
@@ -714,6 +729,16 @@ function extractUserName(req) {
     if (typeof body[f] === "string" && body[f].trim() && !hasReplacementChar(body[f])) return body[f].trim();
   }
   return "알수없음";
+}
+
+// AI 종합분석 질문/답변 1건을 ai_analysis_log에 기록하고 방금 넣은 행을 그대로 돌려준다
+// (프론트가 히스토리 목록에 새로고침 없이 바로 추가할 수 있도록).
+function logAiAnalysis(req, kind, targetName, debtorId, question, answer) {
+  const createdBy = extractUserName(req);
+  const info = db.prepare(
+    "INSERT INTO ai_analysis_log (kind, target_name, debtor_id, question, answer, created_by) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(kind, targetName || null, debtorId || null, question, answer || null, createdBy === "알수없음" ? null : createdBy);
+  return db.prepare("SELECT * FROM ai_analysis_log WHERE id = ?").get(info.lastInsertRowid);
 }
 // 로그인 전에도 반복적으로 저장되는 시스템 설정성 키 — 특정 사용자의 "데이터 입력"으로
 // 볼 수 없어 통계 집계 대상에서 제외한다 (그래도 실제 저장은 정상 동작함).
@@ -5004,9 +5029,11 @@ app.post("/api/ai-chat", async (req, res) => {
   try {
     // 특정 채무자 지정 시 해당 채무자 데이터 로드
     let contextText = "";
+    let debtorName = null;
     if (debtorId) {
       const d = db.prepare("SELECT * FROM debtors WHERE id=?").get(debtorId);
       if (d) {
+        debtorName = d.name;
         const pays = db.prepare("SELECT * FROM payments WHERE debtor_id=? ORDER BY payment_date DESC LIMIT 30").all(debtorId);
         const seizures = db.prepare("SELECT * FROM seizure_cases WHERE debtor_id=? ORDER BY created_at DESC LIMIT 5").all(debtorId);
         const seizureTargets = seizures.length
@@ -5225,10 +5252,13 @@ ${recentPays.map(p => `${p.payment_date} ${p.name} ${Number(p.total_amount).toLo
         max_tokens: 500,
         temperature: 0.3,
       });
-      return res.json({ answer: follow.choices[0].message.content, activityLogged: loggedAny });
+      const followAnswer = follow.choices[0].message.content;
+      const followLogEntry = logAiAnalysis(req, "debtor", debtorName, debtorId, query, followAnswer);
+      return res.json({ answer: followAnswer, activityLogged: loggedAny, logEntry: followLogEntry });
     }
 
-    res.json({ answer: assistantMsg.content });
+    const logEntry = logAiAnalysis(req, "debtor", debtorName, debtorId, query, assistantMsg.content);
+    res.json({ answer: assistantMsg.content, logEntry });
   } catch (err) {
     console.error("AI chat error:", err.message);
     res.status(500).json({ error: err.message });
@@ -5313,11 +5343,21 @@ app.post("/api/ai/doc-chat", async (req, res) => {
       temperature: 0.3,
     });
 
-    res.json({ answer: completion.choices[0].message.content });
+    const answer = completion.choices[0].message.content;
+    const logEntry = logAiAnalysis(req, "document", docFileName || null, null, query, answer);
+    res.json({ answer, logEntry });
   } catch (err) {
     console.error("AI doc-chat error:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// AI 종합분석 히스토리 목록 (채무자 분석/문건 분석 공통) — 검색·탭 필터는 프론트에서 처리
+app.get("/api/ai-analysis-log", (req, res) => {
+  try {
+    const rows = db.prepare("SELECT * FROM ai_analysis_log ORDER BY id DESC LIMIT 1000").all();
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";

@@ -13220,6 +13220,25 @@ function AiAnalysisView({
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [aiMessages]);
 
+  // 검색 히스토리(누가 언제 누구를/무엇을 검색했는지) — 서버 DB에 남아서 새로고침해도 유지되고
+  // 다른 담당자가 한 검색도 함께 보인다. 검색창은 목록이 늘어나도 원하는 기록을 바로 찾기 위함.
+  const [historyList, setHistoryList] = useState([]);
+  const [historySearch, setHistorySearch] = useState("");
+  const [viewHistoryItem, setViewHistoryItem] = useState(null);
+
+  useEffect(() => {
+    fetch("/api/ai-analysis-log").then(r => r.json()).then(rows => { if (Array.isArray(rows)) setHistoryList(rows); }).catch(() => {});
+  }, []);
+
+  const historyKind = aiSubTab === "document" ? "document" : "debtor";
+  const filteredHistory = historyList.filter(h => h.kind === historyKind).filter(h => {
+    const hq = historySearch.trim().toLowerCase();
+    if (!hq) return true;
+    return (h.target_name || "").toLowerCase().includes(hq)
+      || (h.question || "").toLowerCase().includes(hq)
+      || (h.created_by || "").toLowerCase().includes(hq);
+  });
+
   const filteredDebtors = aiDebtorQ.trim().length > 0
     ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
     : [];
@@ -13247,6 +13266,7 @@ function AiAnalysisView({
       });
       const d2 = await res.json();
       setAiMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
+      if (d2.logEntry) setHistoryList(prev => [d2.logEntry, ...prev]);
       if (d2.activityLogged) {
         showToast?.("히스토리에 활동이 기록되었습니다");
         reloadFromBackend?.();
@@ -13298,6 +13318,7 @@ function AiAnalysisView({
       });
       const d2 = await res.json();
       setDocMessages(prev => [...prev, { role: "assistant", content: d2.answer || d2.error || "오류가 발생했습니다." }]);
+      if (d2.logEntry) setHistoryList(prev => [d2.logEntry, ...prev]);
     } catch {
       setDocMessages(prev => [...prev, { role: "assistant", content: "서버 연결 오류가 발생했습니다." }]);
     }
@@ -13320,7 +13341,42 @@ function AiAnalysisView({
   const fmtBal = v => v != null ? Number(v).toLocaleString("ko-KR") : "0";
 
   return (
-    <div className="anim" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 120px)", maxWidth: 860, margin: "0 auto", padding: "0 16px" }}>
+    <div className="anim" style={{ display: "flex", height: "calc(100vh - 120px)", padding: "0 16px", gap: 16 }}>
+      {/* 검색 히스토리 사이드바 — 언제 누가 누구를/무엇을 검색했는지, 클릭하면 그때 결과를 볼 수 있다 */}
+      <div style={{ width: 230, flexShrink: 0, display: "flex", flexDirection: "column", paddingTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tm)", marginBottom: 8 }}>검색 히스토리</div>
+        <input
+          value={historySearch}
+          onChange={e => setHistorySearch(e.target.value)}
+          placeholder={historyKind === "document" ? "파일명·질문 검색..." : "채무자·질문 검색..."}
+          style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12, marginBottom: 8 }}
+        />
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, paddingRight: 2 }}>
+          {filteredHistory.length === 0 && (
+            <div style={{ fontSize: 11, color: "var(--tm)", padding: "8px 2px" }}>
+              {historySearch.trim() ? "검색 결과가 없습니다" : "아직 기록된 검색이 없습니다"}
+            </div>
+          )}
+          {filteredHistory.map(h => (
+            <div key={h.id} onClick={() => setViewHistoryItem(h)}
+              style={{ padding: "8px 8px", borderRadius: 8, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+              onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {h.target_name || (historyKind === "document" ? "(문서명 없음)" : "(채무자 미지정)")}
+                </span>
+                <span className="mono" style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0 }}>{(h.created_at || "").slice(5, 16)}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{h.question}</div>
+              <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{h.created_by || "-"}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 본문 */}
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, maxWidth: 860, margin: "0 auto", borderLeft: "1px solid var(--brd)", paddingLeft: 16 }}>
       {/* 헤더 */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0 12px" }}>
         <I name="sparkles" size={22} style={{ color: "var(--acc)" }} />
@@ -13505,6 +13561,32 @@ function AiAnalysisView({
         </div>
       </>}
       </>}
+      </div>
+
+      {viewHistoryItem && (
+        <Overlay onClose={() => setViewHistoryItem(null)} wide>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14, gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 700, marginBottom: 2 }}>{viewHistoryItem.kind === "document" ? "문건 분석" : "채무자 분석"}</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--tp)" }}>{viewHistoryItem.target_name || "-"}</div>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--tm)", textAlign: "right", flexShrink: 0 }}>
+              <div>{viewHistoryItem.created_by || "-"}</div>
+              <div className="mono">{(viewHistoryItem.created_at || "").slice(0, 16)}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ maxWidth: "85%", padding: "10px 14px", borderRadius: "14px 14px 4px 14px", background: "var(--acc)", color: "#fff", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap", marginBottom: 10 }}>
+              {viewHistoryItem.question}
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-start" }}>
+            <div style={{ maxWidth: "85%", padding: "10px 14px", borderRadius: "14px 14px 14px 4px", background: "var(--bg)", border: "1px solid var(--brd)", color: "var(--tp)", fontSize: 13, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+              {viewHistoryItem.answer || "-"}
+            </div>
+          </div>
+        </Overlay>
+      )}
     </div>
   );
 }
