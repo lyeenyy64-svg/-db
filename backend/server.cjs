@@ -3445,6 +3445,7 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
       arr.push({
         id: `TODO${Date.now()}${Math.floor(Math.random() * 900 + 100)}`,
         assignee,
+        priority: "보통",
         task: subject,
         result: "",
         status: "진행중",
