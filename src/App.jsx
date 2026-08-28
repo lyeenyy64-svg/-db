@@ -2357,13 +2357,13 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const isTrash = viewMode === "trash";
   const [checkedIds, setCheckedIds] = useState(new Set());
   useEffect(() => { setCheckedIds(new Set()); }, [viewMode]);
-  // 기본은 등록일 최신순 — "등록일"/"담당자" 헤더를 누르면 그 기준으로 정렬을 바꿀 수 있다.
-  const [sortField, setSortField] = useState("createdAt"); // "createdAt" | "assignee"
+  // 기본은 등록일 최신순 — "등록일"/"담당자"/"분류"/"진행상태" 헤더를 누르면 그 기준으로 정렬을 바꿀 수 있다.
+  const [sortField, setSortField] = useState("createdAt"); // "createdAt" | "assignee" | "priority" | "status"
   const [sortDir, setSortDir] = useState("desc"); // "asc" | "desc"
-  const SORTABLE_HEADERS = { "등록일": "createdAt", "담당자": "assignee" };
+  const SORTABLE_HEADERS = { "등록일": "createdAt", "담당자": "assignee", "분류": "priority", "진행상태": "status" };
   const toggleSort = (field) => {
     if (sortField === field) setSortDir(d => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(field); setSortDir(field === "assignee" ? "asc" : "desc"); }
+    else { setSortField(field); setSortDir(field === "createdAt" ? "desc" : "asc"); }
   };
   const sortArrow = (field) => sortField === field ? (sortDir === "asc" ? " ▲" : " ▼") : "";
   const renderThead = (headers, widths) => (
@@ -2420,10 +2420,17 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
   const filtered = q ? byMode.filter(r => (r.assignee || "").toLowerCase().includes(q) || (r.task || "").toLowerCase().includes(q) || (r.result || "").toLowerCase().includes(q)) : byMode;
   // 기본은 등록일 최신순, "등록일"/"담당자" 헤더 클릭으로 기준·방향을 바꿀 수 있다.
   // 담당자 기준일 때는 같은 담당자 안에서 등록일 최신순으로 2차 정렬한다.
+  const PRIORITY_RANK = { "긴급": 0, "중요": 1, "보통": 2 };
   const shown = [...filtered].sort((a, b) => {
     let cmp;
     if (sortField === "assignee") {
       cmp = (a.assignee || "").localeCompare(b.assignee || "", "ko");
+      if (cmp === 0) cmp = (b.createdAt || "").localeCompare(a.createdAt || "");
+    } else if (sortField === "priority") {
+      cmp = (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2);
+      if (cmp === 0) cmp = (b.createdAt || "").localeCompare(a.createdAt || "");
+    } else if (sortField === "status") {
+      cmp = (a.status || "").localeCompare(b.status || "", "ko");
       if (cmp === 0) cmp = (b.createdAt || "").localeCompare(a.createdAt || "");
     } else {
       cmp = (a.createdAt || "").localeCompare(b.createdAt || "");
