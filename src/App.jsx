@@ -13271,7 +13271,9 @@ function AiAnalysisView({
   // 반기: 상반기(1~6월)/하반기(7~12월), 연간: 올해 1/1~12/31
   const computeDefaultPeriod = (type) => {
     const now = new Date();
-    const iso = d => d.toISOString().slice(0, 10);
+    // toISOString()은 UTC로 변환하는데 한국(UTC+9) 자정 기준 날짜는 이 과정에서 하루 전날로
+    // 밀려버린다 (예: 8/1 00:00 KST → 7/31 15:00 UTC) — 로컬 연/월/일을 직접 조합해야 정확하다.
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     if (type === "weekly") {
       const dow = now.getDay(); // 0=일 ... 2=화
       const diffToTue = (dow - 2 + 7) % 7;
