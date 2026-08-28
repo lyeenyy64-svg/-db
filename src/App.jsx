@@ -13422,7 +13422,7 @@ function AiAnalysisView({
         {filteredDebtors.length > 0 && !aiSelDebtor && (
           <div style={{ marginTop: 6, border: "1px solid var(--brd)", borderRadius: 7, overflow: "hidden", maxHeight: 160, overflowY: "auto" }}>
             {filteredDebtors.slice(0, 8).map(d => (
-              <div key={d.id} onClick={() => { setAiSelDebtor(d); setAiDebtorQ(d.name); }}
+              <div key={d.id} onClick={() => { setAiSelDebtor(d); setAiDebtorQ(d.name); setAiMessages([]); }}
                 style={{ padding: "8px 12px", cursor: "pointer", fontSize: 13, color: "var(--tp)", borderBottom: "1px solid var(--brd)" }}
                 onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                 onMouseLeave={e => e.currentTarget.style.background = ""}>
