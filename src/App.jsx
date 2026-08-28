@@ -164,16 +164,16 @@ const AGING_BUCKETS = [
   { key: "b0",   label: "30일 미만",  min: 0,   max: 30,       color: "#10b981" },
   { key: "b30",  label: "30~59일",    min: 30,  max: 60,       color: "#f59e0b" },
   { key: "b60",  label: "60~89일",    min: 60,  max: 90,       color: "#f97316" },
-  { key: "b90",  label: "90~119일",   min: 90,  max: 120,      color: "#ef4444" },
-  { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#991b1b" },
+  { key: "b90",  label: "90~119일",   min: 90,  max: 120,      color: "#dc2626" },
+  { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#b91c1c" },
 ];
 
 // ─── 채권 소멸시효 구간 (대여일로부터 집행권원 있으면 10년, 없으면 5년) ───
 // min/max는 "남은 일수" 기준 — 작을수록(0에 가까울수록) 시효 완성이 임박해 더 시급하다.
 const STATUTE_BUCKETS = [
   { key: "expired", label: "소멸시효 완성", min: -Infinity, max: 0,    color: "#4b5563" },
-  { key: "m3",       label: "3개월 이내",    min: 0,   max: 90,        color: "#991b1b" },
-  { key: "m6",       label: "6개월 이내",    min: 90,  max: 180,       color: "#ef4444" },
+  { key: "m3",       label: "3개월 이내",    min: 0,   max: 90,        color: "#b91c1c" },
+  { key: "m6",       label: "6개월 이내",    min: 90,  max: 180,       color: "#dc2626" },
   { key: "y1",       label: "1년 이내",      min: 180, max: 365,       color: "#f97316" },
   { key: "y5",       label: "5년 이내",      min: 365, max: 365 * 5,   color: "#f59e0b" },
   { key: "y10",      label: "10년 이내",     min: 365 * 5, max: 365 * 10, color: "#10b981" },
@@ -2493,13 +2493,13 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
           </select>
         </td>
         <td style={strike(r, { width: w[2] })}>
-          <select value={r.priority || "보통"} onChange={e => updateKeyIssue("todoList", r.id, { priority: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)", color: r.priority === "긴급" ? "#ef4444" : r.priority === "중요" ? "#d97706" : undefined, fontWeight: r.priority === "긴급" ? 700 : 400 }}>
+          <select value={r.priority || "보통"} onChange={e => updateKeyIssue("todoList", r.id, { priority: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)", color: r.priority === "긴급" ? "#dc2626" : r.priority === "중요" ? "#d97706" : undefined, fontWeight: r.priority === "긴급" ? 700 : 400 }}>
             <option value="보통">보통</option>
             <option value="중요">중요</option>
             <option value="긴급">긴급</option>
           </select>
         </td>
-        <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left", color: r.priority === "긴급" ? "#ef4444" : undefined }} placeholder="업무 내용" />{strikeLine(r)}</td>
+        <td style={strike(r)}><KoreanInput value={fieldValue(r, "task")} onChange={e => scheduleFieldSave(r, "task", e.target.value)} onBlur={() => flushFieldSave(r, "task")} style={{ ...issueInp, textAlign: "left", color: r.priority === "긴급" ? "#dc2626" : undefined }} placeholder="업무 내용" />{strikeLine(r)}</td>
         <td style={strike(r, { width: w[4] })}><KoreanInput value={fieldValue(r, "result")} onChange={e => scheduleFieldSave(r, "result", e.target.value)} onBlur={() => flushFieldSave(r, "result")} style={{ ...issueInp, textAlign: "left" }} placeholder="결과" />{strikeLine(r)}</td>
         {showCompletedCol && <td style={strike(r, { width: w[5] })}><input type="date" value={r.completedAt || ""} onChange={e => updateKeyIssue("todoList", r.id, { completedAt: e.target.value })} style={issueInp} /></td>}
         <td style={strike(r, { width: showCompletedCol ? w[6] : w[5] })}>
