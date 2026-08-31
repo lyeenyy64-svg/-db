@@ -13599,6 +13599,104 @@ function AiAnalysisView({
   const PERIOD_TYPES = [{ k: "weekly", l: "주간" }, { k: "monthly", l: "월간" }, { k: "half", l: "반기" }, { k: "yearly", l: "연간" }];
   const fmtWon = v => v != null ? Number(v).toLocaleString("ko-KR") + "원" : "0원";
 
+  // 보고서 목록에서 PDF/Word로 다운로드 — 화면(AiAnalysisView 렌더링)과 동일한
+  // 섹션(1~5) 구성을 그대로 옮긴다. PDF는 별도 라이브러리 없이 인쇄 대화상자를
+  // 통해 저장하는, 이 앱의 다른 문서출력(HWPX 화면)과 같은 방식.
+  const buildReportPrintHtml = (r) => {
+    let parsed = {};
+    try { parsed = JSON.parse(r.content); } catch {}
+    const brands = parsed.collection?.brands || [];
+    const issues = parsed.issues || {};
+    const debtorMgmt = parsed.debtorMgmt || {};
+    const overview = parsed.overview || [];
+    const checklist = parsed.checklist || [];
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const table = (columns, rows, cellsFn) => (!Array.isArray(rows) || rows.length === 0)
+      ? `<div class="empty">해당 없음</div>`
+      : `<table><thead><tr>${columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>${
+          rows.map(row => `<tr>${cellsFn(row).map(v => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")
+        }</tbody></table>`;
+    const sub = (label) => `<div class="sub">· ${esc(label)}</div>`;
+    const brandRows = brands.length ? [...brands, {
+      brandName: "계",
+      balance: brands.reduce((s, b) => s + (b.balance || 0), 0),
+      periodCollected: brands.reduce((s, b) => s + (b.periodCollected || 0), 0),
+    }] : [];
+    const contactRows = (debtorMgmt.contactAgingByAssignee || []).flatMap(g => g.picks.map(p => ({ assignee: g.assignee, ...p })));
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.title)}</title>
+<style>
+  body { font-family: "Malgun Gothic", sans-serif; padding: 24px; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .meta { font-size: 11px; color: #666; margin-bottom: 18px; }
+  h2 { font-size: 14px; color: #4338ca; margin: 22px 0 10px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  .sub { font-size: 12px; font-weight: 700; margin: 12px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; margin-bottom: 10px; }
+  th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: center; }
+  .empty { font-size: 11px; color: #888; margin-bottom: 10px; }
+  ul.checklist { font-size: 12px; line-height: 1.8; padding-left: 18px; }
+  @media print { body { padding: 0; } }
+</style></head><body>
+<h1>${esc(r.title)}</h1>
+<div class="meta">${esc(r.created_by || "-")} 작성 · ${esc((r.created_at || "").slice(0, 16))}</div>
+
+<h2>1. 채권추심 현황</h2>
+${table(["브랜드", "잔액", "기간 입금액"], brandRows, b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)])}
+
+<h2>2. 주요현안</h2>
+${sub("강제집행 대상자 중 등록 1주 이상 미완료")}
+${table(["채무자", "브랜드", "담당자", "경과"], issues.forcedExecOverdue, x => [x.debtorName, x.brand || "-", x.assignee || "-", `${x.daysElapsed}일`])}
+${sub("신용분석 대상자 중 요청 1주 이상 미조회")}
+${table(["대상", "브랜드", "담당자", "경과"], issues.creditCheckOverdue, x => [x.target, x.brand || "-", x.assignee || "-", `${x.daysElapsed}일`])}
+${sub("주요협의 대상자 현황")}
+${table(["채무자", "메모"], issues.negotiations, x => [x.debtorName, x.note || "-"])}
+${sub("이번 기간 등록된 업무")}
+${table(["분류", "업무내용", "담당자", "등록일"], issues.todoRegistered, x => [x.priority, x.task, x.assignee || "-", x.createdAt])}
+${sub("이번 기간 완료된 업무")}
+${table(["분류", "업무내용", "담당자", "완료일"], issues.todoCompleted, x => [x.priority, x.task, x.assignee || "-", x.completedAt])}
+${sub("다음 기간 주요일정")}
+${table(["일정", "구분", "내용"], issues.nextPeriodSchedule, x => [`${x.date}${x.endDate && x.endDate !== x.date ? `~${x.endDate}` : ""}`, x.type, x.text])}
+
+<h2>3. 채무자관리</h2>
+${sub("히스토리 경과기간 오래된 채무자 (담당자별 무작위 5명, 오래된 순 우선)")}
+${table(["담당자", "채무자", "경과일", "잔액"], contactRows, x => [x.assignee, x.name, `${x.agingDays}일`, fmtWon(x.balance)])}
+${sub("이전 기간 분할상환 미입금")}
+${table(["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"], debtorMgmt.installmentOverduePrevPeriod, x => [x.debtorName, x.assignee || "-", x.dueDate, fmtWon(x.scheduledAmount), fmtWon(x.paidAmount), x.status])}
+${sub("이번 기간 분할상환 미입금 현황")}
+${table(["채무자", "담당자", "납부기한", "예정액", "상태"], debtorMgmt.installmentThisPeriod, x => [x.debtorName, x.assignee || "-", x.dueDate, fmtWon(x.scheduledAmount), x.status])}
+
+<h2>4. 종합현황</h2>
+${table(["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"], overview, x => [x.category, x.good || "-", x.concern || "-", x.checkpoint || "-"])}
+
+<h2>5. 차주 주요체크사항</h2>
+${checklist.length ? `<ul class="checklist">${checklist.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : `<div class="empty">해당 없음</div>`}
+</body></html>`;
+  };
+
+  const downloadReportPdf = (r, e) => {
+    e?.stopPropagation();
+    const w = window.open("", "_blank");
+    w.document.write(buildReportPrintHtml(r));
+    w.document.close();
+    setTimeout(() => { w.focus(); w.print(); }, 600);
+  };
+
+  const downloadReportDocx = async (r, e) => {
+    e?.stopPropagation();
+    try {
+      const res = await fetch(`/api/reports/${r.id}/docx`);
+      if (!res.ok) throw new Error("생성 실패");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `${r.title || "보고서"}.docx`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e2) {
+      showToast?.("Word 다운로드 실패: " + e2.message);
+    }
+  };
+
   const filteredDebtors = aiDebtorQ.trim().length > 0
     ? data.debtors.filter(d => d.name.includes(aiDebtorQ) || (d.hubName || "").includes(aiDebtorQ))
     : [];
@@ -13725,12 +13823,22 @@ function AiAnalysisView({
                 onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{r.title}</div>
-                  {canDeleteReportsAndHistory && (
-                    <button onClick={e => deleteReport(r.id, e)} title="삭제"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", flexShrink: 0, padding: 0, display: "flex" }}>
-                      <I name="trash" size={12} />
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    {canDeleteReportsAndHistory && (
+                      <button onClick={e => deleteReport(r.id, e)} title="삭제"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 0, display: "flex" }}>
+                        <I name="trash" size={12} />
+                      </button>
+                    )}
+                    <button onClick={e => downloadReportPdf(r, e)} title="PDF로 다운로드"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 0, display: "flex" }}>
+                      <I name="fileText" size={12} />
                     </button>
-                  )}
+                    <button onClick={e => downloadReportDocx(r, e)} title="Word(.docx)로 다운로드"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 0, display: "flex" }}>
+                      <I name="download" size={12} />
+                    </button>
+                  </div>
                 </div>
                 <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{r.created_by || "-"} · {(r.created_at || "").slice(0, 16)}</div>
               </div>

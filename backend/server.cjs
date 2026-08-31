@@ -25,6 +25,7 @@ const fileScanner = require("./fileScanner.cjs");
 const multer = require("multer");
 const { generateHwpx, buildPreviewHtml } = require("./documentGenerator.cjs");
 const { scanHistoryPromises } = require("./historyPromiseScan.cjs");
+const { generateReportDocx } = require("./reportDocx.cjs");
 const { WebClient: SlackClient } = require("@slack/web-api");
 
 const slackNotify = process.env.SLACK_BOT_TOKEN ? new SlackClient(process.env.SLACK_BOT_TOKEN) : null;
@@ -5684,6 +5685,20 @@ app.get("/api/reports", (req, res) => {
     const rows = db.prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 300").all();
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+// 보고서 → MS Word(.docx) 다운로드 (PDF는 프론트에서 브라우저 인쇄 다이얼로그로 처리)
+app.get("/api/reports/:id/docx", async (req, res) => {
+  try {
+    const report = db.prepare("SELECT * FROM ai_reports WHERE id = ?").get(req.params.id);
+    if (!report) return res.status(404).json({ error: "보고서를 찾을 수 없습니다" });
+    const buf = await generateReportDocx(report);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    res.setHeader("Content-Disposition", `attachment; filename="report_${report.id}.docx"`);
+    res.send(buf);
+  } catch (e) {
+    console.error("report docx generate error:", e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 app.delete("/api/reports/:id", (req, res) => {
   try {
