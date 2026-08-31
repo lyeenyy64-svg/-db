@@ -9801,6 +9801,19 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       </span>
     );
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
+    // 현재회차 문자열에서 회차 숫자를 뽑는다 — "33회차" → 33, "1~36회차"처럼 범위로 적힌 경우는
+    // 마지막(오른쪽) 숫자를 현재 도달한 회차로 본다.
+    const parseRehabRound = (currentRound) => {
+      const matches = [...String(currentRound || "").matchAll(/(\d+)\s*회차/g)];
+      return matches.length ? Number(matches[matches.length - 1][1]) || 0 : 0;
+    };
+    // 인가된 건만 계산: 월상환액 × 현재회차 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
+    // (미인가/진행중 건은 회차·승인액이 확정되지 않아 계산 의미가 없으므로 null)
+    const getRehabDeposited = (r) => r.planApproved ? (r.monthlyPayment || 0) * parseRehabRound(r.currentRound) : null;
+    const getRehabRemaining = (r) => {
+      const dep = getRehabDeposited(r);
+      return dep == null ? null : (r.approvedAmount || 0) - dep;
+    };
     const REHAB_SORT_GETTERS = {
       brand:     r => r.brand || "",
       name:      r => r.debtorName || "",
@@ -9814,6 +9827,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       overdue:   r => r.overdueStatus === "미납" ? 1 : 0,
       result:    r => r.dismissed ? "폐지" : r.planApproved ? "인가" : "진행중",
       balance:   r => { const d = getDebtor(r.debtorId); return d ? (d.finalBalanceFinance || 0) : -Infinity; },
+      depositedRehab: r => getRehabDeposited(r) ?? -Infinity,
+      remainingRehab: r => getRehabRemaining(r) ?? -Infinity,
       matched:   r => r.debtorId ? 1 : 0,
     };
     // 회생 탭은 채무액/승인액/월상환액/현재회차까지 표시하고, 파산/면책 탭은 잔액(재무)만 추가로 표시한다
@@ -9824,7 +9839,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // (grid-template-columns 안 min()/minmax() 중첩은 구형 브라우저에서 값 전체가 무시돼
     //  그리드가 통째로 1개 컬럼으로 접혀버리는 문제가 있어 순수 고정폭만 사용)
     const rehabGridCols = isRehabTab
-      ? "56px 120px 84px 130px 160px 100px 100px 100px 84px 76px 76px 110px 90px"
+      ? "56px 120px 84px 130px 160px 100px 100px 100px 84px 76px 76px 110px 110px 110px 90px"
       : "56px 150px 84px 160px 200px 76px 76px 130px 90px";
 
     const matchCandidates = useMemo(() => {
@@ -10108,6 +10123,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <RehabSortTh field="overdue" label="납부여부" />
           <RehabSortTh field="result" label="결과" />
           <RehabSortTh field="balance" label="잔액(재무)" />
+          {isRehabTab && <RehabSortTh field="depositedRehab" label="입금액(회생)" />}
+          {isRehabTab && <RehabSortTh field="remainingRehab" label="잔액(회생)" />}
           <RehabSortTh field="matched" label="매칭" />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -10141,6 +10158,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         ? <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>
                         : <span style={{ fontSize: 12, color: "var(--ts)" }}>진행중</span>}</span>
                     <span className="mono" style={{ fontSize: 13, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600 }}>{debtor ? fmt(debtor.finalBalanceFinance) : "-"}</span>
+                    {isRehabTab && (() => {
+                      const dep = getRehabDeposited(r);
+                      return <span className="mono" style={{ fontSize: 13, color: dep == null ? "var(--tm)" : "var(--tp)" }}>{dep == null ? "-" : fmt(dep)}</span>;
+                    })()}
+                    {isRehabTab && (() => {
+                      const rem = getRehabRemaining(r);
+                      return <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: rem == null ? "var(--tm)" : rem < 0 ? "#ef4444" : "var(--ok)" }}>{rem == null ? "-" : fmt(rem)}</span>;
+                    })()}
                     <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {getCaseUrl(r.id) && <a href={getCaseUrl(r.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
                       <button onClick={e => { e.stopPropagation(); setMatchingRehab(r); setMatchQ(""); }} style={{ fontSize: 11, fontWeight: 600, padding: "3px 9px", borderRadius: 5, border: r.debtorId ? "1px solid var(--brd)" : "1px solid #3b82f660", background: r.debtorId ? "var(--bg2)" : "#eff6ff", color: r.debtorId ? "var(--tm)" : "#1d4ed8", cursor: "pointer" }}>{r.debtorId ? "재매칭" : "연결"}</button>
