@@ -4825,7 +4825,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                 <div key={b.key} style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>{b.label}</div>
               ))}
               {contactStats.rows.filter(a => a !== "미배정" || CONTACT_BUCKETS.some(b => contactStats.table["미배정"][b.key].count > 0)).flatMap(a => [
-                <div key={`${a}-label`} style={{ display: "flex", alignItems: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                <div key={`${a}-label`} style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
                 ...CONTACT_BUCKETS.map(b => {
                   const cell = contactStats.table[a][b.key];
                   return (
