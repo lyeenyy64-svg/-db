@@ -3517,12 +3517,13 @@ export default function App() {
 
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
   // 변경이 있을 때마다 즉시 새로고침하지 않고, 변경이 멈춘 뒤 IDLE_REFRESH_MS만큼
-  // 조용하면 새로고침한다. 다만 변경이 계속 이어져 조용해질 틈이 없어도
+  // 조용하면 새로고침한다(연속 타이핑/일괄 작업 중 화면이 계속 다시 렌더링되지
+  // 않도록 하는 최소한의 debounce). 다만 변경이 계속 이어져 조용해질 틈이 없어도
   // MAX_REFRESH_MS(최대 대기)마다는 강제로 한 번 새로고침한다.
   useEffect(() => {
     if (backendStatus !== "connected") return;
-    const IDLE_REFRESH_MS = 10 * 60 * 1000; // 데이터 변경이 멈춘 뒤 10분 지나면 새로고침
-    const MAX_REFRESH_MS  = 30 * 60 * 1000; // 변경이 계속돼도 최소 30분마다는 새로고침
+    const IDLE_REFRESH_MS = 3 * 1000;  // 데이터 변경이 멈춘 뒤 3초 지나면 새로고침
+    const MAX_REFRESH_MS  = 60 * 1000; // 변경이 계속돼도 최소 1분마다는 새로고침
     let debounce;
     let src;
     let retryTimer;
@@ -14000,8 +14001,19 @@ function AiAnalysisView({
 
             <ReportSection title="1. 채권추심 현황">
               <DataTable columns={["브랜드", "잔액", "기간 입금액"]} align={["center", "right", "right"]}
-                rows={activeReport.parsed.collection?.brands}
-                cells={b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]} />
+                rows={(() => {
+                  const brands = activeReport.parsed.collection?.brands || [];
+                  if (!brands.length) return brands;
+                  return [...brands, {
+                    isTotal: true,
+                    brandName: "계",
+                    balance: brands.reduce((s, b) => s + (b.balance || 0), 0),
+                    periodCollected: brands.reduce((s, b) => s + (b.periodCollected || 0), 0),
+                  }];
+                })()}
+                cells={b => b.isTotal
+                  ? [<b>{b.brandName}</b>, <b>{fmtWon(b.balance)}</b>, <b>{fmtWon(b.periodCollected)}</b>]
+                  : [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]} />
             </ReportSection>
 
             <ReportSection title="2. 주요현안">
