@@ -1490,6 +1490,31 @@ app.delete("/api/payments/:id", (req, res) => {
   res.json({ ok: true, ...result });
 });
 
+// ─── 입금 정보 수정 (입금자명/비고 — 금액·채무자·날짜는 재매칭/삭제 후 재등록으로 처리) ──
+// PATCH /api/payments/:id
+app.patch("/api/payments/:id", (req, res) => {
+  const payId = req.params.id;
+  const { payerName, note, userName } = req.body || {};
+  const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(payId);
+  if (!pay) return res.status(404).json({ ok: false, error: "해당 입금건 없음" });
+
+  const newPayerName = payerName !== undefined ? payerName : pay.payer_name;
+  const newNote = note !== undefined ? note : pay.note;
+
+  db.prepare(`UPDATE payments SET payer_name = ?, note = ? WHERE id = ?`).run(newPayerName, newNote, payId);
+
+  if (newPayerName !== pay.payer_name || newNote !== pay.note) {
+    const debtor = db.prepare("SELECT name FROM debtors WHERE id = ?").get(pay.debtor_id);
+    db.prepare(`
+      INSERT INTO audit_logs (user_name, action, target, target_id, detail)
+      VALUES (?, '수정', '입금', ?, ?)
+    `).run(userName || "시스템", payId,
+           `[입금 정보 수정] ${debtor?.name || pay.debtor_id}: 입금자 "${pay.payer_name || "-"}"→"${newPayerName || "-"}"`);
+  }
+
+  res.json({ ok: true });
+});
+
 // ─── 입금 재매칭 ────────────────────────────────────
 // PATCH /api/payments/:id/rematch
 app.patch("/api/payments/:id/rematch", (req, res) => {

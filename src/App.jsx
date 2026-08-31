@@ -1326,6 +1326,45 @@ const DebtorAutoComplete = ({ value, onChange, debtors, brands, nameOnly = false
   );
 };
 
+// ─── Payment Edit Modal (입금자명/비고 수정 — module-level) ──
+const PaymentEditModalStandalone = ({ pay, onClose, onReload, showToast, userName }) => {
+  const [payerName, setPayerName] = useState(pay?.payerName || "");
+  const [note, setNote] = useState(pay?.note || "");
+  const [saving, setSaving] = useState(false);
+  const doSave = async () => {
+    setSaving(true);
+    try {
+      const r = await fetch("/api/payments/" + pay.id, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payerName, note, userName }),
+      });
+      const result = await r.json();
+      if (!result.ok) { showToast(result.error || "수정 실패"); setSaving(false); return; }
+      await onReload();
+      showToast("입금 정보 수정 완료");
+      onClose();
+    } catch (e) { showToast("수정 실패: " + (e.message || "네트워크 오류")); setSaving(false); }
+  };
+  return (
+    <Overlay onClose={onClose}>
+      <ModalHeader title="입금 정보 수정" onClose={onClose} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ background: "var(--bg2)", borderRadius: 10, padding: "12px 14px", fontSize: 13 }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            <span><span style={{ color: "var(--tm)" }}>입금일:</span> {fmtDate(pay?.paymentDate)}</span>
+            <span><span style={{ color: "var(--tm)" }}>금액:</span> <b>{fmt(pay?.totalAmount)}</b></span>
+            <span><span style={{ color: "var(--tm)" }}>채무자:</span> {pay?.debtorName}</span>
+          </div>
+        </div>
+        <Field label="입금자명"><KoreanInput value={payerName} onChange={e => setPayerName(e.target.value)} style={inp} /></Field>
+        <Field label="비고"><KoreanInput value={note} onChange={e => setNote(e.target.value)} style={inp} /></Field>
+      </div>
+      <ModalFooter onCancel={onClose} onSave={doSave} saveLabel={saving ? "처리중…" : "수정"} />
+    </Overlay>
+  );
+};
+
 // ─── Rematch Modal (module-level to prevent state reset on parent re-render) ──
 const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showToast }) => {
   const [newDebtorId, setNewDebtorId] = useState("");
@@ -7226,7 +7265,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}<button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentHistory", payment: p }); }} style={{ background: "none", color: "var(--tm)", padding: 2 }} title="입력 히스토리"><I name="clock" size={13} /></button>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
+          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{PCOLS.map((c, i) => <th key={i} style={{ padding: "8px 10px", textAlign: c.align, fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", width: c.width }}>{c.label}</th>)}</tr></thead><tbody>{pPaged.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }} onClick={() => { const d = data.debtors.find(x => x.id === p.debtorId); if (d) { navigateToDebtor(d, "입금내역"); } }} onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}><td className="mono" style={{ padding: "8px 10px", textAlign: "center" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", textAlign: "center" }}><BrandBadge code={p.brand} brands={config.brands} /></td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.assignee}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.hubName}</td><td className="mono" style={{ padding: "8px 10px", color: "var(--tm)", textAlign: "center" }}>{p.hubCode}</td><td style={{ padding: "8px 10px", fontWeight: 500, textAlign: "center" }}>{p.debtorName}</td><td style={{ padding: "8px 10px", textAlign: "center" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, textAlign: "right" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", textAlign: "right" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", textAlign: "center" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}><div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "center" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentEdit", payment: p }); }} style={{ background: "none", color: "#3b82f6", padding: 2 }} title="입금자명/비고 수정"><I name="edit" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "rematch", payment: p }); }} style={{ background: "none", color: "#f59e0b", padding: 2 }} title="재매칭"><I name="refresh" size={13} /></button>}<button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentHistory", payment: p }); }} style={{ background: "none", color: "var(--tm)", padding: 2 }} title="입력 히스토리"><I name="clock" size={13} /></button>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까?`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</div></td></tr>))}</tbody></table></div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderTop: "1px solid var(--brd)" }}>
             <span style={{ fontSize: 12, color: "var(--tm)" }}>{pFiltered.length === 0 ? 0 : (pPage - 1) * PP + 1}-{Math.min(pPage * PP, pFiltered.length)} / {pFiltered.length}건 (총 {pTP || 1}페이지)</span>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -13406,6 +13445,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       {/* Modals */}
       {modal?.type === "debtor"          && <DebtorFormModal />}
       {modal?.type === "payment"         && <PaymentFormModal />}
+      {modal?.type === "paymentEdit"     && <PaymentEditModalStandalone pay={modal.payment} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} userName={currentUser?.name} />}
       {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
       {modal?.type === "paymentHistory" && <PaymentHistoryModalStandalone pay={modal.payment} onClose={() => setModal(null)} />}
       {modal?.type === "verifyExcel"     && <VerifyExcelModal onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} onGoToPending={() => { setModal(null); setPaymentsSubTab("미매칭"); setPendingRefreshKey(k => k + 1); }} />}
