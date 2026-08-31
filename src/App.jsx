@@ -1717,28 +1717,29 @@ const ReportSection = ({ title, children, last }) => (
     {children}
   </div>
 );
-const DataTable = ({ columns, rows, cells, align }) => {
+const DataTable = ({ columns, rows, cells, align, widths }) => {
   if (!Array.isArray(rows) || rows.length === 0) return <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 없음</div>;
   const alignOf = (i) => align?.[i] || "left";
+  const last = columns.length - 1;
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead>
-          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: alignOf(i), padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
+          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: alignOf(i), padding: "5px 8px", borderBottom: "1px solid var(--brd)", borderRight: i < last ? "1px solid var(--brd)" : "none", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", width: widths?.[i] }}>{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((r, ri) => (
-            <tr key={ri}>{cells(r).map((v, ci) => <td key={ci} style={{ padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tp)", textAlign: alignOf(ci) }}>{v}</td>)}</tr>
+            <tr key={ri}>{cells(r).map((v, ci) => <td key={ci} style={{ padding: "5px 8px", borderBottom: "1px solid var(--brd)", borderRight: ci < last ? "1px solid var(--brd)" : "none", color: "var(--tp)", textAlign: alignOf(ci) }}>{v}</td>)}</tr>
           ))}
         </tbody>
       </table>
     </div>
   );
 };
-const SubTable = ({ label, columns, rows, cells, align }) => (
+const SubTable = ({ label, columns, rows, cells, align, widths }) => (
   <div style={{ marginBottom: 14 }}>
-    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ts)", marginBottom: 6 }}>· {label}</div>
-    <DataTable columns={columns} rows={rows} cells={cells} align={align} />
+    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--tp)", marginBottom: 6 }}>· {label}</div>
+    <DataTable columns={columns} rows={rows} cells={cells} align={align} widths={widths} />
   </div>
 );
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -13916,42 +13917,42 @@ function AiAnalysisView({
 
             <ReportSection title="2. 주요현안">
               <SubTable label="강제집행 대상자 중 등록 1주 이상 미완료"
-                columns={["채무자", "브랜드", "담당자", "경과"]}
+                columns={["채무자", "브랜드", "담당자", "경과"]} align={["center", "center", "center", "right"]} widths={["140px"]}
                 rows={activeReport.parsed.issues?.forcedExecOverdue}
                 cells={r => [r.debtorName, r.brand || "-", r.assignee || "-", `${r.daysElapsed}일`]} />
               <SubTable label="신용분석 대상자 중 요청 1주 이상 미조회"
-                columns={["대상", "브랜드", "담당자", "경과"]}
+                columns={["대상", "브랜드", "담당자", "경과"]} align={["center", "center", "center", "right"]} widths={["140px"]}
                 rows={activeReport.parsed.issues?.creditCheckOverdue}
                 cells={r => [r.target, r.brand || "-", r.assignee || "-", `${r.daysElapsed}일`]} />
               <SubTable label="주요협의 대상자 현황"
-                columns={["채무자", "메모"]}
+                columns={["채무자", "메모"]} align={["center", "left"]} widths={["140px"]}
                 rows={activeReport.parsed.issues?.negotiations}
                 cells={r => [r.debtorName, r.note || "-"]} />
               <SubTable label="이번 기간 등록된 업무"
-                columns={["분류", "업무내용", "담당자", "등록일"]}
+                columns={["분류", "업무내용", "담당자", "등록일"]} align={["center", "left", "center", "right"]}
                 rows={activeReport.parsed.issues?.todoRegistered}
                 cells={r => [r.priority, r.task, r.assignee || "-", r.createdAt]} />
               <SubTable label="이번 기간 완료된 업무"
-                columns={["분류", "업무내용", "담당자", "완료일"]}
+                columns={["분류", "업무내용", "담당자", "완료일"]} align={["center", "left", "center", "right"]}
                 rows={activeReport.parsed.issues?.todoCompleted}
                 cells={r => [r.priority, r.task, r.assignee || "-", r.completedAt]} />
               <SubTable label="다음 기간 주요일정"
-                columns={["일정", "구분", "내용"]} align={["left", "center", "left"]}
+                columns={["일정", "구분", "내용"]} align={["right", "center", "left"]}
                 rows={activeReport.parsed.issues?.nextPeriodSchedule}
                 cells={r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, r.type, r.text]} />
             </ReportSection>
 
             <ReportSection title="3. 채무자관리">
               <SubTable label="연체 120일 이상 채무자 (담당자별 무작위 5명)"
-                columns={["담당자", "채무자", "연체일", "잔액"]}
+                columns={["담당자", "채무자", "연체일", "잔액"]} align={["center", "center", "right", "right"]} widths={[undefined, "140px"]}
                 rows={(activeReport.parsed.debtorMgmt?.aging120PlusByAssignee || []).flatMap(g => g.picks.map(p => ({ assignee: g.assignee, ...p })))}
                 cells={r => [r.assignee, r.name, `${r.agingDays}일`, fmtWon(r.balance)]} />
               <SubTable label="이전 기간 분할상환 미입금"
-                columns={["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"]}
+                columns={["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"]} align={["center", "center", "right", "right", "right", "center"]} widths={["140px"]}
                 rows={activeReport.parsed.debtorMgmt?.installmentOverduePrevPeriod}
                 cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), fmtWon(r.paidAmount), r.status]} />
               <SubTable label="이번 기간 분할상환 대상자 현황"
-                columns={["채무자", "담당자", "납부기한", "예정액", "상태"]}
+                columns={["채무자", "담당자", "납부기한", "예정액", "상태"]} align={["center", "center", "right", "right", "center"]} widths={["140px"]}
                 rows={activeReport.parsed.debtorMgmt?.installmentThisPeriod}
                 cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]} />
             </ReportSection>
