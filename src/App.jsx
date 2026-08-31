@@ -4083,11 +4083,10 @@ export default function App() {
   }, [data]);
 
   // ─── 채무자 CONTACT 현황 ────────────────────────────────────
-  // "컨택"은 채무자 상세의 히스토리 탭에 이 프로그램에서 직접 입력한 기록(hist_m_)을
-  // 기준으로 한다 — 엑셀 원본 history는 파싱 오류가 섞여 신뢰할 수 없어 정렬 기준에서
-  // 제외하는 것과 동일한 이유로 여기서도 제외한다. 같은 사람의 여러 채무 항목은
-  // groupDistinctPeople로 한 건으로 묶고, 그 사람의 모든 항목에 걸친 히스토리 중
-  // 가장 최근 기록일을 "최근 컨택일"로 본다.
+  // "컨택"은 채무자 상세의 "히스토리" 탭에 실제로 보이는 항목(엑셀 원본 히스토리 +
+  // 수정/삭제 반영 + 수동 추가, getDebtorHistoryEntries와 완전히 동일한 소스) 전체를
+  // 기준으로 한다. 같은 사람의 여러 채무 항목은 groupDistinctPeople로 한 건으로 묶고,
+  // 그 사람의 모든 항목에 걸친 히스토리 중 가장 최근 기록일을 "최근 컨택일"로 본다.
   const contactStats = useMemo(() => {
     const normDate = (s) => String(s || "").replace(/\./g, "-");
     const toMs = (s) => {
@@ -4096,6 +4095,8 @@ export default function App() {
       return isNaN(t) ? null : t;
     };
     const nowMs = new Date(today() + "T00:00:00").getTime();
+    const debtorById = {};
+    data.debtors.forEach(d => { debtorById[d.id] = d; });
     const pool = data.debtors.filter(d => CONTACT_CATEGORIES.includes(d.category));
     const groups = groupDistinctPeople(pool);
     const rows = [...config.assignees, "미배정"];
@@ -4104,7 +4105,10 @@ export default function App() {
     const noHistoryItems = [];
     groups.forEach(({ rep, memberIds }) => {
       const a = config.assignees.includes(rep.assignee) ? rep.assignee : "미배정";
-      const msList = memberIds.flatMap(id => getHistM(id).map(h => toMs(h.createdAt || normDate(h.date)))).filter(v => v != null);
+      const msList = memberIds
+        .flatMap(id => { const m = debtorById[id]; return m ? getDebtorHistoryEntries(m) : []; })
+        .map(e => toMs(normDate(e.date)))
+        .filter(v => v != null);
       if (!msList.length) { noHistoryItems.push(rep); return; }
       const lastContactMs = Math.max(...msList);
       const days = Math.max(0, Math.floor((nowMs - lastContactMs) / 86400000));
@@ -4815,34 +4819,26 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             추심진행중·협의소송·회생/파산·추심의뢰·분할상환·캐쉬상환 채무자를 히스토리 최근 기록일 기준 경과기간별로 집계(동일인 여러 건은 1건)
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={{ padding: "8px 12px", textAlign: "left", background: "#1f2937", color: "#fff", fontSize: 12 }}>담당자</th>
-                  {CONTACT_BUCKETS.map(b => (
-                    <th key={b.key} style={{ padding: "8px 12px", textAlign: "center", background: "#1f2937", color: "#fff", fontSize: 12, whiteSpace: "nowrap" }}>{b.label}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {contactStats.rows.filter(a => a !== "미배정" || CONTACT_BUCKETS.some(b => contactStats.table["미배정"][b.key].count > 0)).map((a, i) => (
-                  <tr key={a} style={{ background: i % 2 ? "var(--bg)" : "transparent" }}>
-                    <td style={{ padding: "8px 12px", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{a}</td>
-                    {CONTACT_BUCKETS.map(b => {
-                      const cell = contactStats.table[a][b.key];
-                      return (
-                        <td key={b.key} onClick={() => cell.count > 0 && setContactModalCell({ assignee: a, bucketKey: b.key })}
-                          style={{ padding: "8px 12px", textAlign: "center", borderBottom: "1px solid var(--brd)", cursor: cell.count > 0 ? "pointer" : "default", color: cell.count > 0 ? b.color : "var(--tm)", fontWeight: cell.count > 0 ? 700 : 400 }}
-                          onMouseEnter={e => { if (cell.count > 0) e.currentTarget.style.background = "var(--hover)"; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
-                          {cell.count > 0 ? `${cell.count}건` : "-"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div style={{ display: "grid", gridTemplateColumns: `100px repeat(${CONTACT_BUCKETS.length}, 1fr)`, gap: 10, minWidth: 760 }}>
+              <div />
+              {CONTACT_BUCKETS.map(b => (
+                <div key={b.key} style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>{b.label}</div>
+              ))}
+              {contactStats.rows.filter(a => a !== "미배정" || CONTACT_BUCKETS.some(b => contactStats.table["미배정"][b.key].count > 0)).flatMap(a => [
+                <div key={`${a}-label`} style={{ display: "flex", alignItems: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                ...CONTACT_BUCKETS.map(b => {
+                  const cell = contactStats.table[a][b.key];
+                  return (
+                    <div key={`${a}-${b.key}`} onClick={() => cell.count > 0 && setContactModalCell({ assignee: a, bucketKey: b.key })}
+                      style={{ textAlign: "center", padding: "12px 8px", borderRadius: 10, background: "var(--bg)", cursor: cell.count > 0 ? "pointer" : "default", border: `1px solid ${b.color}30` }}
+                      onMouseEnter={e => { if (cell.count > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                      <div className="mono" style={{ fontSize: 16, fontWeight: 700, color: cell.count > 0 ? b.color : "var(--tm)" }}>{cell.count > 0 ? `${cell.count}건` : "-"}</div>
+                    </div>
+                  );
+                }),
+              ])}
+            </div>
           </div>
           {contactStats.noHistoryCount > 0 && (
             <div onClick={() => setContactModalReason("noHistory")} style={{ marginTop: 10, fontSize: 11, color: "#000", cursor: "pointer", textDecoration: "underline" }}>
