@@ -19,9 +19,15 @@ function withinWindow(date, today, windowDays) {
   return diffDays >= -windowDays && diffDays <= windowDays;
 }
 
-function scanHistoryPromises(db, { windowDays = 1 } = {}) {
+// windowDays(오늘 ±N일)가 기본 모드지만, rangeStart/rangeEnd("YYYY-MM-DD")를 주면
+// 그 날짜 범위 안에 걸리는 약속만 찾는다 — 예: 보고서의 "차주 주요체크사항"이 다음
+// 기간(nextStart~nextEnd)에 언급된 약속만 골라내야 할 때 사용.
+function scanHistoryPromises(db, { windowDays = 1, rangeStart, rangeEnd } = {}) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const inRange = (rangeStart || rangeEnd)
+    ? (date) => date && date >= (rangeStart ? parseAnyDate(rangeStart) : today) && date <= (rangeEnd ? parseAnyDate(rangeEnd) : today)
+    : (date) => date && withinWindow(date, today, windowDays);
   const results = [];
   const seen = new Set();
 
@@ -45,11 +51,11 @@ function scanHistoryPromises(db, { windowDays = 1 } = {}) {
   `).all();
   for (const a of acts) {
     const refDate = parseAnyDate(a.activity_date);
-    if (refDate && withinWindow(refDate, today, windowDays)) {
+    if (inRange(refDate)) {
       addResult(a.debtor_id, a.debtor_name, a.hub_name, a.activity_date, a.content, refDate, a.activity_date, "기록일");
     }
     for (const { date, raw } of parseKoreanDates(a.content, refDate)) {
-      if (withinWindow(date, today, windowDays)) {
+      if (inRange(date)) {
         addResult(a.debtor_id, a.debtor_name, a.hub_name, a.activity_date, a.content, date, raw, "본문언급");
       }
     }
@@ -73,11 +79,11 @@ function scanHistoryPromises(db, { windowDays = 1 } = {}) {
     for (const h of entries) {
       if (!h || !h.content) continue;
       const refDate = parseAnyDate(h.date);
-      if (refDate && withinWindow(refDate, today, windowDays)) {
+      if (inRange(refDate)) {
         addResult(debtorId, debtor.name, debtor.hub_name, h.date, h.content, refDate, h.date, "기록일");
       }
       for (const { date, raw } of parseKoreanDates(h.content, refDate)) {
-        if (withinWindow(date, today, windowDays)) {
+        if (inRange(date)) {
           addResult(debtorId, debtor.name, debtor.hub_name, h.date, h.content, date, raw, "본문언급");
         }
       }

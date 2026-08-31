@@ -5545,6 +5545,12 @@ app.post("/api/reports/generate", async (req, res) => {
         for (const h of inPeriod.slice(0, 3)) histSamples.push(`${dName}: ${String(h.content || "").slice(0, 90)}`);
       }
     }
+    // "차주 주요체크사항"용 — 채무자 히스토리 본문에 언급된 날짜(절대/상대 표현)를 훑어
+    // 다음 기간(nextStart~nextEnd) 안에 걸리는 약속(예: "다음주 화요일 통화하기로 함",
+    // "8/25까지 입금하기로 함")만 골라낸다. 히스토리 리마인드 알림(rule6)과 같은 스캐너를
+    // windowDays 대신 명시적 날짜 범위로 재사용.
+    const nextPeriodPromises = scanHistoryPromises(db, { rangeStart: nextStart, rangeEnd: nextEnd });
+
     // type 필터 없이 세면 60초 간격 heartbeat 핑까지 다 합산돼, 실제 작업량이 아니라
     // 그냥 화면을 오래 켜둔 사람이 "활동이 가장 활발하다"로 잘못 나온다 — 다른 통계 화면
     // (사용자별 데이터 입력량)과 동일하게 실제 저장 액션(data_input)만 센다.
@@ -5604,9 +5610,12 @@ ${lines(targetProrated, t => `- ${t.assignee}: 목표 ${t.target.toLocaleString(
 ${lines(histSamples, s => `- ${s}`, 40)}
 
 [CMS 사용] ${activityByUser.map(u => `${u.user_name} ${u.cnt}건`).join(", ") || "기록 없음"}
+
+[채무자 히스토리 — 차주(${nextStart}~${nextEnd}) 언급된 약속] (${nextPeriodPromises.length}건)
+${lines(nextPeriodPromises, p => `- ${p.debtorName}: ${p.resolvedDate} "${p.snippet}" [${p.source}]`, 30)}
 `.trim();
 
-    let overviewRows;
+    let overviewRows, nextPeriodChecklist;
     const openaiClient = getOpenAIClient();
     if (openaiClient) {
       const prompt = `아래는 ${label} 보고서(${periodStart}~${periodEnd})의 실제 데이터입니다. 건수를 그대로 나열하지 말고, 데이터 안의 구체적인 이름·내용을 근거로 "잘 진행된 점"과 "우려되거나 놓친 점"을 실제로 판단해서 짚어주세요. 근거 없는 내용은 절대 지어내지 말고, 판단할 근거가 없으면 "특이사항 없음"이라고 쓰세요.
@@ -5619,8 +5628,10 @@ ${lines(histSamples, s => `- ${s}`, 40)}
 5) 민사소송·법적절차 — 이번 기간 신규 접수·사건 진행상황 메모에서 잘된 점/우려되는 점. 단 여기 실린 데이터는 "이번 기간 신규 등록·메모"만이고 기존에 진행 중인 전체 소송 건수를 반영하지 않으니, 그 범위를 벗어난 판단(예: 전체 소송 현황이 어떻다는 식)은 하지 마세요
 6) 추심목표관리 — 담당자별 목표 대비 실적 달성률에서 잘된 점/우려되는 점. 목표가 설정된 담당자가 없으면 "목표 미설정"이라고 쓰세요
 
+그리고 별도로 "차주 주요체크사항"을 작성하세요 — 위 데이터 전체(주요현안의 미완료 항목, 채무자관리의 히스토리 경과기간 오래된 채무자·분할상환 미입금, 민사소송·법적절차 진행상황, 다음 기간 일정, 그리고 채무자 히스토리에 언급된 차주 약속)를 종합해서, 다음 기간에 실제로 체크하고 진행해야 할 구체적인 항목을 5~10개의 짧은 문장으로 만드세요. 각 항목은 누구를/무엇을 왜 확인·진행해야 하는지가 드러나야 하고, 특히 채무자 히스토리에 언급된 차주 약속(예: 누구와 통화하기로 함, 언제까지 입금하기로 함)이 있으면 반드시 포함하세요. 근거 없는 항목은 만들지 말고, 체크할 게 없으면 ["특이사항 없음"] 하나만 담으세요.
+
 반드시 아래 JSON 형식으로만, 다른 말 없이 답하세요:
-{"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."},{"category":"민사소송·법적절차","good":"...","concern":"...","checkpoint":"..."},{"category":"추심목표관리","good":"...","concern":"...","checkpoint":"..."}]}
+{"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."},{"category":"민사소송·법적절차","good":"...","concern":"...","checkpoint":"..."},{"category":"추심목표관리","good":"...","concern":"...","checkpoint":"..."}],"checklist":["...", "..."]}
 
 [데이터]
 ${digest}`;
@@ -5632,16 +5643,19 @@ ${digest}`;
             { role: "system", content: "당신은 채권관리 조직의 보고서 작성 보조자입니다. 한국어로, 주어진 데이터 범위 안에서만 근거를 갖고 판단해 답하세요." },
             { role: "user", content: prompt },
           ],
-          max_tokens: 900,
+          max_tokens: 1100,
           temperature: 0.3,
         });
         const parsed = JSON.parse(completion.choices[0].message.content);
         overviewRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+        nextPeriodChecklist = Array.isArray(parsed.checklist) ? parsed.checklist : [];
       } catch (e) {
         overviewRows = [{ category: "종합현황", good: "-", concern: "-", checkpoint: "AI 종합현황 생성 실패: " + e.message }];
+        nextPeriodChecklist = ["AI 차주 체크사항 생성 실패: " + e.message];
       }
     } else {
       overviewRows = [{ category: "종합현황", good: "-", concern: "-", checkpoint: "OPENAI_API_KEY 미설정 — 종합현황은 생성되지 않았습니다" }];
+      nextPeriodChecklist = ["OPENAI_API_KEY 미설정 — 차주 주요체크사항은 생성되지 않았습니다"];
     }
 
     const content = JSON.stringify({
@@ -5649,6 +5663,7 @@ ${digest}`;
       issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
       debtorMgmt: { contactAgingByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
       overview: overviewRows,
+      checklist: nextPeriodChecklist,
     });
     const title = `${label} 보고서 (${periodStart} ~ ${periodEnd})`;
     const createdBy = extractUserName(req);

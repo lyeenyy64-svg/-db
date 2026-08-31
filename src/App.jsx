@@ -14058,10 +14058,20 @@ function AiAnalysisView({
                 cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]} />
             </ReportSection>
 
-            <ReportSection title="4. 종합현황" last>
+            <ReportSection title="4. 종합현황">
               <DataTable columns={["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"]} align={["center", "left", "left", "left"]}
                 rows={activeReport.parsed.overview}
                 cells={r => [r.category, r.good || "-", r.concern || "-", r.checkpoint || "-"]} />
+            </ReportSection>
+
+            <ReportSection title="5. 차주 주요체크사항" last>
+              {(activeReport.parsed.checklist || []).length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 없음</div>
+              ) : (
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--tp)", lineHeight: 1.8 }}>
+                  {activeReport.parsed.checklist.map((item, i) => <li key={i}>{item}</li>)}
+                </ul>
+              )}
             </ReportSection>
           </div>
         )}
