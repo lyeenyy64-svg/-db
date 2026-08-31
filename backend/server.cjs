@@ -5466,7 +5466,7 @@ app.post("/api/reports/generate", async (req, res) => {
       WHERE s.due_date >= ? AND s.due_date <= ?
     `).all(from, to);
     const installmentOverduePrevPeriod = installmentRowsFor(prevStart, prevEnd).filter(r => r.status === "미납" || r.status === "지연");
-    const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd);
+    const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd).filter(r => r.status === "미납" || r.status === "지연");
 
     // 4. 민사소송·법적절차 — 엑셀에서 임포트된 소송 마스터 데이터(대부분의 실제 사건)는
     // 프론트에만 번들되어 있어 백엔드가 볼 수 없다. 이 화면에서 기간 내 새로 등록한 사건과,
@@ -5583,7 +5583,7 @@ ${lines(contactAgingByAssignee, g => `- ${g.assignee}: ${g.picks.map(p => `${p.n
 [이전 기간 분할상환 미입금] (${installmentOverduePrevPeriod.length}건)
 ${lines(installmentOverduePrevPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) 예정 ${Number(r.scheduledAmount || 0).toLocaleString("ko-KR")}원 중 ${Number(r.paidAmount || 0).toLocaleString("ko-KR")}원 납부 [${r.status}]`)}
 
-[${label} 분할상환 대상 현황] (${installmentThisPeriod.length}건)
+[${label} 분할상환 미입금 현황] (${installmentThisPeriod.length}건)
 ${lines(installmentThisPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) ${r.dueDate} [${r.status}]`)}
 
 [민사소송 — 이번 기간 신규 접수] (${newMinsaCases.length}건)

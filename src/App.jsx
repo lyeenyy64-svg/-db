@@ -1775,7 +1775,7 @@ const DataTable = ({ columns, rows, cells, align, widths }) => {
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead>
-          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: alignOf(i), padding: "5px 8px", borderBottom: "1px solid var(--brd)", borderRight: i < last ? "1px solid var(--brd)" : "none", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", width: widths?.[i] }}>{c}</th>)}</tr>
+          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: "center", padding: "5px 8px", borderBottom: "1px solid var(--brd)", borderRight: i < last ? "1px solid var(--brd)" : "none", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", width: widths?.[i] }}>{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((r, ri) => (
@@ -14040,7 +14040,7 @@ function AiAnalysisView({
                 columns={["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"]} align={["center", "center", "right", "right", "right", "center"]} widths={["140px"]}
                 rows={activeReport.parsed.debtorMgmt?.installmentOverduePrevPeriod}
                 cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), fmtWon(r.paidAmount), r.status]} />
-              <SubTable label="이번 기간 분할상환 대상자 현황"
+              <SubTable label="이번 기간 분할상환 미입금 현황"
                 columns={["채무자", "담당자", "납부기한", "예정액", "상태"]} align={["center", "center", "right", "right", "center"]} widths={["140px"]}
                 rows={activeReport.parsed.debtorMgmt?.installmentThisPeriod}
                 cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]} />
