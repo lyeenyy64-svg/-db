@@ -10108,6 +10108,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <button onClick={() => exportLegal([], filtered, [])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
         </div>
+        {/* 컬럼이 고정폭이라 창이 좁으면(사이드바 확장 등) 다 안 들어올 수 있으므로,
+            잘려 숨는 대신 가로 스크롤로 볼 수 있게 감싼다 */}
+        <div style={{ overflowX: "auto" }}>
+        <div style={{ minWidth: "max-content" }}>
         {/* 리스트 헤더 — 같은 탭 안에서는 유형이 동일해 "회생/파산" 구분 컬럼은 생략, 대신
             회생 탭은 채무액/승인액/월상환액/현재회차까지, 파산/면책 탭은 잔액(재무)만 보여준다 */}
         <div style={{ display: "grid", gridTemplateColumns: rehabGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
@@ -10173,6 +10177,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </div>
                 );
               })}
+        </div>
+        </div>
         </div>
       </div>
 
