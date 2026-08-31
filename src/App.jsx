@@ -470,6 +470,56 @@ const getDebtorHistoryEntries = (d) => {
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 };
 const histDateToInput = (s) => String(s || "").replace(/\./g, "-");
+// ─── 담당자별 "히스토리 경과기간 오래된" 채무자 무작위 5명 (보고서용) ──────────
+// "채무자 CONTACT 현황"(CONTACT_BUCKETS/CONTACT_CATEGORIES)과 동일한 기준으로 최근
+// 히스토리 기록일로부터의 경과일수를 구한 뒤, 오래된 구간(3년 초과)부터 채워가며
+// 담당자별로 5명을 뽑는다 — 한 구간 인원이 남은 자리 수보다 많으면 그 구간 안에서만
+// 무작위로 추려 나머지를 채운다(예: 2년이내 2건을 모두 채우고 1년이내 22건 중 3건 무작위).
+const pickRandomN = (arr, n) => {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy.slice(0, n);
+};
+function computeContactAgingPicks(debtors) {
+  const normDate = (s) => String(s || "").replace(/\./g, "-");
+  const toMs = (s) => {
+    if (!s) return null;
+    const t = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T00:00:00").getTime() : new Date(s.replace(" ", "T")).getTime();
+    return isNaN(t) ? null : t;
+  };
+  const nowMs = new Date(today() + "T00:00:00").getTime();
+  const debtorById = {};
+  debtors.forEach(d => { debtorById[d.id] = d; });
+  const pool = debtors.filter(d => CONTACT_CATEGORIES.includes(d.category));
+  const groups = groupDistinctPeople(pool);
+  const byAssignee = new Map();
+  groups.forEach(({ rep, memberIds }) => {
+    const msList = memberIds
+      .flatMap(id => { const m = debtorById[id]; return m ? getDebtorHistoryEntries(m) : []; })
+      .map(e => toMs(normDate(e.date)))
+      .filter(v => v != null);
+    if (!msList.length) return;
+    const lastContactMs = Math.max(...msList);
+    const days = Math.max(0, Math.floor((nowMs - lastContactMs) / 86400000));
+    const key = rep.assignee || "미배정";
+    if (!byAssignee.has(key)) byAssignee.set(key, []);
+    byAssignee.get(key).push({ name: rep.name, agingDays: days, balance: rep.finalBalanceLegal });
+  });
+  const oldestFirstBuckets = [...CONTACT_BUCKETS].reverse();
+  return [...byAssignee.entries()].map(([assignee, list]) => {
+    const picks = [];
+    for (const b of oldestFirstBuckets) {
+      if (picks.length >= 5) break;
+      const items = list.filter(p => p.agingDays >= b.min && p.agingDays < b.max);
+      const need = 5 - picks.length;
+      picks.push(...(items.length <= need ? items : pickRandomN(items, need)));
+    }
+    return { assignee, picks };
+  }).filter(g => g.picks.length > 0);
+}
 const histDateFromInput = (s) => String(s || "").replace(/-/g, ".");
 
 // ─── 소송/사건 진행상황 메모 (localStorage + DB 공유 저장) ──
@@ -13496,10 +13546,11 @@ function AiAnalysisView({
     if (!reportStart || !reportEnd || reportGenerating) return;
     setReportGenerating(true);
     try {
+      const contactAgingPicks = computeContactAgingPicks(data.debtors);
       const res = await fetch("/api/reports/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periodType: reportPeriodType, periodStart: reportStart, periodEnd: reportEnd }),
+        body: JSON.stringify({ periodType: reportPeriodType, periodStart: reportStart, periodEnd: reportEnd, contactAgingPicks }),
       });
       const row = await res.json();
       if (row.error) { showToast?.(row.error); setReportGenerating(false); return; }
@@ -13981,9 +14032,9 @@ function AiAnalysisView({
             </ReportSection>
 
             <ReportSection title="3. 채무자관리">
-              <SubTable label="연체 120일 이상 채무자 (담당자별 무작위 5명)"
-                columns={["담당자", "채무자", "연체일", "잔액"]} align={["center", "center", "right", "right"]} widths={[undefined, "140px"]}
-                rows={(activeReport.parsed.debtorMgmt?.aging120PlusByAssignee || []).flatMap(g => g.picks.map(p => ({ assignee: g.assignee, ...p })))}
+              <SubTable label="히스토리 경과기간 오래된 채무자 (담당자별 무작위 5명, 오래된 순 우선)"
+                columns={["담당자", "채무자", "경과일", "잔액"]} align={["center", "center", "right", "right"]} widths={[undefined, "140px"]}
+                rows={(activeReport.parsed.debtorMgmt?.contactAgingByAssignee || []).flatMap(g => g.picks.map(p => ({ assignee: g.assignee, ...p })))}
                 cells={r => [r.assignee, r.name, `${r.agingDays}일`, fmtWon(r.balance)]} />
               <SubTable label="이전 기간 분할상환 미입금"
                 columns={["채무자", "담당자", "납부기한", "예정액", "납부액", "상태"]} align={["center", "center", "right", "right", "right", "center"]} widths={["140px"]}

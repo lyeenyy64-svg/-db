@@ -5395,19 +5395,9 @@ function shiftDate(dateStr, days) {
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
 }
-// Fisher-Yates로 무작위 n개 추출 (담당자별 연체 120일+ 채무자 샘플링용)
-function pickRandom(arr, n) {
-  const copy = arr.slice();
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy.slice(0, n);
-}
-
 app.post("/api/reports/generate", async (req, res) => {
   try {
-    const { periodType, periodStart, periodEnd } = req.body || {};
+    const { periodType, periodStart, periodEnd, contactAgingPicks } = req.body || {};
     if (!PERIOD_LABELS[periodType] || !periodStart || !periodEnd) {
       return res.status(400).json({ error: "periodType(weekly/monthly/half/yearly), periodStart, periodEnd 필요" });
     }
@@ -5462,27 +5452,10 @@ app.post("/api/reports/generate", async (req, res) => {
       .filter(r => r && !r.deleted && r.date && r.date <= nextEnd && (r.endDate || r.date) >= nextStart)
       .map(r => ({ date: r.date, endDate: r.endDate, type: r.type, text: r.text }));
 
-    // 3. 채무자관리
-    const debtorRows = db.prepare(`
-      SELECT d.id, d.name, d.assignee, d.principal_balance, d.adjustment, d.collected_amount,
-             COALESCE(MAX(p.payment_date), d.loan_date) AS anchorDate
-      FROM debtors d LEFT JOIN payments p ON p.debtor_id = d.id
-      WHERE d.category NOT IN ('완료', '대손채권', '회생/파산')
-      GROUP BY d.id
-    `).all();
-    const agingByAssignee = new Map();
-    for (const d of debtorRows) {
-      const balance = (d.principal_balance || 0) + (d.adjustment || 0) - (d.collected_amount || 0);
-      if (balance <= 0 || !d.anchorDate) continue;
-      const agingDays = daysBetween(d.anchorDate, periodEnd);
-      if (agingDays < 120) continue;
-      const key = d.assignee || "미배정";
-      if (!agingByAssignee.has(key)) agingByAssignee.set(key, []);
-      agingByAssignee.get(key).push({ name: d.name, agingDays, balance });
-    }
-    const aging120PlusByAssignee = [...agingByAssignee.entries()].map(([assignee, list]) => ({
-      assignee, picks: pickRandom(list, 5),
-    }));
+    // 3. 채무자관리 — "히스토리 경과기간 오래된 채무자" 담당자별 무작위 5명은 채무자
+    // CONTACT 현황(엑셀 원본 히스토리 + localStorage/kv_store 수동기록)을 기준으로 하는데
+    // 이 데이터가 프론트에만 있어(서버 DB에 없음), 프론트에서 미리 계산해 보낸 값을 그대로 쓴다.
+    const contactAgingByAssignee = Array.isArray(contactAgingPicks) ? contactAgingPicks : [];
 
     const installmentRowsFor = (from, to) => db.prepare(`
       SELECT s.due_date AS dueDate, s.scheduled_amount AS scheduledAmount, s.paid_amount AS paidAmount,
@@ -5572,9 +5545,13 @@ app.post("/api/reports/generate", async (req, res) => {
         for (const h of inPeriod.slice(0, 3)) histSamples.push(`${dName}: ${String(h.content || "").slice(0, 90)}`);
       }
     }
+    // type 필터 없이 세면 60초 간격 heartbeat 핑까지 다 합산돼, 실제 작업량이 아니라
+    // 그냥 화면을 오래 켜둔 사람이 "활동이 가장 활발하다"로 잘못 나온다 — 다른 통계 화면
+    // (사용자별 데이터 입력량)과 동일하게 실제 저장 액션(data_input)만 센다.
     const activityByUser = db.prepare(`
       SELECT user_name, COUNT(*) AS cnt FROM user_activity_log
-      WHERE ts >= ? AND ts <= ? GROUP BY user_name ORDER BY cnt DESC LIMIT 10
+      WHERE type='data_input' AND ts >= ? AND ts <= ? AND user_name != '알수없음' AND user_name NOT LIKE '%�%'
+      GROUP BY user_name ORDER BY cnt DESC LIMIT 10
     `).all(`${periodStart} 00:00:00`, `${periodEnd} 23:59:59`);
 
     const lines = (arr, fmt, limit = 30) => (arr && arr.length) ? arr.slice(0, limit).map(fmt).join("\n") : "없음";
@@ -5600,8 +5577,8 @@ ${lines(todoCompleted, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"})`
 [다음 기간 주요일정] (${nextPeriodSchedule.length}건)
 ${lines(nextPeriodSchedule, s => `- ${s.date}${s.endDate && s.endDate !== s.date ? `~${s.endDate}` : ""} [${s.type}] ${s.text}`)}
 
-[연체 120일 이상 — 담당자별 샘플] (담당자 ${aging120PlusByAssignee.length}명)
-${lines(aging120PlusByAssignee, g => `- ${g.assignee}: ${g.picks.map(p => `${p.name}(${p.agingDays}일)`).join(", ")}`)}
+[히스토리 경과기간 오래된 채무자 — 담당자별 샘플] (담당자 ${contactAgingByAssignee.length}명)
+${lines(contactAgingByAssignee, g => `- ${g.assignee}: ${g.picks.map(p => `${p.name}(${p.agingDays}일)`).join(", ")}`)}
 
 [이전 기간 분할상환 미입금] (${installmentOverduePrevPeriod.length}건)
 ${lines(installmentOverduePrevPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) 예정 ${Number(r.scheduledAmount || 0).toLocaleString("ko-KR")}원 중 ${Number(r.paidAmount || 0).toLocaleString("ko-KR")}원 납부 [${r.status}]`)}
@@ -5670,7 +5647,7 @@ ${digest}`;
     const content = JSON.stringify({
       collection: { brands },
       issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
-      debtorMgmt: { aging120PlusByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
+      debtorMgmt: { contactAgingByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
       overview: overviewRows,
     });
     const title = `${label} 보고서 (${periodStart} ~ ${periodEnd})`;
