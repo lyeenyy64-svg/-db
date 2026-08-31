@@ -55,6 +55,28 @@ const countDistinctPeople = (arr) => {
   }
   return n;
 };
+// countDistinctPeople과 동일한 동일인 판정 기준으로, 카운트 대신 "대표 채무자 + 같은
+// 사람의 전체 항목 id 목록"을 반환한다 — 히스토리처럼 항목별로 흩어져 저장된 데이터를
+// 사람 단위로 합쳐서 봐야 할 때 사용.
+const groupDistinctPeople = (arr) => {
+  const baseCode = (c) => String(c || "").trim().replace(/-\d+$/, "");
+  const seen = new Set();
+  const groups = [];
+  for (const d of arr) {
+    if (seen.has(d.id)) continue;
+    const bc = baseCode(d.hubCode);
+    const siblings = arr.filter(x =>
+      x.id !== d.id && !seen.has(x.id) && x.brand === d.brand && !isConfirmedDifferentPerson(d, x) && (
+        (x.name && d.name && x.name.trim() === d.name.trim()) ||
+        (bc && bc.length >= 3 && baseCode(x.hubCode) === bc)
+      )
+    );
+    seen.add(d.id);
+    siblings.forEach(s => seen.add(s.id));
+    groups.push({ rep: d, memberIds: [d.id, ...siblings.map(s => s.id)] });
+  }
+  return groups;
+};
 // "+항목"(같은 사람에게 항목 하나 더 추가)도 신규 채무자 등록(POST /api/debtors)과 똑같은
 // 경로를 타서 등록일(createdAt) 기준 집계에 같이 잡힌다 — 실제로는 새 사람이 아니라 기존
 // 사람의 추가 항목/분류변경이라 "신규 등록 현황"에는 넣으면 안 된다. countDistinctPeople과
@@ -167,6 +189,18 @@ const AGING_BUCKETS = [
   { key: "b90",  label: "90~119일",   min: 90,  max: 120,      color: "#dc2626" },
   { key: "b120", label: "120일 이상", min: 120, max: Infinity, color: "#b91c1c" },
 ];
+
+// ─── 채무자 CONTACT 현황 구간 (히스토리 최근 기록일로부터 경과일수) ───────
+const CONTACT_BUCKETS = [
+  { key: "m1",  label: "1개월 이내", min: 0,    max: 30,       color: "#10b981" },
+  { key: "m2",  label: "2개월 이내", min: 30,   max: 60,       color: "#84cc16" },
+  { key: "m6",  label: "6개월 이내", min: 60,   max: 180,      color: "#f59e0b" },
+  { key: "y1",  label: "1년 이내",   min: 180,  max: 365,      color: "#f97316" },
+  { key: "y2",  label: "2년 이내",   min: 365,  max: 730,      color: "#dc2626" },
+  { key: "y3",  label: "3년 이내",   min: 730,  max: 1095,     color: "#b91c1c" },
+  { key: "y3p", label: "3년 초과",   min: 1095, max: Infinity, color: "#4b5563" },
+];
+const CONTACT_CATEGORIES = ["장기채권", "협의/소송", "회생/파산", "추심의뢰", "분할상환", "캐쉬상환"];
 
 // ─── 채권 소멸시효 구간 (대여일로부터 집행권원 있으면 10년, 없으면 5년) ───
 // min/max는 "남은 일수" 기준 — 작을수록(0에 가까울수록) 시효 완성이 임박해 더 시급하다.
@@ -3182,6 +3216,8 @@ export default function App() {
   const [chartYear, setChartYear] = useState(new Date().getFullYear());
   const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [agingModalReason, setAgingModalReason] = useState(null); // "noAnchor" | "noBalance"
+  const [contactModalCell, setContactModalCell] = useState(null); // {assignee, bucketKey} | null
+  const [contactModalReason, setContactModalReason] = useState(null); // "noHistory"
   const [statuteModalBucket, setStatuteModalBucket] = useState(null);
   const [statuteModalReason, setStatuteModalReason] = useState(null); // "noAnchor"
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
@@ -4046,6 +4082,42 @@ export default function App() {
     };
   }, [data]);
 
+  // ─── 채무자 CONTACT 현황 ────────────────────────────────────
+  // "컨택"은 채무자 상세의 히스토리 탭에 이 프로그램에서 직접 입력한 기록(hist_m_)을
+  // 기준으로 한다 — 엑셀 원본 history는 파싱 오류가 섞여 신뢰할 수 없어 정렬 기준에서
+  // 제외하는 것과 동일한 이유로 여기서도 제외한다. 같은 사람의 여러 채무 항목은
+  // groupDistinctPeople로 한 건으로 묶고, 그 사람의 모든 항목에 걸친 히스토리 중
+  // 가장 최근 기록일을 "최근 컨택일"로 본다.
+  const contactStats = useMemo(() => {
+    const normDate = (s) => String(s || "").replace(/\./g, "-");
+    const toMs = (s) => {
+      if (!s) return null;
+      const t = /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(s + "T00:00:00").getTime() : new Date(s.replace(" ", "T")).getTime();
+      return isNaN(t) ? null : t;
+    };
+    const nowMs = new Date(today() + "T00:00:00").getTime();
+    const pool = data.debtors.filter(d => CONTACT_CATEGORIES.includes(d.category));
+    const groups = groupDistinctPeople(pool);
+    const rows = [...config.assignees, "미배정"];
+    const table = {};
+    rows.forEach(a => { table[a] = {}; CONTACT_BUCKETS.forEach(b => { table[a][b.key] = { count: 0, items: [] }; }); });
+    const noHistoryItems = [];
+    groups.forEach(({ rep, memberIds }) => {
+      const a = config.assignees.includes(rep.assignee) ? rep.assignee : "미배정";
+      const msList = memberIds.flatMap(id => getHistM(id).map(h => toMs(h.createdAt || normDate(h.date)))).filter(v => v != null);
+      if (!msList.length) { noHistoryItems.push(rep); return; }
+      const lastContactMs = Math.max(...msList);
+      const days = Math.max(0, Math.floor((nowMs - lastContactMs) / 86400000));
+      const bucket = CONTACT_BUCKETS.find(b => days >= b.min && days < b.max) || CONTACT_BUCKETS[CONTACT_BUCKETS.length - 1];
+      const cell = table[a][bucket.key];
+      cell.count++;
+      cell.items.push({ ...rep, contactDays: days, lastContactMs });
+    });
+    rows.forEach(a => CONTACT_BUCKETS.forEach(b => table[a][b.key].items.sort((x, y) => y.contactDays - x.contactDays)));
+    noHistoryItems.sort((x, y) => (x.name || "").localeCompare(y.name || ""));
+    return { rows, table, noHistoryCount: noHistoryItems.length, noHistoryItems };
+  }, [data, config.assignees]);
+
   // ─── 채권 소멸시효 현황 ─────────────────────────────────────
   // 기준일(대여일자=대여금 지급시기, 단 채권 소멸시효 연장일을 사람이 지정했으면 그 날짜)을
   // 기준으로 집행권원이 있으면 +10년, 없으면 +5년 뒤가 소멸시효 완성일이다. 연장일을
@@ -4735,6 +4807,108 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           )}
         </div>
         </>)}
+        {/* ── 채무자 CONTACT 현황 ── */}
+        <SectionHeader sectionId="contact">채무자 CONTACT 현황</SectionHeader>
+        {!collapsedSections.has("contact") && (<>
+        <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+          <div style={{ fontSize: 12, color: "#000", marginBottom: 14 }}>
+            추심진행중·협의소송·회생/파산·추심의뢰·분할상환·캐쉬상환 채무자를 히스토리 최근 기록일 기준 경과기간별로 집계(동일인 여러 건은 1건)
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: "8px 12px", textAlign: "left", background: "#1f2937", color: "#fff", fontSize: 12 }}>담당자</th>
+                  {CONTACT_BUCKETS.map(b => (
+                    <th key={b.key} style={{ padding: "8px 12px", textAlign: "center", background: "#1f2937", color: "#fff", fontSize: 12, whiteSpace: "nowrap" }}>{b.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {contactStats.rows.filter(a => a !== "미배정" || CONTACT_BUCKETS.some(b => contactStats.table["미배정"][b.key].count > 0)).map((a, i) => (
+                  <tr key={a} style={{ background: i % 2 ? "var(--bg)" : "transparent" }}>
+                    <td style={{ padding: "8px 12px", fontWeight: 600, borderBottom: "1px solid var(--brd)" }}>{a}</td>
+                    {CONTACT_BUCKETS.map(b => {
+                      const cell = contactStats.table[a][b.key];
+                      return (
+                        <td key={b.key} onClick={() => cell.count > 0 && setContactModalCell({ assignee: a, bucketKey: b.key })}
+                          style={{ padding: "8px 12px", textAlign: "center", borderBottom: "1px solid var(--brd)", cursor: cell.count > 0 ? "pointer" : "default", color: cell.count > 0 ? b.color : "var(--tm)", fontWeight: cell.count > 0 ? 700 : 400 }}
+                          onMouseEnter={e => { if (cell.count > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                          {cell.count > 0 ? `${cell.count}건` : "-"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {contactStats.noHistoryCount > 0 && (
+            <div onClick={() => setContactModalReason("noHistory")} style={{ marginTop: 10, fontSize: 11, color: "#000", cursor: "pointer", textDecoration: "underline" }}>
+              * 히스토리 기록이 없어 집계에서 제외된 채무자 {contactStats.noHistoryCount}명
+            </div>
+          )}
+        </div>
+        </>)}
+        {contactModalCell && (() => {
+          const { assignee, bucketKey } = contactModalCell;
+          const bucket = CONTACT_BUCKETS.find(b => b.key === bucketKey);
+          const cell = contactStats.table[assignee]?.[bucketKey];
+          if (!bucket || !cell) return null;
+          return (
+            <Overlay onClose={() => setContactModalCell(null)} wide>
+              <ModalHeader title={`${assignee} · ${bucket.label} (${cell.count}명)`} onClose={() => setContactModalCell(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "분류", "최근 히스토리", "경과일", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {cell.items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setContactModalCell(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.lastContactMs)}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.contactDays}일</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
+        {contactModalReason && (() => {
+          const items = contactStats.noHistoryItems;
+          return (
+            <Overlay onClose={() => setContactModalReason(null)} wide>
+              <ModalHeader title={`히스토리 기록 없는 채무자 (${items.length}명)`} onClose={() => setContactModalReason(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "분류", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {items.map(d => (
+                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                        onClick={() => { navigateToDebtor(d); setContactModalReason(null); }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
+                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
+                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
+                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
         {agingModalBucket && (() => {
           const bucket = agingStats.buckets.find(b => b.key === agingModalBucket);
           if (!bucket) return null;
