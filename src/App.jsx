@@ -13347,6 +13347,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             docPages={docPages} setDocPages={setDocPages}
             showToast={showToast}
             reloadFromBackend={loadData}
+            canDeleteReportsAndHistory={canDeleteReportsAndHistory}
           />}
           {tab === "admin" && adminView}
         </div>
@@ -13415,7 +13416,7 @@ function AiAnalysisView({
   aiSubTab, setAiSubTab,
   docMessages, setDocMessages, docInput, setDocInput, docLoading, setDocLoading, docExtracting, setDocExtracting,
   docText, setDocText, docFileName, setDocFileName, docPages, setDocPages, showToast,
-  reloadFromBackend,
+  reloadFromBackend, canDeleteReportsAndHistory,
 }) {
   // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
   const bottomRef = useRef(null);
