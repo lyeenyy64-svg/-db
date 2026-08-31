@@ -9834,13 +9834,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 회생 탭은 채무액/승인액/월상환액/현재회차까지 표시하고, 파산/면책 탭은 잔액(재무)만 추가로 표시한다
     // (같은 탭 안에서는 유형이 전부 동일해 "회생/파산" 구분 컬럼은 불필요)
     const isRehabTab = rehabTab === "회생";
-    // 컬럼 수가 탭마다 달라(회생 13개 / 파산·면책 9개) 1fr을 쓰면 남는 공간이 그만큼 달라져
-    // 컬럼 폭이 들쑥날쑥해지므로, 전부 고정폭으로 둬서 탭과 무관하게 항상 같은 비율로 보이게 한다
-    // (grid-template-columns 안 min()/minmax() 중첩은 구형 브라우저에서 값 전체가 무시돼
-    //  그리드가 통째로 1개 컬럼으로 접혀버리는 문제가 있어 순수 고정폭만 사용)
+    // 성명/법원/사건번호처럼 글자수가 들쑥날쑥한 컬럼만 minmax(최소폭, fr)로 유연하게 두고
+    // (민사소송 목록의 legalGridCols와 동일한 방식) 나머지 금액·상태·뱃지 컬럼은 고정폭으로 둔다.
+    // 창이 좁아지면(즐겨찾기 패널 등) 이 컬럼들이 먼저 줄어들어 잘림 없이 반응하고,
+    // 그래도 부족하면 위쪽 overflowX:auto 스크롤이 받아준다.
     const rehabGridCols = isRehabTab
-      ? "56px 120px 84px 130px 160px 100px 100px 100px 84px 76px 76px 110px 110px 110px 90px"
-      : "56px 150px 84px 160px 200px 76px 76px 130px 90px";
+      ? "56px minmax(80px,1fr) 84px minmax(90px,1fr) minmax(120px,1.2fr) 100px 100px 100px 84px 76px 76px 110px 110px 110px 90px"
+      : "56px minmax(90px,1fr) 84px minmax(100px,1fr) minmax(140px,1.4fr) 76px 76px 130px 90px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
