@@ -1717,27 +1717,28 @@ const ReportSection = ({ title, children, last }) => (
     {children}
   </div>
 );
-const DataTable = ({ columns, rows, cells }) => {
+const DataTable = ({ columns, rows, cells, align }) => {
   if (!Array.isArray(rows) || rows.length === 0) return <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 없음</div>;
+  const alignOf = (i) => align?.[i] || "left";
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead>
-          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: "left", padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
+          <tr>{columns.map((c, i) => <th key={i} style={{ textAlign: alignOf(i), padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((r, ri) => (
-            <tr key={ri}>{cells(r).map((v, ci) => <td key={ci} style={{ padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tp)" }}>{v}</td>)}</tr>
+            <tr key={ri}>{cells(r).map((v, ci) => <td key={ci} style={{ padding: "5px 8px", borderBottom: "1px solid var(--brd)", color: "var(--tp)", textAlign: alignOf(ci) }}>{v}</td>)}</tr>
           ))}
         </tbody>
       </table>
     </div>
   );
 };
-const SubTable = ({ label, columns, rows, cells }) => (
+const SubTable = ({ label, columns, rows, cells, align }) => (
   <div style={{ marginBottom: 14 }}>
     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--ts)", marginBottom: 6 }}>· {label}</div>
-    <DataTable columns={columns} rows={rows} cells={cells} />
+    <DataTable columns={columns} rows={rows} cells={cells} align={align} />
   </div>
 );
 const KO_DAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -13908,7 +13909,7 @@ function AiAnalysisView({
             <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 18 }}>{activeReport.created_by || "-"} 작성 · {(activeReport.created_at || "").slice(0, 16)}</div>
 
             <ReportSection title="1. 채권추심 현황">
-              <DataTable columns={["브랜드", "잔액", "기간 입금액"]}
+              <DataTable columns={["브랜드", "잔액", "기간 입금액"]} align={["center", "right", "right"]}
                 rows={activeReport.parsed.collection?.brands}
                 cells={b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]} />
             </ReportSection>
@@ -13935,7 +13936,7 @@ function AiAnalysisView({
                 rows={activeReport.parsed.issues?.todoCompleted}
                 cells={r => [r.priority, r.task, r.assignee || "-", r.completedAt]} />
               <SubTable label="다음 기간 주요일정"
-                columns={["일정", "구분", "내용"]}
+                columns={["일정", "구분", "내용"]} align={["left", "center", "left"]}
                 rows={activeReport.parsed.issues?.nextPeriodSchedule}
                 cells={r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, r.type, r.text]} />
             </ReportSection>
@@ -13956,7 +13957,7 @@ function AiAnalysisView({
             </ReportSection>
 
             <ReportSection title="4. 종합현황" last>
-              <DataTable columns={["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"]}
+              <DataTable columns={["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"]} align={["center", "left", "left", "left"]}
                 rows={activeReport.parsed.overview}
                 cells={r => [r.category, r.good || "-", r.concern || "-", r.checkpoint || "-"]} />
             </ReportSection>
