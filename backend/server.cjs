@@ -5374,6 +5374,12 @@ app.get("/api/ai-analysis-log", (req, res) => {
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+app.delete("/api/ai-analysis-log/:id", (req, res) => {
+  try {
+    db.prepare("DELETE FROM ai_analysis_log WHERE id = ?").run(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 
 // ═══════════════ 주간/월간/반기/연간 보고서 ═══════════════
 const PERIOD_LABELS = { weekly: "주간", monthly: "월간", half: "반기", yearly: "연간" };
@@ -5686,6 +5692,12 @@ app.get("/api/reports", (req, res) => {
     const rows = db.prepare("SELECT * FROM ai_reports ORDER BY id DESC LIMIT 300").all();
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete("/api/reports/:id", (req, res) => {
+  try {
+    db.prepare("DELETE FROM ai_reports WHERE id = ?").run(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 const ANALYSIS_MARKER = "[채무자 및 연대보증인 종합분석]";

@@ -3128,6 +3128,8 @@ export default function App() {
   // 매니저는 누가 작성했는지와 무관하게 기록을 수정/삭제할 수 있다(작성자 본인만 가능하던 예전 제한 폐지)
   const canEditRecord   = () => isAdmin || currentUser?.role === "manager";
   const canDeleteRecord = () => isAdmin || currentUser?.role === "manager";
+  // 보고서/AI 분석 히스토리 삭제는 role과 무관하게 이 계정 한 명에게만 허용한다(요청자 본인).
+  const canDeleteReportsAndHistory = currentUser?.email === "kimjw@barogo.com";
 
   const [config, setConfig] = useState(DEFAULT_CONFIG);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
@@ -13516,6 +13518,25 @@ function AiAnalysisView({
     setActiveReport({ ...row, parsed });
   };
 
+  const deleteReport = async (id, e) => {
+    e.stopPropagation();
+    if (!confirm("이 보고서를 삭제하시겠습니까? 복구할 수 없습니다.")) return;
+    try {
+      await fetch(`/api/reports/${id}`, { method: "DELETE" });
+      setReportsList(prev => prev.filter(r => r.id !== id));
+      if (activeReport?.id === id) setActiveReport(null);
+    } catch { showToast?.("삭제 중 오류가 발생했습니다."); }
+  };
+  const deleteHistoryItem = async (id, e) => {
+    e.stopPropagation();
+    if (!confirm("이 기록을 삭제하시겠습니까? 복구할 수 없습니다.")) return;
+    try {
+      await fetch(`/api/ai-analysis-log/${id}`, { method: "DELETE" });
+      setHistoryList(prev => prev.filter(h => h.id !== id));
+      if (viewHistoryItem?.id === id) setViewHistoryItem(null);
+    } catch { showToast?.("삭제 중 오류가 발생했습니다."); }
+  };
+
   const filteredReports = reportsList.filter(r => {
     const rq = reportSearch.trim().toLowerCase();
     if (!rq) return true;
@@ -13649,7 +13670,15 @@ function AiAnalysisView({
                 style={{ padding: "8px 8px", borderRadius: 8, cursor: "pointer", border: activeReport?.id === r.id ? "1px solid var(--acc)" : "1px solid var(--brd)", background: "var(--card)" }}
                 onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                 onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{r.title}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>{r.title}</div>
+                  {canDeleteReportsAndHistory && (
+                    <button onClick={e => deleteReport(r.id, e)} title="삭제"
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", flexShrink: 0, padding: 0, display: "flex" }}>
+                      <I name="trash" size={12} />
+                    </button>
+                  )}
+                </div>
                 <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{r.created_by || "-"} · {(r.created_at || "").slice(0, 16)}</div>
               </div>
             ))}
@@ -13677,7 +13706,15 @@ function AiAnalysisView({
                   <span style={{ fontSize: 12, fontWeight: 700, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {h.target_name || (historyKind === "document" ? "(문서명 없음)" : "(채무자 미지정)")}
                   </span>
-                  <span className="mono" style={{ fontSize: 10, color: "var(--tm)", flexShrink: 0 }}>{(h.created_at || "").slice(5, 16)}</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    <span className="mono" style={{ fontSize: 10, color: "var(--tm)" }}>{(h.created_at || "").slice(5, 16)}</span>
+                    {canDeleteReportsAndHistory && (
+                      <button onClick={e => deleteHistoryItem(h.id, e)} title="삭제"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 0, display: "flex" }}>
+                        <I name="trash" size={12} />
+                      </button>
+                    )}
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{h.question}</div>
                 <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 2 }}>{h.created_by || "-"}</div>
