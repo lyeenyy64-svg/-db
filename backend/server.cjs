@@ -5489,7 +5489,67 @@ app.post("/api/reports/generate", async (req, res) => {
     const installmentOverduePrevPeriod = installmentRowsFor(prevStart, prevEnd).filter(r => r.status === "미납" || r.status === "지연");
     const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd);
 
-    // 4. 종합현황 — 단순 건수 요약이 아니라 실제 내용(히스토리 문구·구체 항목)을 근거로 AI가 판단
+    // 4. 민사소송·법적절차 — 엑셀에서 임포트된 소송 마스터 데이터(대부분의 실제 사건)는
+    // 프론트에만 번들되어 있어 백엔드가 볼 수 없다. 이 화면에서 기간 내 새로 등록한 사건과,
+    // 사건 진행상황 메모(사건 종류·데이터 출처와 무관하게 전부 kv_store에 기록됨)만 근거로 삼는다.
+    const newMinsaCases = getKvArray("manual_minsa_cases")
+      .filter(r => r && !r.deleted && r.filingDate && r.filingDate >= periodStart && r.filingDate <= periodEnd)
+      .map(r => ({ name: r.defendant || "-", caseNumber: r.caseNumber, filingDate: r.filingDate, progressStatus: r.progressStatus }));
+    const newLegalCases = getKvArray("manual_legal_cases")
+      .filter(r => r && !r.deleted && r.filingDate && r.filingDate >= periodStart && r.filingDate <= periodEnd)
+      .map(r => ({ name: r.defendant || "-", type: r.type || "-", filingDate: r.filingDate }));
+    const newAssetDisclosures = getKvArray("manual_asset_disclosures")
+      .filter(r => r && !r.deleted && r.applicationDate && r.applicationDate >= periodStart && r.applicationDate <= periodEnd)
+      .map(r => ({ name: r.debtorName || "-", applicationDate: r.applicationDate }));
+    const complaintsInPeriod = db.prepare(`
+      SELECT c.complaint_date AS complaintDate, d.name AS debtorName
+      FROM complaints c JOIN debtors d ON d.id = c.debtor_id
+      WHERE c.complaint_date >= ? AND c.complaint_date <= ?
+    `).all(periodStart, periodEnd);
+    const caseNoteRows = db.prepare("SELECT key, value FROM kv_store WHERE key LIKE 'case_notes_%'").all();
+    let caseNoteCount = 0;
+    const caseNoteSamples = [];
+    for (const row of caseNoteRows) {
+      let arr;
+      try { arr = JSON.parse(row.value); } catch { continue; }
+      if (!Array.isArray(arr)) continue;
+      const inPeriod = arr.filter(n => n && n.createdAt && n.createdAt.slice(0, 10) >= periodStart && n.createdAt.slice(0, 10) <= periodEnd);
+      if (inPeriod.length > 0) {
+        caseNoteCount += inPeriod.length;
+        for (const n of inPeriod.slice(0, 2)) caseNoteSamples.push(String(n.content || "").slice(0, 90));
+      }
+    }
+
+    // 5. 추심목표관리 — 담당자별 목표(manual_assignee_targets, 월/연 고정값) 대비 이번 기간 실적.
+    // 목표는 "월" 기준 고정값이라 기간이 1개월이 아니면(주간/반기/연간) 기간 길이에 비례 배분한다.
+    const assigneeTargetsList = getKvArray("manual_assignee_targets");
+    const periodCollectedByAssignee = db.prepare(`
+      SELECT assignee, SUM(total_amount) AS collected FROM (
+        SELECT COALESCE(
+                 (SELECT ah.assignee FROM assignee_history ah
+                   WHERE ah.debtor_id = d.id AND ah.effective_date <= p.payment_date
+                   ORDER BY ah.effective_date DESC, ah.id DESC LIMIT 1),
+                 d.assignee
+               ) AS assignee,
+               p.total_amount
+        FROM payments p JOIN debtors d ON d.id = p.debtor_id
+        WHERE p.payment_date >= ? AND p.payment_date <= ?
+      ) GROUP BY assignee
+    `).all(periodStart, periodEnd);
+    const collectedMapByAssignee = new Map(periodCollectedByAssignee.map(r => [r.assignee, r.collected || 0]));
+    const targetProrated = assigneeTargetsList
+      .filter(t => t && t.assignee && (t.monthlyTarget || t.annualTarget))
+      .map(t => {
+        const monthlyTarget = t.monthlyTarget || 0;
+        const proratedTarget = periodType === "yearly" ? (t.annualTarget || monthlyTarget * 12)
+          : periodType === "half" ? monthlyTarget * 6
+          : monthlyTarget * (spanDays / 30);
+        const collected = collectedMapByAssignee.get(t.assignee) || 0;
+        const achieveRate = proratedTarget > 0 ? (collected / proratedTarget) * 100 : null;
+        return { assignee: t.assignee, target: Math.round(proratedTarget), collected, achieveRate };
+      });
+
+    // 6. 종합현황 — 단순 건수 요약이 아니라 실제 내용(히스토리 문구·구체 항목)을 근거로 AI가 판단
     // (잘된 점/우려되는 점/체크할 사항)을 내리도록, 건수뿐 아니라 실제 항목 샘플까지 프롬프트에 싣는다.
     const histRows = db.prepare("SELECT key, value FROM kv_store WHERE key LIKE 'hist_m_%'").all();
     let histCount = 0, histDebtorCount = 0;
@@ -5543,6 +5603,20 @@ ${lines(installmentOverduePrevPeriod, r => `- ${r.debtorName}(${r.assignee || "-
 [${label} 분할상환 대상 현황] (${installmentThisPeriod.length}건)
 ${lines(installmentThisPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) ${r.dueDate} [${r.status}]`)}
 
+[민사소송 — 이번 기간 신규 접수] (${newMinsaCases.length}건)
+${lines(newMinsaCases, r => `- ${r.name} (${r.caseNumber || "-"}) 접수 ${r.filingDate} [${r.progressStatus || "-"}]`)}
+
+[법적절차 — 이번 기간 신규 접수] (지급명령·압류 ${newLegalCases.length}건, 재산명시·재산조회 ${newAssetDisclosures.length}건, 형사고소 ${complaintsInPeriod.length}건)
+${lines(newLegalCases, r => `- ${r.name} (${r.type}) 접수 ${r.filingDate}`)}
+${lines(newAssetDisclosures, r => `- ${r.name} 신청 ${r.applicationDate}`)}
+${lines(complaintsInPeriod, r => `- ${r.debtorName} 고소일 ${r.complaintDate}`)}
+
+[민사소송·법적절차 — 사건 진행상황 메모] (${caseNoteCount}건, 사건 종류·등록 경로 무관 전체)
+${lines(caseNoteSamples, s => `- ${s}`, 20)}
+
+[추심목표관리] (담당자 ${targetProrated.length}명 목표 설정)
+${lines(targetProrated, t => `- ${t.assignee}: 목표 ${t.target.toLocaleString("ko-KR")}원 대비 실적 ${t.collected.toLocaleString("ko-KR")}원 (달성률 ${t.achieveRate != null ? t.achieveRate.toFixed(1) + "%" : "-"})`)}
+
 [채무자 히스토리 샘플] (총 ${histCount}건, ${histDebtorCount}명)
 ${lines(histSamples, s => `- ${s}`, 40)}
 
@@ -5554,14 +5628,16 @@ ${lines(histSamples, s => `- ${s}`, 40)}
     if (openaiClient) {
       const prompt = `아래는 ${label} 보고서(${periodStart}~${periodEnd})의 실제 데이터입니다. 건수를 그대로 나열하지 말고, 데이터 안의 구체적인 이름·내용을 근거로 "잘 진행된 점"과 "우려되거나 놓친 점"을 실제로 판단해서 짚어주세요. 근거 없는 내용은 절대 지어내지 말고, 판단할 근거가 없으면 "특이사항 없음"이라고 쓰세요.
 
-다음 4개 구분에 대해 각각 판단하세요:
+다음 6개 구분에 대해 각각 판단하세요:
 1) 채무자 히스토리 — 협상·약속 이행, 연락 상태 등에서 잘된 점/우려되는 점
 2) 주요현안 — 강제집행·신용조회 지연 대응, 업무 등록·완료 속도에서 잘된 점/놓친 점
 3) 주요일정 — 다음 기간 일정 관련 체크할 사항
 4) CMS 사용 — 담당자 간 활동 편중이나 저활동 등 특이 패턴(활동량으로 성과 순위를 매기지는 마세요)
+5) 민사소송·법적절차 — 이번 기간 신규 접수·사건 진행상황 메모에서 잘된 점/우려되는 점. 단 여기 실린 데이터는 "이번 기간 신규 등록·메모"만이고 기존에 진행 중인 전체 소송 건수를 반영하지 않으니, 그 범위를 벗어난 판단(예: 전체 소송 현황이 어떻다는 식)은 하지 마세요
+6) 추심목표관리 — 담당자별 목표 대비 실적 달성률에서 잘된 점/우려되는 점. 목표가 설정된 담당자가 없으면 "목표 미설정"이라고 쓰세요
 
 반드시 아래 JSON 형식으로만, 다른 말 없이 답하세요:
-{"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."}]}
+{"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."},{"category":"민사소송·법적절차","good":"...","concern":"...","checkpoint":"..."},{"category":"추심목표관리","good":"...","concern":"...","checkpoint":"..."}]}
 
 [데이터]
 ${digest}`;
