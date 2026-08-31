@@ -13670,6 +13670,8 @@ ${table(["구분", "잘한 점", "우려·미흡한 점", "체크할 사항"], o
 
 <h2>5. 차주 주요체크사항</h2>
 ${checklist.length ? `<ul class="checklist">${checklist.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : `<div class="empty">해당 없음</div>`}
+${sub("차주 분할상환 예정 현황")}
+${table(["채무자", "담당자", "납부기한", "예정액", "상태"], debtorMgmt.installmentNextPeriod, x => [x.debtorName, x.assignee || "-", x.dueDate, fmtWon(x.scheduledAmount), x.status])}
 </body></html>`;
   };
 
@@ -14176,10 +14178,14 @@ ${checklist.length ? `<ul class="checklist">${checklist.map(c => `<li>${esc(c)}<
               {(activeReport.parsed.checklist || []).length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--tm)" }}>해당 없음</div>
               ) : (
-                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: "var(--tp)", lineHeight: 1.8 }}>
+                <ul style={{ margin: "0 0 16px", paddingLeft: 18, fontSize: 13, color: "var(--tp)", lineHeight: 1.8 }}>
                   {activeReport.parsed.checklist.map((item, i) => <li key={i}>{item}</li>)}
                 </ul>
               )}
+              <SubTable label="차주 분할상환 예정 현황"
+                columns={["채무자", "담당자", "납부기한", "예정액", "상태"]} align={["center", "center", "right", "right", "center"]} widths={["140px"]}
+                rows={activeReport.parsed.debtorMgmt?.installmentNextPeriod}
+                cells={r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]} />
             </ReportSection>
           </div>
         )}

@@ -113,6 +113,9 @@ function buildBodyXml(report) {
   parts.push(sectionTitle("5. 차주 주요체크사항"));
   if (!checklist.length) parts.push(paragraph("해당 없음", { size: 20 }));
   else parts.push(...checklist.map(bulletParagraph));
+  parts.push(subLabel("차주 분할상환 예정 현황"));
+  parts.push(tableBlock(["채무자", "담당자", "납부기한", "예정액", "상태"], debtorMgmt.installmentNextPeriod,
+    r => [r.debtorName, r.assignee || "-", r.dueDate, fmtWon(r.scheduledAmount), r.status]));
 
   return parts.join("");
 }

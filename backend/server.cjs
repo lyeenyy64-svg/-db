@@ -5448,6 +5448,11 @@ app.post("/api/reports/generate", async (req, res) => {
     const todoCompleted = todoAll
       .filter(r => r.status === "완료" && r.completedAt && r.completedAt >= periodStart && r.completedAt <= periodEnd)
       .map(r => ({ assignee: r.assignee, task: r.task, priority: r.priority, completedAt: r.completedAt }));
+    // 차주 체크리스트용 — 등록 시점과 무관하게 "아직 완료 안 된" 업무 전체(오래 방치된 것도
+    // 포함). 등록일이 오래됐는데 여전히 안 끝난 업무를 AI가 짚어낼 수 있게 등록일을 같이 준다.
+    const todoOutstanding = todoAll
+      .filter(r => r.status !== "완료")
+      .map(r => ({ assignee: r.assignee, task: r.task, priority: r.priority, result: r.result, createdAt: r.createdAt }));
 
     const nextPeriodSchedule = getKvArray("manual_monthly_schedule")
       .filter(r => r && !r.deleted && r.date && r.date <= nextEnd && (r.endDate || r.date) >= nextStart)
@@ -5468,6 +5473,10 @@ app.post("/api/reports/generate", async (req, res) => {
     `).all(from, to);
     const installmentOverduePrevPeriod = installmentRowsFor(prevStart, prevEnd).filter(r => r.status === "미납" || r.status === "지연");
     const installmentThisPeriod = installmentRowsFor(periodStart, periodEnd).filter(r => r.status === "미납" || r.status === "지연");
+    // 차주(다음 기간) 분할상환 예정 현황 — 아직 납부 기한이 안 지났으니 "미납"이 정상이고,
+    // 예정이 다른 일정으로 이월된(status='이월') 건만 걸러낸다(그 원본 회차는 이미 대체된
+    // 껍데기라 다음 기간 목록에 실제 상환 예정으로 보이면 중복/오해를 줄 수 있다).
+    const installmentNextPeriod = installmentRowsFor(nextStart, nextEnd).filter(r => r.status !== "이월");
 
     // 4. 민사소송·법적절차 — 엑셀에서 임포트된 소송 마스터 데이터(대부분의 실제 사건)는
     // 프론트에만 번들되어 있어 백엔드가 볼 수 없다. 이 화면에서 기간 내 새로 등록한 사건과,
@@ -5555,11 +5564,22 @@ app.post("/api/reports/generate", async (req, res) => {
     // type 필터 없이 세면 60초 간격 heartbeat 핑까지 다 합산돼, 실제 작업량이 아니라
     // 그냥 화면을 오래 켜둔 사람이 "활동이 가장 활발하다"로 잘못 나온다 — 다른 통계 화면
     // (사용자별 데이터 입력량)과 동일하게 실제 저장 액션(data_input)만 센다.
+    // 등록된 사용자(app_users) 명단으로 한 번 더 걸러서, 테스트/봇 호출 등으로 남은
+    // user_activity_log의 낯선 이름(예: "Claude")이 실제 팀원인 것처럼 AI에게 전달되지
+    // 않게 한다.
+    let registeredUserNames = null;
+    try {
+      const appUsersRow = db.prepare("SELECT value FROM kv_store WHERE key='app_users'").get();
+      const allUsers = appUsersRow ? JSON.parse(appUsersRow.value) : [];
+      registeredUserNames = new Set(allUsers.map(u => u && u.name).filter(Boolean));
+    } catch { /* app_users 파싱 실패 시 필터링 없이 진행 */ }
     const activityByUser = db.prepare(`
       SELECT user_name, COUNT(*) AS cnt FROM user_activity_log
       WHERE type='data_input' AND ts >= ? AND ts <= ? AND user_name != '알수없음' AND user_name NOT LIKE '%�%'
-      GROUP BY user_name ORDER BY cnt DESC LIMIT 10
-    `).all(`${periodStart} 00:00:00`, `${periodEnd} 23:59:59`);
+      GROUP BY user_name ORDER BY cnt DESC
+    `).all(`${periodStart} 00:00:00`, `${periodEnd} 23:59:59`)
+      .filter(u => !registeredUserNames || registeredUserNames.size === 0 || registeredUserNames.has(u.user_name))
+      .slice(0, 10);
 
     const lines = (arr, fmt, limit = 30) => (arr && arr.length) ? arr.slice(0, limit).map(fmt).join("\n") : "없음";
     const digest = `
@@ -5581,6 +5601,9 @@ ${lines(todoRegistered, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"})
 [${label} 완료된 업무] (${todoCompleted.length}건)
 ${lines(todoCompleted, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"})`)}
 
+[아직 완료 안 된 업무 — 등록 시점 무관 전체] (${todoOutstanding.length}건)
+${lines(todoOutstanding, t => `- [${t.priority}] ${t.task} (${t.assignee || "-"}, 등록 ${t.createdAt}) 결과: ${t.result || "-"}`, 40)}
+
 [다음 기간 주요일정] (${nextPeriodSchedule.length}건)
 ${lines(nextPeriodSchedule, s => `- ${s.date}${s.endDate && s.endDate !== s.date ? `~${s.endDate}` : ""} [${s.type}] ${s.text}`)}
 
@@ -5592,6 +5615,9 @@ ${lines(installmentOverduePrevPeriod, r => `- ${r.debtorName}(${r.assignee || "-
 
 [${label} 분할상환 미입금 현황] (${installmentThisPeriod.length}건)
 ${lines(installmentThisPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) ${r.dueDate} [${r.status}]`)}
+
+[차주(${nextStart}~${nextEnd}) 분할상환 예정 현황] (${installmentNextPeriod.length}건)
+${lines(installmentNextPeriod, r => `- ${r.debtorName}(${r.assignee || "-"}) ${r.dueDate} 예정 ${Number(r.scheduledAmount || 0).toLocaleString("ko-KR")}원 [${r.status}]`, 40)}
 
 [민사소송 — 이번 기간 신규 접수] (${newMinsaCases.length}건)
 ${lines(newMinsaCases, r => `- ${r.name} (${r.caseNumber || "-"}) 접수 ${r.filingDate} [${r.progressStatus || "-"}]`)}
@@ -5629,7 +5655,11 @@ ${lines(nextPeriodPromises, p => `- ${p.debtorName}: ${p.resolvedDate} "${p.snip
 5) 민사소송·법적절차 — 이번 기간 신규 접수·사건 진행상황 메모에서 잘된 점/우려되는 점. 단 여기 실린 데이터는 "이번 기간 신규 등록·메모"만이고 기존에 진행 중인 전체 소송 건수를 반영하지 않으니, 그 범위를 벗어난 판단(예: 전체 소송 현황이 어떻다는 식)은 하지 마세요
 6) 추심목표관리 — 담당자별 목표 대비 실적 달성률에서 잘된 점/우려되는 점. 목표가 설정된 담당자가 없으면 "목표 미설정"이라고 쓰세요
 
-그리고 별도로 "차주 주요체크사항"을 작성하세요 — 위 데이터 전체(주요현안의 미완료 항목, 채무자관리의 히스토리 경과기간 오래된 채무자·분할상환 미입금, 민사소송·법적절차 진행상황, 다음 기간 일정, 그리고 채무자 히스토리에 언급된 차주 약속)를 종합해서, 다음 기간에 실제로 체크하고 진행해야 할 구체적인 항목을 5~10개의 짧은 문장으로 만드세요. 각 항목은 누구를/무엇을 왜 확인·진행해야 하는지가 드러나야 하고, 특히 채무자 히스토리에 언급된 차주 약속(예: 누구와 통화하기로 함, 언제까지 입금하기로 함)이 있으면 반드시 포함하세요. 근거 없는 항목은 만들지 말고, 체크할 게 없으면 ["특이사항 없음"] 하나만 담으세요.
+그리고 별도로 "차주 주요체크사항"을 작성하세요 — 위 데이터 전체(주요현안의 미완료 항목, 채무자관리의 히스토리 경과기간 오래된 채무자·분할상환 미입금, 민사소송·법적절차 진행상황, 다음 기간 일정, 채무자 히스토리에 언급된 차주 약속, 그리고 "아직 완료 안 된 업무" 목록)를 종합해서, 다음 기간에 실제로 체크하고 진행해야 할 구체적인 항목을 5~10개의 짧은 문장으로 만드세요. 각 항목은 누구를/무엇을 왜 확인·진행해야 하는지가 드러나야 합니다.
+- 채무자 히스토리에 언급된 차주 약속(예: 누구와 통화하기로 함, 언제까지 입금하기로 함)이 있으면 반드시 포함하세요.
+- "아직 완료 안 된 업무" 중에서는 등록일이 오래됐는데 여전히 안 끝난 것, 우선순위가 "긴급"인 것을 우선적으로 짚어서 어떤 조치가 필요한지 알려주세요. 담당자 이름은 등록된 팀원(위 CMS 사용 데이터에 나오는 이름)만 언급하고, 모르는 이름은 만들어내지 마세요.
+- "차주(다음 기간) 분할상환 예정 현황"은 이미 별도 표로 화면에 보여지므로 목록을 다시 나열하지 말고, 특별히 주의가 필요한 건(같은 채무자가 이전 기간에도 미납했던 경우 등)만 언급하세요.
+근거 없는 항목은 만들지 말고, 체크할 게 없으면 ["특이사항 없음"] 하나만 담으세요.
 
 반드시 아래 JSON 형식으로만, 다른 말 없이 답하세요:
 {"rows":[{"category":"채무자 히스토리","good":"...","concern":"...","checkpoint":"..."},{"category":"주요현안","good":"...","concern":"...","checkpoint":"..."},{"category":"주요일정","good":"...","concern":"...","checkpoint":"..."},{"category":"CMS 사용","good":"...","concern":"...","checkpoint":"..."},{"category":"민사소송·법적절차","good":"...","concern":"...","checkpoint":"..."},{"category":"추심목표관리","good":"...","concern":"...","checkpoint":"..."}],"checklist":["...", "..."]}
@@ -5662,7 +5692,7 @@ ${digest}`;
     const content = JSON.stringify({
       collection: { brands },
       issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
-      debtorMgmt: { contactAgingByAssignee, installmentOverduePrevPeriod, installmentThisPeriod },
+      debtorMgmt: { contactAgingByAssignee, installmentOverduePrevPeriod, installmentThisPeriod, installmentNextPeriod },
       overview: overviewRows,
       checklist: nextPeriodChecklist,
     });
