@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef, memo } from "react";
 import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
@@ -1227,14 +1227,35 @@ const KoreanTextarea = ({ value, onChange, autoResize, ...rest }) => {
 
 // 천단위 쉼표 금액 입력 컴포넌트
 // value: 숫자 문자열 (쉼표 없음), onChange: raw 숫자 문자열 반환 → Number() 그대로 사용 가능
+// 콤마 재조합으로 매 입력마다 값 전체가 교체되므로, 커서 위치를 digit 개수 기준으로 복원해준다
+// (안 그러면 커서가 항상 끝으로 튕겨서 "한 글자 쓰면 커서가 사라지는" 것처럼 보임)
 const MoneyInput = ({ value, onChange, style, placeholder }) => {
+  const ref = useRef(null);
+  const pendingCaretDigits = useRef(null);
   const display = value !== "" && value !== undefined && !isNaN(Number(value)) && value !== null
     ? Number(value).toLocaleString("ko-KR")
     : (value || "");
+  useLayoutEffect(() => {
+    if (pendingCaretDigits.current == null || !ref.current) return;
+    let count = 0, pos = display.length;
+    for (let i = 0; i < display.length; i++) {
+      if (/[0-9]/.test(display[i])) count++;
+      if (count === pendingCaretDigits.current) { pos = i + 1; break; }
+    }
+    if (pendingCaretDigits.current === 0) pos = 0;
+    ref.current.setSelectionRange(pos, pos);
+    pendingCaretDigits.current = null;
+  }, [display]);
   return (
     <input
+      ref={ref}
       value={display}
-      onChange={e => { const raw = e.target.value.replace(/[^0-9]/g, ""); onChange(raw); }}
+      onChange={e => {
+        const caret = e.target.selectionStart ?? e.target.value.length;
+        pendingCaretDigits.current = e.target.value.slice(0, caret).replace(/[^0-9]/g, "").length;
+        const raw = e.target.value.replace(/[^0-9]/g, "");
+        onChange(raw);
+      }}
       inputMode="numeric"
       style={style}
       placeholder={placeholder || ""}
