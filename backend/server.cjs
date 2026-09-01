@@ -3483,107 +3483,148 @@ function getNotionDbIdMap() {
   return row ? JSON.parse(row.value) : {};
 }
 
-// GET /api/todo-list/notion-db-id — 로그인한 사용자가 연결해 둔 개인 노션 데이터베이스 ID 조회
+const NOTION_HEADERS = {
+  "Authorization": `Bearer ${NOTION_API_KEY}`,
+  "Notion-Version": "2022-06-28",
+  "Content-Type": "application/json",
+};
+// 노션 항목을 담을 컨테이너로 두 가지를 지원한다: 표(데이터베이스)의 Title 속성, 또는
+// 일반 페이지에 적어둔 글머리 기호/번호/체크박스 목록. 후자는 "노션에 제목만 쭉 적어두고
+// 그대로 가져오기" 같은, 데이터베이스를 새로 만들기 부담스러운 사용자를 위한 것이다.
+const NOTION_LIST_BLOCK_TYPES = new Set(["bulleted_list_item", "numbered_list_item", "to_do"]);
+
+// 데이터베이스의 모든 행에서 Title 속성 텍스트를 뽑아 [{id, title}] 목록으로 반환
+async function fetchNotionDatabaseItems(dbId) {
+  const items = [];
+  let cursor;
+  do {
+    const notionRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+      method: "POST",
+      headers: NOTION_HEADERS,
+      body: JSON.stringify(cursor ? { start_cursor: cursor, page_size: 100 } : { page_size: 100 }),
+    });
+    const notionData = await notionRes.json();
+    if (!notionRes.ok) throw new Error(`노션 API 오류: ${notionData?.message || notionRes.status}`);
+    for (const page of (notionData.results || [])) {
+      const titleProp = Object.values(page.properties || {}).find(p => p.type === "title");
+      const title = (titleProp?.title || []).map(t => t.plain_text || "").join("").trim();
+      if (title) items.push({ id: page.id, title });
+    }
+    cursor = notionData.has_more ? notionData.next_cursor : undefined;
+  } while (cursor);
+  return items;
+}
+
+// 일반 페이지(또는 블록) 바로 아래에 적힌 글머리 기호/번호/체크박스 목록 항목을 [{id, title}]로 반환
+async function fetchNotionPageListItems(pageId) {
+  const items = [];
+  let cursor;
+  do {
+    const params = new URLSearchParams({ page_size: "100" });
+    if (cursor) params.set("start_cursor", cursor);
+    const blockRes = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children?${params}`, { headers: NOTION_HEADERS });
+    const blockData = await blockRes.json();
+    if (!blockRes.ok) throw new Error(`노션 API 오류: ${blockData?.message || blockRes.status}`);
+    for (const b of (blockData.results || [])) {
+      if (!NOTION_LIST_BLOCK_TYPES.has(b.type)) continue;
+      const richText = b[b.type]?.rich_text;
+      const title = Array.isArray(richText) ? richText.map(t => t.plain_text || "").join("").trim() : "";
+      if (title) items.push({ id: b.id, title });
+    }
+    cursor = blockData.has_more ? blockData.next_cursor : undefined;
+  } while (cursor);
+  return items;
+}
+
+// GET /api/todo-list/notion-db-id — 로그인한 사용자가 연결해 둔 개인 노션 데이터베이스/페이지 조회
 app.get("/api/todo-list/notion-db-id", (req, res) => {
   const assignee = extractUserName(req);
   if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
-  const map = getNotionDbIdMap();
-  res.json({ ok: true, dbId: map[assignee] || null });
+  const entry = getNotionDbIdMap()[assignee] || null;
+  res.json({ ok: true, dbId: entry?.id || null, type: entry?.type || null });
 });
 
-// PATCH /api/todo-list/notion-db-id — 본인의 노션 "업무 목록" 데이터베이스를 연결/변경.
-// 노션 API로 실제 접근 가능한지(통합이 그 페이지에 연결돼 있는지) 먼저 확인한 뒤 저장한다.
+// PATCH /api/todo-list/notion-db-id — 본인의 노션 "업무 목록" 데이터베이스 또는 페이지를 연결/변경.
+// 데이터베이스로 먼저 접근해보고, 아니면 일반 페이지(글머리 기호 목록)로 접근해봐서 어느 쪽인지
+// 자동으로 판별한다. 둘 다 실패하면 통합이 연결 안 된 것으로 보고 에러를 안내한다.
 app.patch("/api/todo-list/notion-db-id", async (req, res) => {
   if (!NOTION_API_KEY) return res.status(400).json({ ok: false, error: "NOTION_API_KEY가 설정되지 않았습니다" });
   const assignee = extractUserName(req);
   if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
   const dbId = extractNotionDbId(req.body?.input);
-  if (!dbId) return res.status(400).json({ ok: false, error: "올바른 노션 데이터베이스 URL 또는 ID가 아닙니다" });
+  if (!dbId) return res.status(400).json({ ok: false, error: "올바른 노션 페이지 URL 또는 ID가 아닙니다" });
+  let type, notionError;
   try {
-    const testRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${NOTION_API_KEY}`,
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ page_size: 1 }),
+    const dbRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+      method: "POST", headers: NOTION_HEADERS, body: JSON.stringify({ page_size: 1 }),
     });
-    if (!testRes.ok) {
-      const errData = await testRes.json().catch(() => ({}));
-      const hint = testRes.status === 404 ? " — 해당 노션 페이지에 연동(통합)이 연결되어 있는지 확인해주세요 (⋯ 메뉴 > 연결 추가)" : "";
-      return res.status(400).json({ ok: false, error: `노션 접근 실패: ${errData?.message || testRes.status}${hint}` });
+    if (dbRes.ok) {
+      type = "database";
+    } else {
+      const dbErr = await dbRes.json().catch(() => ({}));
+      const blockRes = await fetch(`https://api.notion.com/v1/blocks/${dbId}`, { headers: NOTION_HEADERS });
+      if (blockRes.ok) {
+        type = "page";
+      } else {
+        notionError = dbErr?.message || dbRes.status;
+      }
     }
   } catch (e) {
     return res.status(500).json({ ok: false, error: `노션 연결 확인 중 오류: ${e.message}` });
   }
+  if (!type) {
+    return res.status(400).json({ ok: false, error: `노션 접근 실패: ${notionError} — 해당 노션 페이지 "..." 메뉴 > 연결 추가에서 통합을 연결해주세요` });
+  }
   const map = getNotionDbIdMap();
-  map[assignee] = dbId;
+  map[assignee] = { id: dbId, type };
   db.prepare(`
     INSERT INTO kv_store (key, value, updated_at) VALUES ('notion_flag_db_by_user', ?, datetime('now', 'localtime'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(JSON.stringify(map));
-  res.json({ ok: true, dbId });
+  res.json({ ok: true, dbId, type });
 });
 
-// POST /api/todo-list/from-notion-flag — 로그인한 사용자가 연결해 둔 본인 노션 데이터베이스에
+// POST /api/todo-list/from-notion-flag — 로그인한 사용자가 연결해 둔 본인 노션 데이터베이스/페이지에
 // 쌓인 항목들의 제목만 To Do List에 담당자(요청한 사용자)로 등록한다. 개인 연결이 없는 사용자는
-// 예전부터 쓰던 공용 NOTION_FLAG_DB_ID(플래그 메일함)로 폴백한다. 수동 버튼 트리거이며,
-// notionPageId로 이미 가져온 항목은 건너뛰어 같은 메일이 중복 등록되지 않게 한다.
+// 예전부터 쓰던 공용 NOTION_FLAG_DB_ID(플래그 메일함, 데이터베이스)로 폴백한다. 수동 버튼
+// 트리거이며, notionPageId로 이미 가져온 항목은 건너뛰어 같은 항목이 중복 등록되지 않게 한다.
 app.post("/api/todo-list/from-notion-flag", async (req, res) => {
   if (!NOTION_API_KEY) {
     return res.status(400).json({ ok: false, error: "NOTION_API_KEY가 설정되지 않았습니다" });
   }
   const assignee = extractUserName(req);
   if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
-  const dbId = getNotionDbIdMap()[assignee] || NOTION_FLAG_DB_ID;
-  if (!dbId) {
-    return res.status(400).json({ ok: false, error: "연결된 노션 페이지가 없습니다 — '노션 연결하기' 버튼으로 본인의 노션 데이터베이스를 먼저 연결해주세요" });
+  const entry = getNotionDbIdMap()[assignee];
+  const sourceId = entry?.id || NOTION_FLAG_DB_ID;
+  const sourceType = entry?.id ? entry.type : "database"; // 공용 폴백은 항상 데이터베이스
+  if (!sourceId) {
+    return res.status(400).json({ ok: false, error: "연결된 노션 페이지가 없습니다 — '노션 연결하기' 버튼으로 본인의 노션 데이터베이스/페이지를 먼저 연결해주세요" });
   }
   try {
     const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
     const arr = row ? JSON.parse(row.value) : [];
     const already = new Set(arr.filter(x => x.notionPageId).map(x => x.notionPageId));
 
-    const pages = [];
-    let cursor = undefined;
-    do {
-      const notionRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${NOTION_API_KEY}`,
-          "Notion-Version": "2022-06-28",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(cursor ? { start_cursor: cursor, page_size: 100 } : { page_size: 100 }),
-      });
-      const notionData = await notionRes.json();
-      if (!notionRes.ok) {
-        return res.status(502).json({ ok: false, error: `노션 API 오류: ${notionData?.message || notionRes.status}` });
-      }
-      pages.push(...(notionData.results || []));
-      cursor = notionData.has_more ? notionData.next_cursor : undefined;
-    } while (cursor);
+    const items = sourceType === "page"
+      ? await fetchNotionPageListItems(sourceId)
+      : await fetchNotionDatabaseItems(sourceId);
 
     let imported = 0, skipped = 0;
-    for (const page of pages) {
-      if (already.has(page.id)) { skipped++; continue; }
-      const titleProp = Object.values(page.properties || {}).find(p => p.type === "title");
-      const subject = (titleProp?.title || []).map(t => t.plain_text || "").join("").trim();
-      if (!subject) { skipped++; continue; }
+    for (const item of items) {
+      if (already.has(item.id)) { skipped++; continue; }
       arr.push({
         id: `TODO${Date.now()}${Math.floor(Math.random() * 900 + 100)}`,
         assignee,
         priority: "보통",
-        task: subject,
+        task: item.title,
         result: "",
         status: "진행중",
         createdAt: new Date().toISOString().split("T")[0],
         completedAt: null,
         deleted: false,
-        notionPageId: page.id,
+        notionPageId: item.id,
       });
-      already.add(page.id);
+      already.add(item.id);
       imported++;
     }
     if (imported > 0) {
