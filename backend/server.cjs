@@ -3606,7 +3606,12 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
   try {
     const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
     const arr = row ? JSON.parse(row.value) : [];
-    const already = new Set(arr.filter(x => x.notionPageId).map(x => x.notionPageId));
+    // manual_todo_list에 남아있는 notionPageId만으로 "이미 가져온 항목"을 판단하면, 완료 처리한
+    // 항목을 휴지통에서 영구 삭제하는 순간 그 기록도 같이 사라져 같은 노션 항목이 다음 가져오기
+    // 때 또 등록돼버린다. 완료/삭제 여부와 무관하게 영구히 남는 별도 기록(ledger)을 따로 둔다.
+    const ledgerRow = db.prepare("SELECT value FROM kv_store WHERE key='notion_imported_ids'").get();
+    const ledger = new Set(ledgerRow ? JSON.parse(ledgerRow.value) : []);
+    const already = new Set([...ledger, ...arr.filter(x => x.notionPageId).map(x => x.notionPageId)]);
 
     const items = sourceType === "page"
       ? await fetchNotionPageListItems(sourceId)
@@ -3628,6 +3633,7 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
         notionPageId: item.id,
       });
       already.add(item.id);
+      ledger.add(item.id);
       imported++;
     }
     if (imported > 0) {
@@ -3635,6 +3641,10 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
         INSERT INTO kv_store (key, value, updated_at) VALUES ('manual_todo_list', ?, datetime('now', 'localtime'))
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
       `).run(JSON.stringify(arr));
+      db.prepare(`
+        INSERT INTO kv_store (key, value, updated_at) VALUES ('notion_imported_ids', ?, datetime('now', 'localtime'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(JSON.stringify([...ledger]));
     }
     res.json({ ok: true, imported, skipped });
   } catch (e) {
