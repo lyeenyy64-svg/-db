@@ -15,6 +15,9 @@ let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = nul
 // Power Automate 등 외부에서 /api/todo-list/from-outlook-flag 호출 시 검증할 공유 비밀값.
 // .env에 OUTLOOK_FLAG_SECRET을 지정하지 않으면 검증 없이 허용(로컬 테스트용).
 const OUTLOOK_FLAG_SECRET = process.env.OUTLOOK_FLAG_SECRET || "";
+// 사용자 권한(role) 변경 시 요구하는 확인 암호 — 클라이언트 코드에는 절대 넣지 않고
+// (프론트 JS 번들로 통째로 배포되어 누구나 볼 수 있음) 서버에서만 비교한다.
+const ROLE_CHANGE_PASSCODE = process.env.ROLE_CHANGE_PASSCODE || "";
 // 노션 "플래그 메일함" 데이터베이스에서 제목을 To Do List로 가져오기 위한 설정.
 const NOTION_API_KEY = process.env.NOTION_API_KEY || "";
 const NOTION_FLAG_DB_ID = process.env.NOTION_FLAG_DB_ID || "";
@@ -3790,6 +3793,14 @@ app.post("/api/admin/reindex", async (req, res) => {
     const status = /경로가 설정/.test(e.message) ? 400 : /시간 초과/.test(e.message) ? 408 : 500;
     res.status(status).json({ ok: false, error: e.message });
   }
+});
+
+// 사용자 권한(role) 변경 확인 암호 검증 — 값 자체는 서버 .env에만 있고 클라이언트로는
+// 절대 내려주지 않는다 (일치 여부만 true/false로 응답).
+app.post("/api/admin/verify-role-passcode", (req, res) => {
+  if (!ROLE_CHANGE_PASSCODE) return res.status(500).json({ ok: false, error: "ROLE_CHANGE_PASSCODE가 서버에 설정되지 않았습니다" });
+  const input = String(req.body?.input ?? "").trim();
+  res.json({ ok: input === ROLE_CHANGE_PASSCODE });
 });
 
 // 어드민 통계: 접속 하트비트 수신

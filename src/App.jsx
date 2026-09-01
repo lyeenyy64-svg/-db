@@ -1918,7 +1918,6 @@ const ROLES = [
   { key: "manager", label: "매니저", desc: "본인 데이터 삭제/편집, 전체 추가/읽기 가능" },
   { key: "member",  label: "구성원", desc: "데이터 읽기만 가능" },
 ];
-const ROLE_CHANGE_PASSCODE = "8590"; // 권한(role) 변경 시 요구하는 확인 암호
 const PERM_MAP = {
   superadmin: { view: true, edit: true, delete: true,  admin: true, superAdmin: true },
   admin:      { view: true, edit: true, delete: true,  admin: true, superAdmin: false },
@@ -12683,12 +12682,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       {/* 역할 배지 (비관리자에게는 select 대신 텍스트로) */}
                       {isAdmin ? (
-                        <select value={u.role} onChange={e => {
+                        <select value={u.role} onChange={async e => {
                           const newRole = e.target.value;
                           if (newRole === u.role) return;
                           const input = window.prompt(`"${u.name}"의 권한을 "${ROLES.find(r => r.key === newRole)?.label}"로 변경합니다.\n확인 암호를 입력하세요.`);
                           if (input === null) return; // 취소
-                          if (input.trim() !== ROLE_CHANGE_PASSCODE) { showToast("암호가 일치하지 않아 권한이 변경되지 않았습니다"); return; }
+                          let verified = false;
+                          try {
+                            const res = await fetch("/api/admin/verify-role-passcode", {
+                              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }),
+                            });
+                            const data = await res.json();
+                            verified = !!data.ok;
+                          } catch { showToast("암호 확인 중 오류가 발생했습니다"); return; }
+                          if (!verified) { showToast("암호가 일치하지 않아 권한이 변경되지 않았습니다"); return; }
                           setUsers(prev => prev.map((x) => x.id === u.id ? { ...x, role: newRole } : x));
                           if (currentUser?.id === u.id) setCurrentUser(prev => ({ ...prev, role: newRole }));
                           showToast(`${u.name} 권한: ${ROLES.find(r => r.key === newRole)?.label}`);
