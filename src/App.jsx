@@ -1162,6 +1162,21 @@ const Field = ({ label, children, span }) => (
   </div>
 );
 const inp = { width: "100%", padding: "8px 10px", fontSize: 13 };
+// 상세 모달 공용 라벨 행 — 모달 렌더 함수 내부에 지역 정의하면 매 렌더(=키 입력마다)마다
+// 컴포넌트 타입이 새로 생겨 자식 input이 통째로 unmount/remount되어 포커스(커서)가 사라진다.
+// 그래서 모듈 스코프로 끌어올려 타입 identity를 고정한다.
+const DL = ({ label, val, children }) => (val || children) ? (
+  <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+    <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+    <span style={{ color: "var(--tp)", fontWeight: 500 }}>{children || val}</span>
+  </div>
+) : null;
+const EF = ({ label, children }) => (
+  <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
+    <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+    <div style={{ flex: 1 }}>{children}</div>
+  </div>
+);
 
 // App() 내부에 중첩 정의된 "XxxView" 컴포넌트(예: PaymentsView, LegalView 등)를
 // <XxxView/>처럼 JSX로 렌더링하면, App이 리렌더링될 때마다(예: 한 글자 타이핑할 때마다)
@@ -9468,18 +9483,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setSelCase(null);
         showToast("삭제 완료");
       };
-      const DL = ({ label, val }) => val ? (
-        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
-          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
-        </div>
-      ) : null;
-      const EF = ({ label, children }) => (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
-          <div style={{ flex: 1 }}>{children}</div>
-        </div>
-      );
       return (
         <Overlay onClose={() => setSelCase(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -9931,18 +9934,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setSelRehab(null);
         showToast("삭제 완료");
       };
-      const DL = ({ label, val }) => val ? (
-        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
-          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
-        </div>
-      ) : null;
-      const EF = ({ label, children }) => (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
-          <div style={{ flex: 1 }}>{children}</div>
-        </div>
-      );
       return (
         <Overlay onClose={() => setSelRehab(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -12076,18 +12067,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         setSelCase(null);
         showToast("삭제 완료");
       };
-      const DL = ({ label, val }) => val ? (
-        <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
-          <span style={{ color: "var(--tp)", fontWeight: 500 }}>{val}</span>
-        </div>
-      ) : null;
-      const EF = ({ label, children }) => (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, padding: "4px 0", borderBottom: "1px solid var(--brd)" }}>
-          <span style={{ color: "var(--tm)", minWidth: 110, flexShrink: 0 }}>{label}</span>
-          <div style={{ flex: 1 }}>{children}</div>
-        </div>
-      );
       return (
         <Overlay onClose={() => setSelCase(null)} wide>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
