@@ -3468,15 +3468,78 @@ app.post("/api/todo-list/from-outlook-flag", (req, res) => {
   res.json({ ok: true, id: item.id });
 });
 
-// POST /api/todo-list/from-notion-flag — "플래그 메일함" 노션 데이터베이스에 쌓인 항목들의
-// 제목만 To Do List에 담당자(요청한 사용자)로 등록한다. 수동 버튼 트리거이며, notionPageId로
-// 이미 가져온 항목은 건너뛰어 같은 메일이 중복 등록되지 않게 한다.
+// 노션 데이터베이스 URL 또는 ID 문자열에서 32자리 데이터베이스 ID만 뽑아낸다.
+// (사용자가 노션에서 표를 열고 주소창의 URL을 그대로 복사해 붙여넣는 것을 그대로 받아주기 위함)
+function extractNotionDbId(input) {
+  const s = String(input || "").trim();
+  const m = s.match(/[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}/i);
+  return m ? m[0].replace(/-/g, "") : "";
+}
+
+// 사용자별로 연결해 둔 "본인 노션 업무 목록" 데이터베이스 ID 맵 조회/저장.
+// (기존 NOTION_FLAG_DB_ID 하나만 쓰던 시절 사용자는 맵에 없으면 그 값을 그대로 폴백으로 사용)
+function getNotionDbIdMap() {
+  const row = db.prepare("SELECT value FROM kv_store WHERE key='notion_flag_db_by_user'").get();
+  return row ? JSON.parse(row.value) : {};
+}
+
+// GET /api/todo-list/notion-db-id — 로그인한 사용자가 연결해 둔 개인 노션 데이터베이스 ID 조회
+app.get("/api/todo-list/notion-db-id", (req, res) => {
+  const assignee = extractUserName(req);
+  if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
+  const map = getNotionDbIdMap();
+  res.json({ ok: true, dbId: map[assignee] || null });
+});
+
+// PATCH /api/todo-list/notion-db-id — 본인의 노션 "업무 목록" 데이터베이스를 연결/변경.
+// 노션 API로 실제 접근 가능한지(통합이 그 페이지에 연결돼 있는지) 먼저 확인한 뒤 저장한다.
+app.patch("/api/todo-list/notion-db-id", async (req, res) => {
+  if (!NOTION_API_KEY) return res.status(400).json({ ok: false, error: "NOTION_API_KEY가 설정되지 않았습니다" });
+  const assignee = extractUserName(req);
+  if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
+  const dbId = extractNotionDbId(req.body?.input);
+  if (!dbId) return res.status(400).json({ ok: false, error: "올바른 노션 데이터베이스 URL 또는 ID가 아닙니다" });
+  try {
+    const testRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${NOTION_API_KEY}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ page_size: 1 }),
+    });
+    if (!testRes.ok) {
+      const errData = await testRes.json().catch(() => ({}));
+      const hint = testRes.status === 404 ? " — 해당 노션 페이지에 연동(통합)이 연결되어 있는지 확인해주세요 (⋯ 메뉴 > 연결 추가)" : "";
+      return res.status(400).json({ ok: false, error: `노션 접근 실패: ${errData?.message || testRes.status}${hint}` });
+    }
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: `노션 연결 확인 중 오류: ${e.message}` });
+  }
+  const map = getNotionDbIdMap();
+  map[assignee] = dbId;
+  db.prepare(`
+    INSERT INTO kv_store (key, value, updated_at) VALUES ('notion_flag_db_by_user', ?, datetime('now', 'localtime'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+  `).run(JSON.stringify(map));
+  res.json({ ok: true, dbId });
+});
+
+// POST /api/todo-list/from-notion-flag — 로그인한 사용자가 연결해 둔 본인 노션 데이터베이스에
+// 쌓인 항목들의 제목만 To Do List에 담당자(요청한 사용자)로 등록한다. 개인 연결이 없는 사용자는
+// 예전부터 쓰던 공용 NOTION_FLAG_DB_ID(플래그 메일함)로 폴백한다. 수동 버튼 트리거이며,
+// notionPageId로 이미 가져온 항목은 건너뛰어 같은 메일이 중복 등록되지 않게 한다.
 app.post("/api/todo-list/from-notion-flag", async (req, res) => {
-  if (!NOTION_API_KEY || !NOTION_FLAG_DB_ID) {
-    return res.status(400).json({ ok: false, error: "NOTION_API_KEY / NOTION_FLAG_DB_ID가 설정되지 않았습니다" });
+  if (!NOTION_API_KEY) {
+    return res.status(400).json({ ok: false, error: "NOTION_API_KEY가 설정되지 않았습니다" });
   }
   const assignee = extractUserName(req);
   if (assignee === "알수없음") return res.status(400).json({ ok: false, error: "로그인한 사용자를 확인할 수 없습니다" });
+  const dbId = getNotionDbIdMap()[assignee] || NOTION_FLAG_DB_ID;
+  if (!dbId) {
+    return res.status(400).json({ ok: false, error: "연결된 노션 페이지가 없습니다 — '노션 연결하기' 버튼으로 본인의 노션 데이터베이스를 먼저 연결해주세요" });
+  }
   try {
     const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
     const arr = row ? JSON.parse(row.value) : [];
@@ -3485,7 +3548,7 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
     const pages = [];
     let cursor = undefined;
     do {
-      const notionRes = await fetch(`https://api.notion.com/v1/databases/${NOTION_FLAG_DB_ID}/query`, {
+      const notionRes = await fetch(`https://api.notion.com/v1/databases/${dbId}/query`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${NOTION_API_KEY}`,

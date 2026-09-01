@@ -2659,6 +2659,33 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
     setNotionImporting(false);
   };
 
+  // 본인이 연결해 둔 노션 업무 목록 데이터베이스 — 없으면 "노션에서 가져오기"가 예전 공용
+  // 표(플래그 메일함)로 폴백되므로, 각자 자기 것으로 바꾸려면 여기서 먼저 연결해야 한다.
+  const [notionDbId, setNotionDbId] = useState(null);
+  useEffect(() => {
+    fetch("/api/todo-list/notion-db-id").then(r => r.json()).then(data => {
+      if (data.ok) setNotionDbId(data.dbId);
+    }).catch(() => {});
+  }, []);
+  const doConnectNotion = async () => {
+    const input = window.prompt("본인의 노션 업무 목록 데이터베이스 URL 또는 ID를 입력하세요\n(노션에서 표를 전체 페이지로 연 뒤 주소창 URL을 그대로 복사)", "");
+    if (!input || !input.trim()) return;
+    try {
+      const res = await fetch("/api/todo-list/notion-db-id", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setNotionDbId(data.dbId);
+        showToast("노션 데이터베이스가 연결되었습니다");
+      } else {
+        showToast(`연결 실패: ${data.error}`);
+      }
+    } catch (e) { showToast(`오류: ${e.message}`); }
+  };
+
   const strike = (r, extra) => ({ ...issueTd, position: "relative", ...extra });
   const strikeLine = (r) => r.status === "완료" && <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 2, background: "#ef4444", transform: "translateY(-50%)", pointerEvents: "none" }} />;
   // showCompletedCol: "완료" 화면(아코디언)에서만 완료 처리일 칸을 끼워 넣는다.
@@ -2771,6 +2798,10 @@ const TodoListTable = ({ rows, users, addKeyIssue, updateKeyIssue, deleteKeyIssu
               <I name="trash" size={12} /> 선택 삭제 ({checkedIds.size})
             </button>
           )}
+          <button onClick={doConnectNotion} title="본인의 노션 업무 목록 데이터베이스를 연결/변경"
+            style={{ padding: "5px 10px", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer", background: "var(--bg2)", color: notionDbId ? "#16a34a" : "var(--tm)" }}>
+            {notionDbId ? "노션 연결됨 (변경)" : "노션 연결하기"}
+          </button>
           <button onClick={doImportFromNotion} disabled={notionImporting}
             style={{ padding: "5px 10px", textAlign: "center", borderRadius: 4, fontSize: 12, fontWeight: 600, border: "1px solid #000", cursor: notionImporting ? "default" : "pointer", background: "var(--bg2)", color: "var(--acc)", opacity: notionImporting ? 0.6 : 1 }}>
             {notionImporting ? "가져오는 중..." : "노션에서 가져오기"}
