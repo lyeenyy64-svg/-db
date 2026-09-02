@@ -1929,7 +1929,7 @@ const PERM_MAP = {
 const APP_USERS_KEY = "app_users";
 const DEFAULT_USERS = [
   { id: "U002", name: "배현진", email: "hjbae@barogo.com", avatar: "배", role: "admin", approved: true, registeredAt: "2026-06-10", password: "hj12345!" },
-  { id: "U003", name: "김준원", email: "kimjw@barogo.com", avatar: "김", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
+  { id: "U003", name: "김준원", email: "kimjw@barogo.com", avatar: "김", role: "superadmin", approved: true, registeredAt: "2026-06-10", password: "0000" },
   { id: "U004", name: "조혜원", email: "chohw1997@barogo.com", avatar: "조", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
   { id: "U005", name: "장덕진", email: "djjang_bu@barogo.com", avatar: "장", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
   { id: "U006", name: "유재선", email: "jsyoo6708@barogo.com", avatar: "유", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
@@ -3196,7 +3196,7 @@ export default function App() {
   const [lastSaved,  setLastSaved]    = useState(null);
   const REMOVED_USER_EMAILS = ["junwon@barogo.com"]; // 삭제된 계정 목록
   // DEFAULT_USERS 기준으로 이름/역할 등 강제 동기화할 필드 (이메일 키)
-  const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" } };
+  const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" }, "kimjw@barogo.com": { role: "superadmin" } };
   // localStorage에 저장된(혹은 서버에서 막 받아온) 사용자 목록을 REMOVED_USER_EMAILS/
   // USER_OVERRIDES 규칙에 맞춰 정리한다. useState 초기값과 loadData의 서버 동기화 양쪽에서
   // 같은 로직을 써야, 다른 기기·브라우저에서 사용자 관리 화면에서 바꾼 권한(예: 관리자 승격)이
@@ -13540,6 +13540,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             showToast={showToast}
             reloadFromBackend={loadData}
             canDeleteReportsAndHistory={canDeleteReportsAndHistory}
+            isSuperAdmin={isSuperAdmin}
           />}
           {tab === "admin" && adminView}
         </div>
@@ -13609,7 +13610,7 @@ function AiAnalysisView({
   aiSubTab, setAiSubTab,
   docMessages, setDocMessages, docInput, setDocInput, docLoading, setDocLoading, docExtracting, setDocExtracting,
   docText, setDocText, docFileName, setDocFileName, docPages, setDocPages, showToast,
-  reloadFromBackend, canDeleteReportsAndHistory,
+  reloadFromBackend, canDeleteReportsAndHistory, isSuperAdmin,
 }) {
   // 상태는 최상위 App에서 관리 — 탭 전환해도 대화 유지, 리렌더 시 unmount 방지
   const bottomRef = useRef(null);
@@ -13686,7 +13687,7 @@ function AiAnalysisView({
   }, [reportPeriodType]);
 
   const generateReport = async () => {
-    if (!reportStart || !reportEnd || reportGenerating) return;
+    if (!isSuperAdmin || !reportStart || !reportEnd || reportGenerating) return;
     setReportGenerating(true);
     try {
       const contactAgingPicks = computeContactAgingPicks(data.debtors);
@@ -14232,11 +14233,14 @@ ${table(["채무자", "담당자", "납부기한", "예정액", "상태"], debto
           <span style={{ color: "var(--tm)", fontSize: 12 }}>~</span>
           <input type="date" value={reportEnd} onChange={e => setReportEnd(e.target.value)}
             style={{ padding: "6px 8px", borderRadius: 7, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", fontSize: 12 }} />
-          <button onClick={generateReport} disabled={reportGenerating}
-            style={{ marginLeft: "auto", padding: "8px 18px", borderRadius: 10, background: reportGenerating ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: reportGenerating ? "default" : "pointer" }}>
+          <button onClick={generateReport} disabled={reportGenerating || !isSuperAdmin} title={!isSuperAdmin ? "보고서 생성은 마스터 권한만 가능합니다." : undefined}
+            style={{ marginLeft: "auto", padding: "8px 18px", borderRadius: 10, background: (reportGenerating || !isSuperAdmin) ? "var(--brd)" : "var(--acc)", color: "#fff", border: "none", fontSize: 13, fontWeight: 600, cursor: (reportGenerating || !isSuperAdmin) ? "default" : "pointer" }}>
             {reportGenerating ? "생성 중..." : "보고서 생성"}
           </button>
         </div>
+        {!isSuperAdmin && (
+          <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 6 }}>보고서 생성은 마스터 권한만 가능합니다.</div>
+        )}
       </div>
 
       {/* 생성/선택된 보고서 */}
