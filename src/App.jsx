@@ -7566,6 +7566,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         if (!date) return showToast("날짜를 입력하세요");
         setSaving(true);
         try {
+          const isNewPlan = !plan?.id;
           let targetPlanId = plan?.id;
           // 플랜 없으면 자동 생성
           if (!targetPlanId) {
@@ -7578,7 +7579,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
             targetPlanId = newPlanId;
           }
-          const amounts = buildScheduleAmounts(previewDates, parsedAmount, totalClaim);
+          const existingScheds = isNewPlan ? [] : (data.installmentSchedules || []).filter(s => s.planId === targetPlanId);
+          // 이미 일정이 채워진 플랜에 추가하는 경우, 새 회차는 총 채권액 기준 나머지흡수 계산을 하지 않고
+          // 입력한 금액 그대로 넣은 뒤, 초과분만큼 마지막 "예정" 회차에서 빼서 총액을 맞춘다.
+          const amounts = existingScheds.length > 0
+            ? previewDates.map(() => parsedAmount)
+            : buildScheduleAmounts(previewDates, parsedAmount, totalClaim);
           const schedules = previewDates.map((d, idx) => {
             return { id: "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase(), dueDate: d, dueMonth: d.slice(0, 7), scheduledAmount: amounts[idx], status, memo };
           });
@@ -7588,9 +7594,34 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           });
           const result = await r.json();
           if (!result.ok) { showToast(result.error || "저장 실패"); setSaving(false); return; }
+
+          let adjustedMsg = "";
+          if (existingScheds.length > 0 && totalClaim > 0) {
+            const addedTotal = amounts.reduce((a, b) => a + b, 0);
+            const existingTotal = existingScheds.reduce((a, s) => a + (s.scheduledAmount || 0), 0);
+            let overshoot = existingTotal + addedTotal - totalClaim;
+            if (overshoot > 0) {
+              const trailing = existingScheds.filter(s => s.status === "예정").sort((a, b) => (b.dueDate || "").localeCompare(a.dueDate || ""));
+              let adjustedTotal = 0;
+              for (const s of trailing) {
+                if (overshoot <= 0) break;
+                const cur = s.scheduledAmount || 0;
+                const cut = Math.min(cur, overshoot);
+                if (cut <= 0) continue;
+                await fetch(`/api/installments/schedules/${s.id}`, {
+                  method: "PATCH", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ scheduledAmount: cur - cut }),
+                });
+                overshoot -= cut;
+                adjustedTotal += cut;
+              }
+              if (adjustedTotal > 0) adjustedMsg = ` (마지막 회차에서 ${fmt(adjustedTotal)}원 차감)`;
+            }
+          }
+
           await reloadInstallments();
           setAddSchedModal(null);
-          showToast(`일정 ${schedules.length}건 추가 완료`);
+          showToast(`일정 ${schedules.length}건 추가 완료${adjustedMsg}`);
         } catch(e) { showToast("저장 실패"); }
         setSaving(false);
       };
