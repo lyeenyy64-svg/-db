@@ -9883,8 +9883,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       else if (rSortDir === "asc") setRSortDir("desc");
       else { setRSortField(null); setRSortDir(null); }
     };
-    const RehabSortTh = ({ field, label }) => (
-      <span style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => toggleRSort(field)}>
+    const RehabSortTh = ({ field, label, align }) => (
+      <span style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", textAlign: align || "center" }} onClick={() => toggleRSort(field)}>
         {label}{rSortField === field ? (rSortDir === "asc" ? " ↑" : " ↓") : ""}
       </span>
     );
@@ -9928,8 +9928,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // minmax(최소폭, fr)로 유연하게 두고, 나머지 금액·뱃지·회차 컬럼은 실측 기준 고정폭으로 둬서
     // 창 크기 변화가 저 3개 컬럼에 집중되어 눈에 보이게 반응하게 한다.
     const rehabGridCols = isRehabTab
-      ? "56px minmax(70px,1fr) 54px minmax(80px,1fr) minmax(110px,1.3fr) 96px 96px 96px 58px 60px 60px 96px 96px 96px 90px"
-      : "56px minmax(80px,1fr) 54px minmax(90px,1fr) minmax(130px,1.4fr) 60px 60px 96px 90px";
+      ? "56px minmax(64px,0.8fr) 50px minmax(70px,0.8fr) minmax(100px,1fr) minmax(92px,0.6fr) minmax(92px,0.6fr) minmax(92px,0.6fr) 54px 56px 56px minmax(92px,0.6fr) minmax(92px,0.6fr) minmax(92px,0.6fr) 86px"
+      : "56px minmax(70px,0.8fr) 50px minmax(80px,0.8fr) minmax(110px,1fr) 56px 56px minmax(96px,0.6fr) 86px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
@@ -10197,15 +10197,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           <RehabSortTh field="creditorNumber" label="채권번호" />
           <RehabSortTh field="court" label="법원" />
           <RehabSortTh field="caseNumber" label="사건번호" />
-          {isRehabTab && <RehabSortTh field="debtAmount" label="채무액" />}
-          {isRehabTab && <RehabSortTh field="approvedAmount" label="승인액" />}
-          {isRehabTab && <RehabSortTh field="monthlyPayment" label="월상환액" />}
+          {isRehabTab && <RehabSortTh field="debtAmount" label="채무액" align="right" />}
+          {isRehabTab && <RehabSortTh field="approvedAmount" label="승인액" align="right" />}
+          {isRehabTab && <RehabSortTh field="monthlyPayment" label="월상환액" align="right" />}
           {isRehabTab && <RehabSortTh field="currentRound" label="현재회차" />}
           <RehabSortTh field="overdue" label="납부여부" />
           <RehabSortTh field="result" label="결과" />
-          <RehabSortTh field="balance" label="잔액(재무)" />
-          {isRehabTab && <RehabSortTh field="depositedRehab" label="입금액(회생)" />}
-          {isRehabTab && <RehabSortTh field="remainingRehab" label="잔액(회생)" />}
+          <RehabSortTh field="balance" label="잔액(재무)" align="right" />
+          {isRehabTab && <RehabSortTh field="depositedRehab" label="입금액(회생)" align="right" />}
+          {isRehabTab && <RehabSortTh field="remainingRehab" label="잔액(회생)" align="right" />}
           <RehabSortTh field="matched" label="매칭" />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -10226,9 +10226,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.creditorNumber || "-"}</span>
                     <span style={{ fontSize: 13, color: "var(--ts)" }}>{r.court || "-"}</span>
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.caseNumber}</span>
-                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.debtAmount > 0 ? fmt(r.debtAmount) : "-"}</span>}
-                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--ok)", whiteSpace: "nowrap" }}>{r.approvedAmount > 0 ? fmt(r.approvedAmount) : "-"}</span>}
-                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : "-"}</span>}
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap", textAlign: "right" }}>{r.debtAmount > 0 ? fmt(r.debtAmount) : "-"}</span>}
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--ok)", whiteSpace: "nowrap", textAlign: "right" }}>{r.approvedAmount > 0 ? fmt(r.approvedAmount) : "-"}</span>}
+                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap", textAlign: "right" }}>{r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : "-"}</span>}
                     {isRehabTab && <span style={{ fontSize: 13, color: "var(--ts)", whiteSpace: "nowrap" }}>{r.currentRound || "-"}</span>}
                     <span style={{ whiteSpace: "nowrap" }}>{r.overdueStatus === "미납"
                       ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>
@@ -10238,14 +10238,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       : result === "인가"
                         ? <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>
                         : <span style={{ fontSize: 12, color: "var(--ts)" }}>진행중</span>}</span>
-                    <span className="mono" style={{ fontSize: 13, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600, whiteSpace: "nowrap" }}>{debtor ? fmt(debtor.finalBalanceFinance) : "-"}</span>
+                    <span className="mono" style={{ fontSize: 13, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", textAlign: "right" }}>{debtor ? fmt(debtor.finalBalanceFinance) : "-"}</span>
                     {isRehabTab && (() => {
                       const dep = getRehabDeposited(r);
-                      return <span className="mono" style={{ fontSize: 13, color: dep == null ? "var(--tm)" : "var(--tp)", whiteSpace: "nowrap" }}>{dep == null ? "-" : fmt(dep)}</span>;
+                      return <span className="mono" style={{ fontSize: 13, color: dep == null ? "var(--tm)" : "var(--tp)", whiteSpace: "nowrap", textAlign: "right" }}>{dep == null ? "-" : fmt(dep)}</span>;
                     })()}
                     {isRehabTab && (() => {
                       const rem = getRehabRemaining(r);
-                      return <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: rem == null ? "var(--tm)" : rem < 0 ? "#ef4444" : "var(--ok)", whiteSpace: "nowrap" }}>{rem == null ? "-" : fmt(rem)}</span>;
+                      return <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: rem == null ? "var(--tm)" : rem < 0 ? "#ef4444" : "var(--ok)", whiteSpace: "nowrap", textAlign: "right" }}>{rem == null ? "-" : fmt(rem)}</span>;
                     })()}
                     <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       {getCaseUrl(r.id) && <a href={getCaseUrl(r.id)} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 5, background: "#3b82f618", color: "#1d4ed8", border: "1px solid #3b82f630", textDecoration: "none", whiteSpace: "nowrap", flexShrink: 0 }}>문서</a>}
