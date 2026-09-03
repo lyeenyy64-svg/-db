@@ -475,6 +475,16 @@ try { db.exec("ALTER TABLE user_activity_log ADD COLUMN item_id TEXT"); } catch(
     console.log(`[stats_garbled_username_cleanup_v1] 깨진 사용자명 통계 기록 ${removed.changes}건 정리 완료`);
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_garbled_username_cleanup_v1', '1')").run();
   }
+  // 개발 중 API 직접 호출/테스트로 남은 "Claude" 기록, 사용자명 헤더 없이 들어온 요청의
+  // 기본값 "관리자" 기록이 실제 팀원인 것처럼 성과 통계 화면에 컬럼으로 계속 나타나는 문제 —
+  // 이미 쌓인 기록을 한 번만 정리하고, 앞으로는 /api/admin/stats 조회 시에도 걸러진다.
+  const systemUserCleanupDone = db.prepare("SELECT value FROM kv_store WHERE key='stats_system_user_cleanup_v1'").get();
+  if (!systemUserCleanupDone) {
+    const removedActivity = db.prepare("DELETE FROM user_activity_log WHERE user_name IN ('Claude', '관리자')").run();
+    const removedTodo = db.prepare("DELETE FROM todo_activity_log WHERE user_name IN ('Claude', '관리자')").run();
+    console.log(`[stats_system_user_cleanup_v1] Claude/관리자 명의 통계 기록 ${removedActivity.changes + removedTodo.changes}건 정리 완료`);
+    db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('stats_system_user_cleanup_v1', '1')").run();
+  }
   // 채무자 PATCH 통계를 필드 단위(debtor_edit_log 행 수) 대신 저장 액션 단위로 통일하면서,
   // 이미 쌓여있던 과거 기록은 새 집계 방식에서 안 보이게 된다 — PATCH 1건을 (사용자, 채무자,
   // 저장 시각) 묶음으로 근사 복원해서 user_activity_log에 한 번만 채워 넣는다 (1회만 실행).
@@ -3877,6 +3887,7 @@ function computeNetDebtorVolume(len) {
     const flush = () => {
       if (curPeriod == null || curPeriod < cutoff) return;
       if (!curLastEditor || curLastEditor === "알수없음" || hasReplacementChar(curLastEditor)) return;
+      if (curLastEditor === "Claude" || curLastEditor === "관리자") return;
       const netLen = Math.max(0, (curEndValue ?? "").length - (curStartValue ?? "").length);
       if (netLen <= 0) return;
       const key = JSON.stringify([curLastEditor, curPeriod]);
@@ -3909,12 +3920,15 @@ app.get("/api/admin/stats", (req, res) => {
     // 기록 시점에 거르는 것과 별개로 조회 시점에도 한 번 더 막아 화면에 이상 컬럼이 뜨지 않게 한다.
     const NOT_GARBLED = "user_name NOT LIKE ?";
     const garbledParam = "%�%";
+    // "Claude"(개발 중 API 직접 호출/테스트)나 "관리자"(사용자명 헤더 없이 들어온 기본값)는
+    // 실제 팀원이 아니라 이 통계 화면에 가짜 컬럼으로 계속 다시 나타나므로 조회 시점에 제외한다.
+    const NOT_SYSTEM_USER = "user_name NOT IN ('Claude', '관리자')";
 
     // 사용자를 식별 못한 요청은 애초에 기록 시점에 걸러내지만, 혹시 남는 게 있어도
     // 성과 통계 화면에는 절대 노출되지 않도록 조회 시점에도 한 번 더 막는다.
     const accessBuckets = (len) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) * 60 AS seconds
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED}
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND ${NOT_SYSTEM_USER}
       GROUP BY period, user
       ORDER BY period DESC
     `).all(STATS_START_DATE, garbledParam);
@@ -3926,7 +3940,7 @@ app.get("/api/admin/stats", (req, res) => {
       const rawRows = db.prepare(`
         SELECT substr(ts,1,${len}) AS period, user_name AS user, SUM(bytes) AS bytes
         FROM user_activity_log
-        WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND path NOT LIKE '/api/debtors/%'
+        WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND ${NOT_SYSTEM_USER} AND path NOT LIKE '/api/debtors/%'
         GROUP BY period, user
       `).all(STATS_START_DATE, garbledParam);
 
@@ -3949,7 +3963,7 @@ app.get("/api/admin/stats", (req, res) => {
     // To Do List 사용자별 등록/완료/삭제 건수 (todo_activity_log 기반)
     const todoBuckets = (len, action) => db.prepare(`
       SELECT substr(ts,1,${len}) AS period, user_name AS user, COUNT(*) AS count
-      FROM todo_activity_log WHERE action = ? AND ts >= ? AND ${NOT_GARBLED}
+      FROM todo_activity_log WHERE action = ? AND ts >= ? AND ${NOT_GARBLED} AND ${NOT_SYSTEM_USER}
       GROUP BY period, user
       ORDER BY period DESC
     `).all(action, STATS_START_DATE, garbledParam);
@@ -3964,11 +3978,11 @@ app.get("/api/admin/stats", (req, res) => {
     // 통일되어 있어(PATCH /api/debtors/:id 핸들러 참고) debtor_edit_log를 따로 셀 필요가 없다.
     const dataInputSummary = db.prepare(`
       SELECT user_name AS user, COUNT(*) AS cnt, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} GROUP BY user_name
+      FROM user_activity_log WHERE type='data_input' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND ${NOT_SYSTEM_USER} GROUP BY user_name
     `).all(STATS_START_DATE, garbledParam);
     const heartbeatSummary = db.prepare(`
       SELECT user_name AS user, MAX(ts) AS lastAt
-      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} GROUP BY user_name
+      FROM user_activity_log WHERE type='heartbeat' AND ts >= ? AND user_name != '알수없음' AND ${NOT_GARBLED} AND ${NOT_SYSTEM_USER} GROUP BY user_name
     `).all(STATS_START_DATE, garbledParam);
     const summaryMap = new Map();
     const touch = (user, addCnt, lastAt) => {
