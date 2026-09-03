@@ -9922,14 +9922,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 회생 탭은 채무액/승인액/월상환액/현재회차까지 표시하고, 파산/면책 탭은 잔액(재무)만 추가로 표시한다
     // (같은 탭 안에서는 유형이 전부 동일해 "회생/파산" 구분 컬럼은 불필요)
     const isRehabTab = rehabTab === "회생";
-    // 이전에 금액·상태·뱃지 컬럼까지 전부 minmax(최소폭, fr)로 둔 적이 있었는데, 그러면 창 크기가
-    // 바뀔 때 늘어난/줄어든 폭이 13개 트랙에 잘게 나뉘어 실제로는 각 컬럼이 몇 px 밖에 안 움직여
-    // "안 줄었다 늘었다" 한 것처럼 보였음. 민사소송 목록처럼 글자수가 들쑥날쑥한 성명/법원/사건번호만
-    // minmax(최소폭, fr)로 유연하게 두고, 나머지 금액·뱃지·회차 컬럼은 실측 기준 고정폭으로 둬서
-    // 창 크기 변화가 저 3개 컬럼에 집중되어 눈에 보이게 반응하게 한다.
+    // 회생 탭은 컬럼이 15개나 되어(민사소송 9개보다 훨씬 많음) 각 트랙의 최소폭 합이 그대로
+    // "최소 필요 가로폭"이 된다 — 즐겨찾기 패널처럼 사이드 영역이 열려 화면이 좁아지면 이 최소폭
+    // 합을 넘지 못해 우측 컬럼이 통째로 밀려나 보이던 문제. 뱃지/회차 등 내용이 짧은 고정폭
+    // 컬럼은 실측 한도까지 더 줄이고, 성명/법원/사건번호의 최소폭·fr 비중도 낮춰 최소 필요
+    // 가로폭 자체를 줄인다(넓은 창에서 남는 공간이 있으면 fr 비중대로 계속 늘어나는 건 정상).
     const rehabGridCols = isRehabTab
-      ? "56px minmax(64px,0.8fr) 50px minmax(70px,0.8fr) minmax(100px,1fr) minmax(92px,0.6fr) minmax(92px,0.6fr) minmax(92px,0.6fr) 54px 56px 56px minmax(92px,0.6fr) minmax(92px,0.6fr) minmax(92px,0.6fr) 86px"
-      : "56px minmax(70px,0.8fr) 50px minmax(80px,0.8fr) minmax(110px,1fr) 56px 56px minmax(96px,0.6fr) 86px";
+      ? "48px minmax(56px,0.6fr) 42px minmax(60px,0.6fr) minmax(92px,0.8fr) minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 48px 46px 46px minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 76px"
+      : "48px minmax(60px,0.6fr) 42px minmax(64px,0.6fr) minmax(96px,0.8fr) 46px 46px minmax(88px,0.5fr) 76px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
