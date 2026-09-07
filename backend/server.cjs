@@ -5607,7 +5607,7 @@ app.post("/api/reports/generate", async (req, res) => {
 
     const todoAll = getKvArray("manual_todo_list").filter(r => r && !r.deleted);
     const todoRegistered = todoAll
-      .filter(r => r.createdAt && r.createdAt >= periodStart && r.createdAt <= periodEnd)
+      .filter(r => r.createdAt && r.createdAt >= periodStart && r.createdAt <= periodEnd && r.status !== "완료")
       .map(r => ({ assignee: r.assignee, task: r.task, priority: r.priority, createdAt: r.createdAt }));
     const todoCompleted = todoAll
       .filter(r => r.status === "완료" && r.completedAt && r.completedAt >= periodStart && r.completedAt <= periodEnd)
