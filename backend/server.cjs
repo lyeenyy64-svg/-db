@@ -2076,11 +2076,13 @@ app.patch("/api/installments/schedules/:id", (req, res) => {
 
 // DELETE /api/installments/schedules/:id - 일정 삭제
 app.delete("/api/installments/schedules/:id", (req, res) => {
-  const sched = db.prepare("SELECT plan_id, due_month FROM installment_schedules WHERE id = ?").get(req.params.id);
+  const sched = db.prepare("SELECT plan_id, due_month, due_date FROM installment_schedules WHERE id = ?").get(req.params.id);
   if (!sched) return res.json({ ok: true });
   db.prepare("DELETE FROM installment_schedules WHERE id = ?").run(req.params.id);
-  if (sched.due_month) {
-    // 같은 월에 일정이 없어지면 날짜미정 플레이스홀더 생성 (해당 월 카드에서 사라지지 않도록)
+  // 지운 항목이 이미 날짜미정 플레이스홀더였다면(due_date 없음) 재생성하지 않는다 —
+  // 안 그러면 미정 항목을 삭제해도 똑같은 미정 항목이 바로 다시 생겨 삭제가 안 되는 것처럼 보인다.
+  if (sched.due_month && sched.due_date) {
+    // 날짜가 지정된 일정이 삭제되어 같은 월에 일정이 없어지면 날짜미정 플레이스홀더 생성 (해당 월 카드에서 사라지지 않도록)
     const leftInMonth = db.prepare("SELECT COUNT(*) AS cnt FROM installment_schedules WHERE plan_id = ? AND due_month = ?").get(sched.plan_id, sched.due_month);
     if (leftInMonth.cnt === 0) {
       const newId = "SCH" + Math.random().toString(36).slice(2, 11).toUpperCase();
