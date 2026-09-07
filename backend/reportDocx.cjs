@@ -11,6 +11,7 @@ function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 function fmtWon(n) { return `${Number(n || 0).toLocaleString("ko-KR")}원`; }
+const SCHEDULE_TYPE_LABEL = { leave: "연차", memo: "메모", meeting: "회의", trip: "출장", extMeeting: "외부미팅", minsa: "민사소송", legal: "법적절차", rehab: "회생/파산" };
 
 function run(text, { bold } = {}) {
   const rPr = bold ? "<w:rPr><w:b/></w:rPr>" : "";
@@ -89,7 +90,7 @@ function buildBodyXml(report) {
     r => [r.priority, r.task, r.assignee || "-", r.completedAt]));
   parts.push(subLabel("다음 기간 주요일정"));
   parts.push(tableBlock(["일정", "구분", "내용"], issues.nextPeriodSchedule,
-    r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, r.type, r.text]));
+    r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, SCHEDULE_TYPE_LABEL[r.type] || r.type, r.text]));
 
   // 3. 채무자관리
   parts.push(sectionTitle("3. 채무자관리"));

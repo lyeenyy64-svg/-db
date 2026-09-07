@@ -13770,7 +13770,7 @@ ${table(["분류", "업무내용", "담당자", "등록일"], issues.todoRegiste
 ${sub("이번 기간 완료된 업무")}
 ${table(["분류", "업무내용", "담당자", "완료일"], issues.todoCompleted, x => [x.priority, x.task, x.assignee || "-", x.completedAt])}
 ${sub("다음 기간 주요일정")}
-${table(["일정", "구분", "내용"], issues.nextPeriodSchedule, x => [`${x.date}${x.endDate && x.endDate !== x.date ? `~${x.endDate}` : ""}`, x.type, x.text])}
+${table(["일정", "구분", "내용"], issues.nextPeriodSchedule, x => [`${x.date}${x.endDate && x.endDate !== x.date ? `~${x.endDate}` : ""}`, SCHEDULE_TYPE_LABEL[x.type] || x.type, x.text])}
 
 <h2>3. 채무자관리</h2>
 ${sub("히스토리 경과기간 오래된 채무자 (담당자별 무작위 5명, 오래된 순 우선)")}
@@ -14268,7 +14268,7 @@ ${table(["채무자", "담당자", "납부기한", "예정액", "상태"], debto
               <SubTable label="다음 기간 주요일정"
                 columns={["일정", "구분", "내용"]} align={["right", "center", "left"]}
                 rows={activeReport.parsed.issues?.nextPeriodSchedule}
-                cells={r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, r.type, r.text]} />
+                cells={r => [`${r.date}${r.endDate && r.endDate !== r.date ? `~${r.endDate}` : ""}`, SCHEDULE_TYPE_LABEL[r.type] || r.type, r.text]} />
             </ReportSection>
 
             <ReportSection title="3. 채무자관리">
