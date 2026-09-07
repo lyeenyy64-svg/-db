@@ -3379,7 +3379,6 @@ export default function App() {
   const [agingModalBucket, setAgingModalBucket] = useState(null);
   const [agingModalReason, setAgingModalReason] = useState(null); // "noAnchor" | "noBalance"
   const [contactModalCell, setContactModalCell] = useState(null); // {assignee, bucketKey} | null
-  const [contactModalReason, setContactModalReason] = useState(null); // "noHistory"
   const [statuteModalBucket, setStatuteModalBucket] = useState(null);
   const [statuteModalReason, setStatuteModalReason] = useState(null); // "noAnchor"
   const [collapsedSections, setCollapsedSections] = useState(() => new Set());
@@ -4265,14 +4264,19 @@ export default function App() {
     const rows = [...config.assignees, "미배정"];
     const table = {};
     rows.forEach(a => { table[a] = {}; CONTACT_BUCKETS.forEach(b => { table[a][b.key] = { count: 0, items: [] }; }); });
-    const noHistoryItems = [];
     groups.forEach(({ rep, memberIds }) => {
       const a = config.assignees.includes(rep.assignee) ? rep.assignee : "미배정";
       const msList = memberIds
         .flatMap(id => { const m = debtorById[id]; return m ? getDebtorHistoryEntries(m) : []; })
         .map(e => toMs(normDate(e.date)))
         .filter(v => v != null);
-      if (!msList.length) { noHistoryItems.push(rep); return; }
+      // 히스토리 기록이 전혀 없는 채무자도 집계에서 빼지 말고 "3년 이내" 칸에 강제로 넣는다
+      if (!msList.length) {
+        const cell = table[a]["y3"];
+        cell.count++;
+        cell.items.push({ ...rep, contactDays: null, lastContactMs: null });
+        return;
+      }
       const lastContactMs = Math.max(...msList);
       const days = Math.max(0, Math.floor((nowMs - lastContactMs) / 86400000));
       const bucket = CONTACT_BUCKETS.find(b => days >= b.min && days < b.max) || CONTACT_BUCKETS[CONTACT_BUCKETS.length - 1];
@@ -4280,9 +4284,8 @@ export default function App() {
       cell.count++;
       cell.items.push({ ...rep, contactDays: days, lastContactMs });
     });
-    rows.forEach(a => CONTACT_BUCKETS.forEach(b => table[a][b.key].items.sort((x, y) => y.contactDays - x.contactDays)));
-    noHistoryItems.sort((x, y) => (x.name || "").localeCompare(y.name || ""));
-    return { rows, table, noHistoryCount: noHistoryItems.length, noHistoryItems };
+    rows.forEach(a => CONTACT_BUCKETS.forEach(b => table[a][b.key].items.sort((x, y) => (y.contactDays ?? Infinity) - (x.contactDays ?? Infinity))));
+    return { rows, table };
   }, [data, config.assignees]);
 
   // ─── 채권 소멸시효 현황 ─────────────────────────────────────
@@ -5003,11 +5006,6 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               ])}
             </div>
           </div>
-          {contactStats.noHistoryCount > 0 && (
-            <div onClick={() => setContactModalReason("noHistory")} style={{ marginTop: 10, fontSize: 11, color: "#000", cursor: "pointer", textDecoration: "underline" }}>
-              * 히스토리 기록이 없어 집계에서 제외된 채무자 {contactStats.noHistoryCount}명
-            </div>
-          )}
         </div>
         </>)}
         {contactModalCell && (() => {
@@ -5030,35 +5028,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
                         <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
                         <td style={{ padding: "8px 10px" }}>{d.category}</td>
-                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{fmtDate(d.lastContactMs)}</td>
-                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.contactDays}일</td>
-                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Overlay>
-          );
-        })()}
-        {contactModalReason && (() => {
-          const items = contactStats.noHistoryItems;
-          return (
-            <Overlay onClose={() => setContactModalReason(null)} wide>
-              <ModalHeader title={`히스토리 기록 없는 채무자 (${items.length}명)`} onClose={() => setContactModalReason(null)} />
-              <div style={{ maxHeight: 460, overflow: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "분류", "잔액"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {items.map(d => (
-                      <tr key={d.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
-                        onClick={() => { navigateToDebtor(d); setContactModalReason(null); }}
-                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        <td style={{ padding: "8px 10px", fontWeight: 500 }}>{d.name}</td>
-                        <td style={{ padding: "8px 10px" }}><BrandBadge code={d.brand} brands={config.brands} /></td>
-                        <td style={{ padding: "8px 10px" }}>{d.assignee}</td>
-                        <td style={{ padding: "8px 10px" }}>{d.category}</td>
+                        <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{d.lastContactMs != null ? fmtDate(d.lastContactMs) : "기록없음"}</td>
+                        <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: bucket.color }}>{d.contactDays != null ? `${d.contactDays}일` : "-"}</td>
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
                       </tr>
                     ))}
