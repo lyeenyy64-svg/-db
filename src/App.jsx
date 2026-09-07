@@ -13757,6 +13757,8 @@ function AiAnalysisView({
 
 <h2>1. 채권추심 현황</h2>
 ${table(["브랜드", "잔액", "기간 입금액"], brandRows, b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)])}
+${sub("추심목표관리 (담당자별 목표 대비 실적)")}
+${table(["담당자", "목표", "실적", "달성률"], issues.targetProrated, x => [x.assignee, fmtWon(x.target), fmtWon(x.collected), x.achieveRate != null ? `${x.achieveRate.toFixed(1)}%` : "-"])}
 
 <h2>2. 주요현안</h2>
 ${sub("강제집행 대상자 중 등록 1주 이상 미완료")}
@@ -14242,6 +14244,10 @@ ${table(["채무자", "담당자", "납부기한", "예정액", "상태"], debto
                 cells={b => b.isTotal
                   ? [<b>{b.brandName}</b>, <b>{fmtWon(b.balance)}</b>, <b>{fmtWon(b.periodCollected)}</b>]
                   : [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]} />
+              <SubTable label="추심목표관리 (담당자별 목표 대비 실적)"
+                columns={["담당자", "목표", "실적", "달성률"]} align={["center", "right", "right", "right"]}
+                rows={activeReport.parsed.issues?.targetProrated}
+                cells={r => [r.assignee, fmtWon(r.target), fmtWon(r.collected), r.achieveRate != null ? `${r.achieveRate.toFixed(1)}%` : "-"]} />
             </ReportSection>
 
             <ReportSection title="2. 주요현안">

@@ -70,6 +70,9 @@ function buildBodyXml(report) {
   ] : [];
   parts.push(tableBlock(["브랜드", "잔액", "기간 입금액"], brandRows,
     b => [b.brandName || b.brandCode, fmtWon(b.balance), fmtWon(b.periodCollected)]));
+  parts.push(subLabel("추심목표관리 (담당자별 목표 대비 실적)"));
+  parts.push(tableBlock(["담당자", "목표", "실적", "달성률"], issues.targetProrated,
+    r => [r.assignee, fmtWon(r.target), fmtWon(r.collected), r.achieveRate != null ? `${r.achieveRate.toFixed(1)}%` : "-"]));
 
   // 2. 주요현안
   parts.push(sectionTitle("2. 주요현안"));

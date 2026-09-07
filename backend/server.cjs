@@ -5800,7 +5800,7 @@ ${lines(targetProrated, t => `- ${t.assignee}: 목표 ${t.target.toLocaleString(
 [채무자 히스토리 샘플] (총 ${histCount}건, ${histDebtorCount}명)
 ${lines(histSamples, s => `- ${s}`, 40)}
 
-[CMS 사용] ${activityByUser.map(u => `${u.user_name} ${u.cnt}건`).join(", ") || "기록 없음"}
+[CMS 사용 — 담당자별 데이터 입력 건수(접속·조회 시간이 아니라 실제 저장한 액션 수)] ${activityByUser.map(u => `${u.user_name} ${u.cnt}건`).join(", ") || "기록 없음"}
 
 [채무자 히스토리 — 차주(${nextStart}~${nextEnd}) 언급된 약속] (${nextPeriodPromises.length}건)
 ${lines(nextPeriodPromises, p => `- ${p.debtorName}: ${p.resolvedDate} "${p.snippet}" [${p.source}]`, 30)}
@@ -5815,7 +5815,7 @@ ${lines(nextPeriodPromises, p => `- ${p.debtorName}: ${p.resolvedDate} "${p.snip
 1) 채무자 히스토리 — 협상·약속 이행, 연락 상태 등에서 잘된 점/우려되는 점
 2) 주요현안 — 강제집행·신용조회 지연 대응, 업무 등록·완료 속도에서 잘된 점/놓친 점
 3) 주요일정 — 다음 기간 일정 관련 체크할 사항
-4) CMS 사용 — 담당자 간 활동 편중이나 저활동 등 특이 패턴(활동량으로 성과 순위를 매기지는 마세요)
+4) CMS 사용 — 담당자 간 데이터 입력 건수 편중이나 저입력 등 특이 패턴("활동량"이라는 모호한 표현 대신 "데이터 입력 건수"라고 구체적으로 쓰고, 이 건수로 성과 순위를 매기지는 마세요)
 5) 민사소송·법적절차 — 이번 기간 신규 접수·사건 진행상황 메모에서 잘된 점/우려되는 점. 단 여기 실린 데이터는 "이번 기간 신규 등록·메모"만이고 기존에 진행 중인 전체 소송 건수를 반영하지 않으니, 그 범위를 벗어난 판단(예: 전체 소송 현황이 어떻다는 식)은 하지 마세요
 6) 추심목표관리 — 담당자별 목표 대비 실적 달성률에서 잘된 점/우려되는 점. 목표가 설정된 담당자가 없으면 "목표 미설정"이라고 쓰세요
 
@@ -5855,7 +5855,7 @@ ${digest}`;
 
     const content = JSON.stringify({
       collection: { brands },
-      issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule },
+      issues: { forcedExecOverdue, creditCheckOverdue, negotiations, todoRegistered, todoCompleted, nextPeriodSchedule, targetProrated },
       debtorMgmt: { contactAgingByAssignee, installmentOverduePrevPeriod, installmentThisPeriod, installmentNextPeriod },
       overview: overviewRows,
       checklist: nextPeriodChecklist,
