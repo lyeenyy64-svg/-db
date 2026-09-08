@@ -4701,7 +4701,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     const maxBrand = Math.max(...config.brands.map(b => stats.byBrand[b.code]?.remaining || 0));
     return (
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        <SectionHeader sectionId="bonds">채권현황</SectionHeader>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <SectionHeader sectionId="bonds">채권현황</SectionHeader>
+          <a href="https://crm.ax.barogo.io" target="_blank" rel="noopener noreferrer"
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: "var(--card)", border: "1px solid var(--brd)", color: "var(--tx)", fontSize: 13, fontWeight: 700, textDecoration: "none" }}
+            onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+            onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}>
+            🏢 사업부 CRM ↗
+          </a>
+        </div>
         {!collapsedSections.has("bonds") && (<>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
