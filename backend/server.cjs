@@ -137,6 +137,12 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
     ["resident_address_lng",       "REAL"],
     ["resident_source_date",       "TEXT"],
     ["credit_source_date",         "TEXT"],
+    // 사람이 신용조회/초본 주소와 무관하게 직접 입력하는 주소 — 있으면 두 자동추출
+    // 주소보다 항상 우선해서 채무자 위치 지도에 쓰인다. (동명이인 제외로 초본/CB 섹션이
+    // 가려져도 이 값은 별도 컬럼이라 영향받지 않는다.)
+    ["manual_address",             "TEXT"],
+    ["manual_address_lat",         "REAL"],
+    ["manual_address_lng",         "REAL"],
     // 이름만으로 CB/초본 문서를 찾다가 동명이인(다른 사람) 데이터가 섞였다고 사람이 직접
     // 확인한 경우, 그 항목의 이름매칭 자동조회/표시를 끈다. 기존 값은 지우지 않고 그대로
     // 두므로(숨김만) 다시 끄면(제외 해제) 즉시 원래대로 복원된다.
@@ -1180,6 +1186,9 @@ app.get("/api/debtors", (req, res) => {
            latest_address AS latestAddress,
            latest_address_lat AS latestAddressLat,
            latest_address_lng AS latestAddressLng,
+           manual_address AS manualAddress,
+           manual_address_lat AS manualAddressLat,
+           manual_address_lng AS manualAddressLng,
            resident_address AS residentAddress,
            resident_registered_date AS residentRegisteredDate,
            resident_note AS residentNote,
@@ -2669,6 +2678,7 @@ const DEBTOR_FIELD_MAP = {
   salesRep:"sales_rep",keyNotes:"key_notes",
   principalBalance:"principal_balance",adjustment:"adjustment",collectedAmount:"collected_amount",
   latestAddress:"latest_address",
+  manualAddress:"manual_address",
   residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
   residentNote:"resident_note",creditPhone:"credit_phone",
 };
@@ -2684,6 +2694,7 @@ const DEBTOR_FIELD_LABELS = {
   salesRep:"영업담당자",keyNotes:"주요사항",
   principalBalance:"원채무액",adjustment:"추가법무비용",collectedAmount:"회수액",
   latestAddress:"최신 주소",
+  manualAddress:"직접 입력 주소",
   residentAddress:"최근 주소(초본)",residentRegisteredDate:"등록일",
   residentNote:"비고(세대주및관계)",creditPhone:"연락처(CB)",
 };
@@ -2722,6 +2733,9 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
   }
   if (changedJsKeys.includes('residentAddress')) {
     fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
+  }
+  if (changedJsKeys.includes('manualAddress')) {
+    fields.push("manual_address_lat = NULL", "manual_address_lng = NULL");
   }
   // 대위변제일을 사람이 비워서 저장하면 "명시적으로 지움" 플래그를 세워, 대위변제증명서
   // OCR 자동추출 결과로 다시 채워지지 않게 한다. 값을 다시 입력하면 플래그는 해제된다.
@@ -4916,7 +4930,10 @@ app.get("/api/config/kakao-map", (req, res) => {
 
 // 신용조회(CB) 주소와 초본 주소 중 채무자 위치 지도에 쓸 "더 최근" 주소를 고른다.
 // 기준일이 둘 다 있으면 더 늦은 날짜 쪽, 하나만 있으면 그쪽, 둘 다 없으면 있는 주소.
+// 사람이 직접 입력한 주소(manual_address)가 있으면 항상 최우선 — 동명이인 제외 등으로
+// 신용조회/초본 쪽이 화면에서 가려지는 것과 무관하게 이 값이 채무자 위치를 결정한다.
 function pickAddressSource(row) {
+  if (row.manual_address && String(row.manual_address).trim()) return "manual";
   const hasResident = !!(row.resident_address && String(row.resident_address).trim());
   const hasCredit = !!(row.latest_address && String(row.latest_address).trim());
   if (!hasResident && !hasCredit) return null;
@@ -4935,6 +4952,7 @@ app.get("/api/debtors/locations", (req, res) => {
       WITH addr_pick AS (
         SELECT *,
           CASE
+            WHEN manual_address IS NOT NULL AND manual_address != '' THEN 'manual'
             WHEN resident_address IS NOT NULL AND resident_address != '' AND (
               latest_address IS NULL OR latest_address = '' OR
               (resident_issued_date IS NOT NULL AND (credit_queried_date IS NULL OR resident_issued_date > credit_queried_date))
@@ -4945,11 +4963,11 @@ app.get("/api/debtors/locations", (req, res) => {
       SELECT id, name, brand_code AS brand, brand_name AS brandName, category, assignee,
              collection_status AS collectionStatus,
              addr_source AS addressSource,
-             CASE WHEN addr_source = 'resident' THEN resident_address ELSE latest_address END AS latestAddress,
-             CASE WHEN addr_source = 'resident' THEN resident_address_lat ELSE latest_address_lat END AS lat,
-             CASE WHEN addr_source = 'resident' THEN resident_address_lng ELSE latest_address_lng END AS lng
+             CASE WHEN addr_source = 'manual' THEN manual_address WHEN addr_source = 'resident' THEN resident_address ELSE latest_address END AS latestAddress,
+             CASE WHEN addr_source = 'manual' THEN manual_address_lat WHEN addr_source = 'resident' THEN resident_address_lat ELSE latest_address_lat END AS lat,
+             CASE WHEN addr_source = 'manual' THEN manual_address_lng WHEN addr_source = 'resident' THEN resident_address_lng ELSE latest_address_lng END AS lng
       FROM addr_pick
-      WHERE (latest_address IS NOT NULL AND latest_address != '') OR (resident_address IS NOT NULL AND resident_address != '')
+      WHERE (latest_address IS NOT NULL AND latest_address != '') OR (resident_address IS NOT NULL AND resident_address != '') OR (manual_address IS NOT NULL AND manual_address != '')
     `).all();
     res.json({ ok: true, debtors: rows });
   } catch (e) { res.status(500).json({ ok: false, debtors: [], error: e.message }); }
@@ -4961,6 +4979,7 @@ async function geocodeDebtorById(debtorId) {
   const debtor = db.prepare(
     `SELECT id, latest_address, latest_address_lat AS lat, latest_address_lng AS lng,
             resident_address, resident_address_lat AS residentLat, resident_address_lng AS residentLng,
+            manual_address, manual_address_lat AS manualLat, manual_address_lng AS manualLng,
             resident_issued_date, credit_queried_date
      FROM debtors WHERE id = ?`
   ).get(debtorId);
@@ -4969,9 +4988,9 @@ async function geocodeDebtorById(debtorId) {
   const source = pickAddressSource(debtor);
   if (!source) return { ok: false, error: "주소 없음" };
 
-  const address = source === "resident" ? debtor.resident_address : debtor.latest_address;
-  const cachedLat = source === "resident" ? debtor.residentLat : debtor.lat;
-  const cachedLng = source === "resident" ? debtor.residentLng : debtor.lng;
+  const address = source === "manual" ? debtor.manual_address : source === "resident" ? debtor.resident_address : debtor.latest_address;
+  const cachedLat = source === "manual" ? debtor.manualLat : source === "resident" ? debtor.residentLat : debtor.lat;
+  const cachedLng = source === "manual" ? debtor.manualLng : source === "resident" ? debtor.residentLng : debtor.lng;
   if (cachedLat != null && cachedLng != null) {
     return { ok: true, lat: cachedLat, lng: cachedLng, source: "cache", addressSource: source };
   }
@@ -4996,7 +5015,9 @@ async function geocodeDebtorById(debtorId) {
 
   const lat = parseFloat(doc.y);
   const lng = parseFloat(doc.x);
-  if (source === "resident") {
+  if (source === "manual") {
+    db.prepare("UPDATE debtors SET manual_address_lat = ?, manual_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
+  } else if (source === "resident") {
     db.prepare("UPDATE debtors SET resident_address_lat = ?, resident_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
   } else {
     db.prepare("UPDATE debtors SET latest_address_lat = ?, latest_address_lng = ? WHERE id = ?").run(lat, lng, debtor.id);
@@ -5070,7 +5091,8 @@ async function runAddressBatch(respectNightWindow) {
   const geoTargets = db.prepare(
     `SELECT id FROM debtors
      WHERE (latest_address IS NOT NULL AND latest_address != '' AND latest_address_lat IS NULL)
-        OR (resident_address IS NOT NULL AND resident_address != '' AND resident_address_lat IS NULL)`
+        OR (resident_address IS NOT NULL AND resident_address != '' AND resident_address_lat IS NULL)
+        OR (manual_address IS NOT NULL AND manual_address != '' AND manual_address_lat IS NULL)`
   ).all();
   addressBatchStatus.phase = "geocode";
   addressBatchStatus.total = geoTargets.length;
