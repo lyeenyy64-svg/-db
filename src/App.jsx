@@ -2303,11 +2303,11 @@ const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComple
 };
 
 const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
-  const cols = ["채무자명", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
-  const sortFields = ["debtorName", "brand", "execTitleDate", "residentCopyDate", "creditOk", "assignee", "registeredDate", "resolvedDate", null, null];
+  const cols = ["채무자명", "강제집행 내용", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
+  const sortFields = ["debtorName", "executionContent", "brand", "execTitleDate", "residentCopyDate", "creditOk", "assignee", "registeredDate", "resolvedDate", null, null];
   // 채무자명이 minWidth만 있고 다른 칸엔 폭 제한이 없어, 남는 공간을 전부 채무자명 칸이
   // 가져가며 유독 넓어 보이던 문제 수정 — 각 칸에 비율에 맞는 폭을 지정
-  const colWidths = [110, 90, 110, 110, 70, 90, 110, 110, 110, 46];
+  const colWidths = [110, 180, 90, 110, 110, 70, 90, 110, 110, 110, 46];
   const approvedUsers = users.filter(u => u.approved);
   const [viewMode, setViewMode] = useState("all");
   const [sortField, setSortField] = useState(null);
@@ -2321,7 +2321,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
   return (
     <IssueTableCard title="강제집행 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
-      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false })}>
+      onAdd={() => addKeyIssue("forcedExecutions", { id: uid("FEX"), debtorName: "", executionContent: "", brand: "", execTitleDate: "", residentCopyDate: "", creditOk: "", assignee: "", registeredDate: today(), resolvedDate: "", result: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} onClick={sortFields[i] ? () => handleSort(sortFields[i]) : undefined} style={{ ...issueTh, width: colWidths[i], cursor: sortFields[i] ? "pointer" : "default", userSelect: "none" }}>{h}{sortField === sortFields[i] ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>)}</tr></thead>
       <tbody>
         {shown.length === 0 && <tr><td colSpan={cols.length} style={{ ...issueTd, color: "var(--tm)" }}>{emptyMsg}</td></tr>}
@@ -2334,16 +2334,17 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
           return (
             <tr key={r.id}>
               <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" /></td>
-              <td style={strike({ width: colWidths[1] })}>
+              <td style={strike({ width: colWidths[1] })}><KoreanInput value={r.executionContent || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { executionContent: e.target.value })} style={issueInp} placeholder="강제집행 내용" />{strikeLine}</td>
+              <td style={strike({ width: colWidths[2] })}>
                 <select value={r.brand || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[2] })}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[3] })}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[4] })}>
+              <td style={strike({ width: colWidths[3] })}><input type="date" value={r.execTitleDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { execTitleDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[4] })}><input type="date" value={r.residentCopyDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { residentCopyDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[5] })}>
                 <select value={r.creditOk || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { creditOk: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-</option>
                   <option value="O">O</option>
@@ -2351,20 +2352,20 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[5] })}>
+              <td style={strike({ width: colWidths[6] })}>
                 <select value={r.assignee || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { assignee: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
                   <option value="">-- 선택 --</option>
                   {approvedUsers.map(u => <option key={u.id || u.name} value={u.name}>{u.name}</option>)}
                 </select>
                 {strikeLine}
               </td>
-              <td style={strike({ width: colWidths[6] })}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[7] })}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
-              <td style={strike({ width: colWidths[8], maxWidth: colWidths[8] })}>
+              <td style={strike({ width: colWidths[7] })}><input type="date" value={r.registeredDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { registeredDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[8] })}><input type="date" value={r.resolvedDate || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { resolvedDate: e.target.value })} style={issueInp} />{strikeLine}</td>
+              <td style={strike({ width: colWidths[9], maxWidth: colWidths[9] })}>
                 <button onClick={() => updateKeyIssue("forcedExecutions", r.id, { completed: !r.completed })}
                   style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: r.completed ? "#ef4444" : "#3b82f6", color: "#fff", border: `1px solid ${r.completed ? "#ef4444" : "#3b82f6"}` }}>{r.completed ? "복귀" : "완료"}</button>
               </td>
-              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[9], textAlign: "center" })}>
+              <td style={strike({ width: viewMode === "trash" ? 88 : colWidths[10], textAlign: "center" })}>
                 {canDelete && (viewMode === "trash"
                   ? <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
                       <button onClick={onRestoreClick} style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 5, cursor: "pointer", background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>복귀</button>
