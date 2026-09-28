@@ -4726,7 +4726,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>담당자별 현황</div>
               <div style={{ display: "flex", gap: 10 }}>
                 {config.assignees.map(a => (
-                  <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setTab("debtors"); }}
+                  <div key={a} onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter(a); setDebtorsSubTab("채무자 목록"); setTab("debtors"); }}
                     style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
@@ -4736,7 +4736,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </div>
                 ))}
                 {stats.unassignedCount > 0 && (
-                  <div onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("__unassigned__"); setTab("debtors"); }}
+                  <div onClick={() => { setQ(""); setBrandFilter("전체"); setCatFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("__unassigned__"); setDebtorsSubTab("채무자 목록"); setTab("debtors"); }}
                     style={{ flex: 1, textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, border: "1px dashed var(--brd)", cursor: "pointer" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
@@ -4752,7 +4752,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>분류별 현황</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 20 }}>
               {DASHBOARD_GROUPS.map(g => (
-                <div key={g.label} onClick={() => { setQ(""); setBrandFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("전체"); setCatFilter(g.cats[0]); setTab("debtors"); }}
+                <div key={g.label} onClick={() => { setQ(""); setBrandFilter("전체"); setStatusFilter("전체"); setAssigneeFilter("전체"); setCatFilter(g.cats[0]); setDebtorsSubTab("채무자 목록"); setTab("debtors"); }}
                   style={{ textAlign: "center", padding: 12, background: "var(--bg)", borderRadius: 8, cursor: "pointer" }}
                   onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                   onMouseLeave={e => e.currentTarget.style.background = "var(--bg)"}>
