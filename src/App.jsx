@@ -4415,9 +4415,14 @@ export default function App() {
         // date는 "일이 있었던 날"이라 사용자가 과거 날짜로 임의 지정할 수 있어 정렬 기준으로
         // 쓰면 방금 쓴 글이 맨 위로 안 올라올 수 있다 — 실제로 시스템에 기입한 시각인
         // createdAt을 우선 쓰고, createdAt이 없는(예전) 항목만 date로 대신한다.
-        const histMsList = getHistM(d.id).map(h => toMs(h.createdAt || normDate(h.date))).filter(v => v != null);
+        // 그룹으로 묶인 채무자(같은 사람의 여러 항목, subRows)는 대표 항목(d) 하나만 보면
+        // 안 된다 — 히스토리는 실제로 글을 쓴 그 항목의 id로 저장되므로, 묶인 항목 전체를
+        // 합쳐서 봐야 대표가 아닌 다른 항목에 쓴 히스토리도 "최근 히스토리"에 반영된다.
+        const members = (d.subRows && d.subRows.length > 1) ? d.subRows : [d];
+        const histMsList = members.flatMap(m => getHistM(m.id)).map(h => toMs(h.createdAt || normDate(h.date))).filter(v => v != null);
         const lastHistoryMs = histMsList.length ? Math.max(...histMsList) : null;
-        const lastModifiedMs = toMs(d.updatedAt);
+        const modMsList = members.map(m => toMs(m.updatedAt)).filter(v => v != null);
+        const lastModifiedMs = modMsList.length ? Math.max(...modMsList) : null;
         const lastTouchedMs = lastHistoryMs != null && lastModifiedMs != null
           ? Math.max(lastHistoryMs, lastModifiedMs)
           : (lastHistoryMs ?? lastModifiedMs);
