@@ -6209,14 +6209,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     // 입금내역도 같은 사람의 다른 항목에 연결된 입금까지 합쳐서 보여준다.
     const debtorPayments = data.payments.filter(p => groupMemberIds.includes(p.debtorId));
     const _normD = normNameForMatch(d.name);
+    // 회생파산/법적절차내역도 같은 사람의 다른 항목에 연결된 것까지 합쳐서 보여준다.
     const debtorRehabs = data.rehabilitations.filter(r =>
-      r.debtorId === d.id || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand)
+      groupMemberIds.includes(r.debtorId) || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand)
     );
     const debtorLegalAll = [
-      ...data.legalCases.filter(c => c.debtorId === d.id),
-      ...data.assetDisclosures.filter(c => c.debtorId === d.id),
-      ...(data.minsaCases || []).filter(c => c.debtorId === d.id),
-      ...(data.complaints || []).filter(c => c.debtorId === d.id).map(c => ({
+      ...data.legalCases.filter(c => groupMemberIds.includes(c.debtorId)),
+      ...data.assetDisclosures.filter(c => groupMemberIds.includes(c.debtorId)),
+      ...(data.minsaCases || []).filter(c => groupMemberIds.includes(c.debtorId)),
+      ...(data.complaints || []).filter(c => groupMemberIds.includes(c.debtorId)).map(c => ({
         ...c, type: "형사고소", caseNumber: c.charge, court: c.policeStation,
         progressStatus: c.status || "수사중",
       })),
@@ -6274,15 +6275,20 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       }
     };
 
+    // 연결서류/관련 데이터는 채무자별 단일 조회 API라, 같은 사람의 다른 항목까지 합치려면
+    // 그룹 멤버 전체에 대해 각각 조회해서 프론트에서 합쳐야 한다.
+    const reloadLinkedDocs = async () => {
+      const lists = await Promise.all(groupMemberIds.map(id => fetch(`/api/documents/${id}`).then(r => r.json()).catch(() => [])));
+      setLinkedDocs(lists.flat().sort((a, b) => String(b.linked_at || "").localeCompare(String(a.linked_at || ""))));
+    };
+    const reloadRelatedData = async () => {
+      const lists = await Promise.all(groupMemberIds.map(id => fetch(`/api/related-data/${id}?viewer=${encodeURIComponent(currentUser?.name || "")}`).then(r => r.json()).catch(() => [])));
+      setRelatedData(lists.flat().sort((a, b) => String(b.occurred_at || "").localeCompare(String(a.occurred_at || ""))));
+    };
     useEffect(() => {
-      if (detailTab === "연결서류") {
-        fetch(`/api/documents/${d.id}`).then(r => r.json()).then(rows => setLinkedDocs(rows)).catch(() => setLinkedDocs([]));
-      }
-      if (detailTab === "관련 데이터") {
-        setOpenRelSrc({});
-        fetch(`/api/related-data/${d.id}?viewer=${encodeURIComponent(currentUser?.name || "")}`).then(r => r.json()).then(rows => setRelatedData(rows)).catch(() => setRelatedData([]));
-      }
-    }, [detailTab, d.id]);
+      if (detailTab === "연결서류") reloadLinkedDocs();
+      if (detailTab === "관련 데이터") { setOpenRelSrc({}); reloadRelatedData(); }
+    }, [detailTab, groupMemberIds.join(",")]);
 
     const toggleRelatedDataShare = async (row) => {
       const shared = !row.shared;
@@ -6312,7 +6318,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           }),
         }).then(r => r.json());
         if (rows.error) { showToast(`추가 실패: ${rows.error}`); setRelAddSaving(false); return; }
-        setRelatedData(rows);
+        await reloadRelatedData();
         setOpenRelSrc(p => ({ ...p, [f.source]: true }));
         setRelAddForm({ source: f.source, title: "", summary: "", url: "", occurredAt: today() });
         setRelAddOpen(false);
@@ -6332,8 +6338,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
     const linkDoc = async (cand) => {
       await fetch(`/api/documents/${d.id}/link`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ filePath: cand.filePath, fileName: cand.filename, docLabel: cand.docType, matchType: cand.matchType, matchedName: cand.matchedName, linkedBy: currentUser?.name }) });
-      const rows = await fetch(`/api/documents/${d.id}`).then(r => r.json());
-      setLinkedDocs(rows);
+      await reloadLinkedDocs();
       setScanResult(prev => prev ? { ...prev, candidates: prev.candidates.filter(c => c.filePath !== cand.filePath) } : prev);
       showToast("서류 연결 완료");
     };
@@ -6354,8 +6359,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         if (currentUser?.name) fd.append("linkedBy", currentUser.name);
         const r = await fetch(`/api/documents/${d.id}/upload`, { method: "POST", body: fd }).then(x => x.json());
         if (!r.ok) { showToast(r.error || "업로드 실패"); return; }
-        const rows = await fetch(`/api/documents/${d.id}`).then(x => x.json());
-        setLinkedDocs(rows);
+        await reloadLinkedDocs();
         showToast("서류 등록 완료");
       } catch (e) {
         showToast(`업로드 실패: ${e.message}`);
@@ -6810,7 +6814,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           )}
         </div>
 
-        {isGrouped && ["히스토리", "입금내역", "분할상환"].includes(detailTab) && (
+        {isGrouped && ["히스토리", "입금내역", "분할상환", "법적절차내역", "회생파산", "연결서류", "관련 데이터"].includes(detailTab) && (
           <div style={{ fontSize: 11, color: "var(--tm)", padding: "2px 2px" }}>
             📎 같은 사람의 채무 항목 {groupMembers.length}건을 통합해서 보여줍니다 — 코드 {groupMembers.map(m => m.hubCode).filter(Boolean).join(", ")}
           </div>
@@ -6994,6 +6998,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   <Badge status={c.type} />
                   <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{c.caseNumber}</span>
                   <span style={{ fontSize: 12, color: "var(--ts)" }}>{c.court}</span>
+                  {isGrouped && <span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "var(--bg2)", color: "var(--tm)" }}>{codeByMemberId[c.debtorId] || "-"}</span>}
                 </div>
                 <Badge status={c.progressStatus || c.status || "진행"} small />
               </div>
@@ -7011,7 +7016,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         </div>}
 
         {detailTab === "회생파산" && <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span></div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
+          {debtorRehabs.map(r => (<div key={r.id} style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><Badge status={r.type} /><span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{r.caseNumber}</span><span style={{ fontSize: 12, color: "var(--ts)" }}>{r.court}</span>{isGrouped && <span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "var(--bg2)", color: "var(--tm)" }}>{codeByMemberId[r.debtorId] || "-"}</span>}</div>{r.dismissed && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--err)" }}>폐지</span>}</div><div style={{ display: "grid", gridTemplateColumns: isNarrow ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 10 }}>{[{ l: "채무액", v: fmt(r.debtAmount) },{ l: "승인액", v: fmt(r.approvedAmount) },{ l: "월상환액", v: fmt(r.monthlyPayment) },{ l: "현재 회차", v: r.currentRound },{ l: "변제계획 인가", v: r.planApproved ? "O" : "X" },{ l: "미납 여부", v: r.overdueStatus || "정상" }].map((x, i) => (<div key={i} style={{ padding: 8, background: "var(--bg)", borderRadius: 6 }}><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 2 }}>{x.l}</div><div className="mono" style={{ fontSize: 12, fontWeight: 600 }}>{x.v}</div></div>))}</div>{r.repaymentNote && <div style={{ marginTop: 10, fontSize: 12, color: "var(--ts)", padding: 8, background: "var(--bg)", borderRadius: 6 }}>{r.repaymentNote}</div>}</div>))}
           {debtorRehabs.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>회생/파산 내역 없음</div>}
         </div>}
 
@@ -7125,6 +7130,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       {doc.file_name}
                     </a>
                     <div style={{ display: "flex", gap: 8, marginTop: 2, color: "var(--ts)", fontSize: 10 }}>
+                      {isGrouped && <span className="mono" style={{ padding: "1px 6px", borderRadius: 8, background: "var(--bg2)" }}>{codeByMemberId[doc.debtor_id] || "-"}</span>}
                       {doc.match_type === "guarantor" && <span style={{ color: "#f59e0b", fontWeight: 600 }}>보증인 ({doc.matched_name})</span>}
                       {doc.match_type === "manual" && <span style={{ color: "#10b981", fontWeight: 600 }}>직접등록</span>}
                       {doc.linked_by && <span>연결: {doc.linked_by}</span>}
@@ -7186,7 +7192,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           {!relatedData && <div style={{ padding: 20, textAlign: "center", color: "var(--tm)", fontSize: 12 }}>불러오는 중...</div>}
           {relatedData && (() => {
             const SRC_LABEL = { notion: "노션", slack: "슬랙", email: "이메일" };
-            const colWidths = [90, undefined, 60, 50, 40];
+            const colWidths = isGrouped ? [50, 90, undefined, 60, 50, 40] : [90, undefined, 60, 50, 40];
             return (
               <>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -7253,12 +7259,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <div style={{ flex: 1, overflowX: "auto" }}>
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                           <thead><tr>
-                            {["년월일", "내용", "출처", "공유", "삭제"].map((h, i) => <th key={h} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}
+                            {[...(isGrouped ? ["코드"] : []), "년월일", "내용", "출처", "공유", "삭제"].map((h, i) => <th key={h} style={{ ...issueTh, ...(colWidths[i] ? { width: colWidths[i] } : {}) }}>{h}</th>)}
                           </tr></thead>
                           <tbody>
-                            {rows.length === 0 && <tr><td colSpan={5} style={{ ...issueTd, color: "var(--tm)" }}>데이터 없음</td></tr>}
+                            {rows.length === 0 && <tr><td colSpan={isGrouped ? 6 : 5} style={{ ...issueTd, color: "var(--tm)" }}>데이터 없음</td></tr>}
                             {rows.map(row => (
                               <tr key={row.id}>
+                                {isGrouped && <td style={issueTd}><span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "var(--bg2)" }}>{codeByMemberId[row.debtor_id] || "-"}</span></td>}
                                 <td style={issueTd}>{row.occurred_at ? row.occurred_at.slice(0, 10) : "-"}</td>
                                 <td style={{ ...issueTd, textAlign: "left" }}>
                                   <div style={{ fontWeight: 600 }}>{row.title}</div>
