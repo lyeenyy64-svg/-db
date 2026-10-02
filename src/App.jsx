@@ -77,6 +77,16 @@ const groupDistinctPeople = (arr) => {
   }
   return groups;
 };
+// 채무자 상세: 같은 사람의 다른 채무 항목들(자기 자신 포함)을 돌려준다. groupDistinctPeople과
+// 동일한 동일인 판정 기준이라 채무자 목록의 "+항목" 그룹핑과 항상 일치한다 — 히스토리/
+// 입금내역/분할상환 탭을 "그 사람 전체"로 통합해서 보여줄 때 쓴다.
+const getGroupMembers = (d, allDebtors) => {
+  const pool = allDebtors.filter(x => x.brand === d.brand);
+  const grp = groupDistinctPeople(pool).find(g => g.memberIds.includes(d.id));
+  if (!grp) return [d];
+  const byId = {}; pool.forEach(x => { byId[x.id] = x; });
+  return grp.memberIds.map(id => byId[id] || (id === d.id ? d : null)).filter(Boolean);
+};
 // "+항목"(같은 사람에게 항목 하나 더 추가)도 신규 채무자 등록(POST /api/debtors)과 똑같은
 // 경로를 타서 등록일(createdAt) 기준 집계에 같이 잡힌다 — 실제로는 새 사람이 아니라 기존
 // 사람의 추가 항목/분류변경이라 "신규 등록 현황"에는 넣으면 안 된다. countDistinctPeople과
@@ -6052,10 +6062,18 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
   // ─── Debtor Detail ──────────────────────────────────────
   const DebtorDetail = useStableComponent(({ d }) => {
-    // ── 히스토리 로컬 state (hooks must be first) ──
-    const [histManual, setHistManual_] = useState(() => getHistM(d.id));
-    const [histEdits,  setHistEdits_]  = useState(() => getHistE(d.id));
-    const [histDeleted,setHistDeleted_]= useState(() => getHistD(d.id));
+    // 같은 사람의 다른 채무 항목(채무자 목록의 "+항목" 그룹핑과 동일 기준) — 2건 이상이면
+    // 히스토리/입금내역/분할상환을 이 사람 전체로 통합해서 보여준다.
+    const groupMembers = useMemo(() => getGroupMembers(d, data.debtors), [d.id, data.debtors]);
+    const groupMemberIds = useMemo(() => groupMembers.map(m => m.id), [groupMembers]);
+    const isGrouped = groupMembers.length > 1;
+    const codeByMemberId = useMemo(() => { const m = {}; groupMembers.forEach(g => { m[g.id] = g.hubCode; }); return m; }, [groupMembers]);
+
+    // ── 히스토리: 그룹 전체(멤버별 스토리지)를 매번 다시 읽어 합친다 — histTick은 추가/수정/
+    // 삭제 직후 재계산을 강제하기 위한 더미 카운터 (대표 항목이 아닌 다른 항목에 쓴 내용도
+    // 즉시 반영되게 하려면 로컬 state 하나만으로는 부족하다) ──
+    const [histTick, setHistTick] = useState(0);
+    const bumpHist = () => setHistTick(t => t + 1);
     const [histForm,   setHistForm]    = useState(null);
     const [analyzing, setAnalyzing] = useState(false);
     const analyzedIdsRef = useRef(new Set());
@@ -6113,22 +6131,25 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       runAnalysis(d);
     }, [d.id, autoCreditScores[d.id]]);
 
-    const updHistM = (arr) => { saveHistM(d.id, arr); setHistManual_(arr); };
-    const updHistE = (obj) => { saveHistE(d.id, obj); setHistEdits_(obj); };
-    const updHistD = (arr) => { saveHistD(d.id, arr); setHistDeleted_(arr); };
-
-    const debtorHistory = d.history || [];
-    const deletedSet = new Set(histDeleted);
-    const allHistory = [
-      ...debtorHistory
-        .map((h, i) => {
-          if (deletedSet.has(i)) return null;
-          const ed = histEdits[`e_${i}`];
-          return { key: `e_${i}`, date: ed?.date ?? h.date, content: ed?.content ?? h.content, type: ed?.type ?? h.type, isExcel: true, origIdx: i };
-        })
-        .filter(Boolean),
-      ...histManual.map(h => ({ key: `m_${h.id}`, date: h.date, content: h.content, type: h.type, isManual: true, manualId: h.id, createdBy: h.createdBy })),
-    ].sort((a, b) => b.date.localeCompare(a.date));
+    // 그룹에 속한 모든 항목(대표 항목이 아니라도)의 히스토리를 합쳐서 보여준다 — 각 행에
+    // sourceId(실제로 그 글이 저장된 채무 항목의 id)를 남겨둬서, 수정/삭제 시 정확히 그
+    // 항목의 스토리지에 다시 써야 한다(아무 항목이나 d.id로 덮어쓰면 다른 항목 기록이 된다).
+    const allHistory = useMemo(() => {
+      const rows = groupMembers.flatMap(m => {
+        const medits = getHistE(m.id);
+        const mdeleted = new Set(getHistD(m.id));
+        const excel = (m.history || [])
+          .map((h, i) => {
+            if (mdeleted.has(i)) return null;
+            const ed = medits[`e_${i}`];
+            return { key: `${m.id}_e_${i}`, kind: `e_${i}`, sourceId: m.id, sourceCode: m.hubCode, date: ed?.date ?? h.date, content: ed?.content ?? h.content, type: ed?.type ?? h.type, isExcel: true, origIdx: i };
+          })
+          .filter(Boolean);
+        const manual = getHistM(m.id).map(h => ({ key: `${m.id}_m_${h.id}`, kind: `m_${h.id}`, sourceId: m.id, sourceCode: m.hubCode, date: h.date, content: h.content, type: h.type, isManual: true, manualId: h.id, createdBy: h.createdBy }));
+        return [...excel, ...manual];
+      });
+      return rows.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+    }, [groupMembers, histTick]);
 
     // 통계 상세("기타 저장")에서 "이동"을 누르면 이 채무자의 히스토리 탭이 열리는데, 어느
     // 행이 그 저장 건인지 직접 찾아야 하는 문제가 있었다 — 날짜/내용이 일치하는 행을
@@ -6155,32 +6176,38 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     }, [histHighlight, detailTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+    // 새 히스토리는 지금 열어본 항목(d)에 저장한다 — 어느 항목을 보고 있었든 통합 목록에는
+    // 바로 합쳐져 보인다. 수정/삭제는 글이 실제로 저장된 항목(h.sourceId)을 그대로 따라간다.
     const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "", type: config.activityTypes[0] || "" });
-    const openEdit = (h) => setHistForm({ mode: "edit", key: h.key, date: h.date, content: h.content, type: h.type || config.activityTypes[0] || "" });
+    const openEdit = (h) => setHistForm({ mode: "edit", sourceId: h.sourceId, kind: h.kind, date: h.date, content: h.content, type: h.type || config.activityTypes[0] || "" });
     const handleHistSave = () => {
       const date = histDateFromInput(histForm.date);
       const content = histForm.content.trim();
       const type = histForm.type;
       if (!date || !content) return;
       if (histForm.mode === "add") {
-        updHistM([{ id: uid("HIST"), date, content, type, createdBy: currentUser?.name, createdAt: new Date().toISOString() }, ...histManual]);
+        saveHistM(d.id, [{ id: uid("HIST"), date, content, type, createdBy: currentUser?.name, createdAt: new Date().toISOString() }, ...getHistM(d.id)]);
       } else {
-        if (histForm.key.startsWith("e_")) {
-          updHistE({ ...histEdits, [histForm.key]: { date, content, type } });
+        const sid = histForm.sourceId;
+        if (histForm.kind.startsWith("e_")) {
+          saveHistE(sid, { ...getHistE(sid), [histForm.kind]: { date, content, type } });
         } else {
-          const mid = histForm.key.replace("m_", "");
-          updHistM(histManual.map(h => h.id === mid ? { ...h, date, content, type } : h));
+          const mid = histForm.kind.replace("m_", "");
+          saveHistM(sid, getHistM(sid).map(h => h.id === mid ? { ...h, date, content, type } : h));
         }
       }
       setHistForm(null);
+      bumpHist();
     };
     const handleHistDelete = (h) => {
       if (!confirm("이 히스토리 항목을 삭제하시겠습니까?")) return;
-      if (h.isExcel) updHistD([...histDeleted, h.origIdx]);
-      else updHistM(histManual.filter(m => m.id !== h.manualId));
+      if (h.isExcel) saveHistD(h.sourceId, [...getHistD(h.sourceId), h.origIdx]);
+      else saveHistM(h.sourceId, getHistM(h.sourceId).filter(m => m.id !== h.manualId));
+      bumpHist();
     };
 
-    const debtorPayments = data.payments.filter(p => p.debtorId === d.id);
+    // 입금내역도 같은 사람의 다른 항목에 연결된 입금까지 합쳐서 보여준다.
+    const debtorPayments = data.payments.filter(p => groupMemberIds.includes(p.debtorId));
     const _normD = normNameForMatch(d.name);
     const debtorRehabs = data.rehabilitations.filter(r =>
       r.debtorId === d.id || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand)
@@ -6194,9 +6221,13 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         progressStatus: c.status || "수사중",
       })),
     ];
-    const debtorInstPlan = (data.installmentPlans || []).find(p => p.debtorId === d.id);
-    const debtorInstScheds = debtorInstPlan ? (debtorInstPlan.schedules || []) : [];
-    const debtorInstHistory = debtorInstPlan ? (debtorInstPlan.history || []) : [];
+    // 분할상환도 같은 사람의 다른 항목에 플랜이 따로 있으면 한데 모아 보여준다(보통은 1개뿐).
+    const groupInstPlans = (data.installmentPlans || []).filter(p => groupMemberIds.includes(p.debtorId));
+    const debtorInstPlan = groupInstPlans[0] || null;
+    const debtorInstScheds = groupInstPlans.flatMap(p => (p.schedules || []).map(s => ({ ...s, _sourceCode: codeByMemberId[p.debtorId] })));
+    const debtorInstHistory = groupInstPlans
+      .flatMap(p => (p.history || []).map(h => ({ ...h, _sourceCode: codeByMemberId[p.debtorId] })))
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     const [instMemoSchedId, setInstMemoSchedId] = useState(null);
     const [instMemoText, setInstMemoText] = useState("");
     const [linkedDocs, setLinkedDocs] = useState(null);
@@ -6779,6 +6810,12 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
           )}
         </div>
 
+        {isGrouped && ["히스토리", "입금내역", "분할상환"].includes(detailTab) && (
+          <div style={{ fontSize: 11, color: "var(--tm)", padding: "2px 2px" }}>
+            📎 같은 사람의 채무 항목 {groupMembers.length}건을 통합해서 보여줍니다 — 코드 {groupMembers.map(m => m.hubCode).filter(Boolean).join(", ")}
+          </div>
+        )}
+
         {/* Tab content */}
         {detailTab === "히스토리" && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {/* 추가/수정 폼 */}
@@ -6825,6 +6862,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                         <div style={{ fontSize: 11, color: "var(--tp)", marginTop: 2 }}>{h.createdBy || ""}</div>
                       </td>
                       <td style={{ padding: "8px 16px", fontSize: 12, lineHeight: 1.6, color: "var(--tp)", whiteSpace: "pre-wrap", wordBreak: "break-all", borderRight: "1px solid var(--brd)" }}>{h.content}</td>
+                      {isGrouped && <td style={{ width: 80, padding: "8px 10px", borderRight: "1px solid var(--brd)", verticalAlign: "top" }}>
+                        <span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: h.sourceId === d.id ? "#3b82f618" : "var(--bg2)", color: h.sourceId === d.id ? "#1d4ed8" : "var(--tm)" }}>{h.sourceCode || "-"}</span>
+                      </td>}
                       <td style={{ width: 60, padding: "8px 10px", verticalAlign: "top" }}>
                         <div style={{ display: "flex", flexDirection: "row", gap: 4 }}>
                           {canEditRecord(h) && <button onClick={() => openEdit(h)} title="수정" style={{ width: 26, height: 26, borderRadius: 6, background: "#3b82f610", color: "#3b82f6", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="edit" size={12} /></button>}
@@ -6841,9 +6881,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
 
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{["입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}><td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
-              {debtorPayments.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{[...(isGrouped ? ["코드"] : []), "입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}>{isGrouped && <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}><span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: p.debtorId === d.id ? "#3b82f618" : "var(--bg2)", color: p.debtorId === d.id ? "#1d4ed8" : "var(--tm)" }}>{codeByMemberId[p.debtorId] || "-"}</span></td>}<td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
+              {debtorPayments.length === 0 && <tr><td colSpan={isGrouped ? 9 : 8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
           </div>
         </div>}
 
@@ -6868,6 +6908,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       <div key={s.id} style={{ background: "var(--card)", borderRadius: 8, border: `1px solid ${sc.b}`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                         <span className="mono" style={{ fontSize: 12, minWidth: 90 }}>{s.dueDate ? fmtDate(s.dueDate) : <span style={{ color: "#f59e0b" }}>{s.dueMonth}(미정)</span>}</span>
                         <span className="mono" style={{ fontWeight: 700 }}>{fmt(s.scheduledAmount)}</span>
+                        {isGrouped && groupInstPlans.length > 1 && <span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "var(--bg2)", color: "var(--tm)" }}>{s._sourceCode || "-"}</span>}
                         {s.debtSource && <span style={{ fontSize: 11, color: "var(--ts)" }}>{s.debtSource}</span>}
                         <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.t }}>{s.status}</span>
                         {s.rolledOverFrom && (() => {
@@ -6919,6 +6960,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           {h.fromDate && <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{h.fromDate}</span>}
                           {h.toDate && <><span style={{ fontSize: 11, color: "var(--tm)" }}>→</span><span className="mono" style={{ fontSize: 11, color: evtColor, fontWeight: 600 }}>{h.toDate}</span></>}
                           {h.amount && <span className="mono" style={{ fontSize: 11, color: "var(--ts)" }}>{fmt(h.amount)}</span>}
+                          {isGrouped && groupInstPlans.length > 1 && <span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "var(--bg2)", color: "var(--tm)" }}>{h._sourceCode || "-"}</span>}
                           <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--ts)" }}>{dt} {tm?.slice(0,5)}</span>
                         </div>
                         {h.memo && <div style={{ fontSize: 12, color: "var(--tp)", marginTop: 2, lineHeight: 1.5 }}>"{h.memo}"</div>}
