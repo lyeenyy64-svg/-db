@@ -1101,9 +1101,9 @@ function loadExcelData(cfg) {
     installmentSchedules: [],
     complaints:       getMR(MK.complaints),
     rehabilitations:  filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtors),   ...getMR(MK.rehabilitations)]))),
-    legalCases:       legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)]))),
-    minsaCases:       minsaCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)])),
-    assetDisclosures:  adCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)])),
+    legalCases:       legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv(applyLegalOv([...matchLegalCasesToDebtors(LEGAL_CASES,               allDebtors), ...getMR(MK.legalCases)], LEGAL_OVERRIDES_KEY)))),
+    minsaCases:       minsaCaseDeleted.filter(applyCaseFieldOv(applyLegalOv([...matchLegalCasesToDebtors(MINSA_CASES,               allDebtors), ...getMR(MK.minsaCases)], MINSA_OVERRIDES_KEY))),
+    assetDisclosures:  adCaseDeleted.filter(applyCaseFieldOv(applyLegalOv([...matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtors), ...getMR(MK.assetDisclosures)], AD_OVERRIDES_KEY))),
     collectionOrders:  applyCollectionOv(COLLECTION_ORDERS, allDebtors),
     forcedExecutions: getMR(MK.forcedExecutions),
     creditAnalyses:   getMR(MK.creditAnalyses),
@@ -3542,9 +3542,9 @@ export default function App() {
       const manualDebtors = getMR(MK.debtors);
       const allDebtorsForMatch = [...debtors, ...manualDebtors];
       const rehabilitations = filterRehabDeleted(applyCaseFieldOv(applyRehabOverrides([...matchRehabsToDebtors(EXCEL_REHABS, allDebtorsForMatch), ...getMR(MK.rehabilitations)])));
-      const legalCases      = legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv([...applyLegalOv(matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), LEGAL_OVERRIDES_KEY), ...getMR(MK.legalCases)])));
-      const minsaCases      = minsaCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), MINSA_OVERRIDES_KEY), ...getMR(MK.minsaCases)]));
-      const assetDisclosures  = adCaseDeleted.filter(applyCaseFieldOv([...applyLegalOv(matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), AD_OVERRIDES_KEY), ...getMR(MK.assetDisclosures)]));
+      const legalCases      = legalCaseDeleted.filter(applyCaseFieldOv(applyThirdsOv(applyLegalOv([...matchLegalCasesToDebtors(LEGAL_CASES,               allDebtorsForMatch), ...getMR(MK.legalCases)], LEGAL_OVERRIDES_KEY))));
+      const minsaCases      = minsaCaseDeleted.filter(applyCaseFieldOv(applyLegalOv([...matchLegalCasesToDebtors(MINSA_CASES,               allDebtorsForMatch), ...getMR(MK.minsaCases)], MINSA_OVERRIDES_KEY)));
+      const assetDisclosures  = adCaseDeleted.filter(applyCaseFieldOv(applyLegalOv([...matchAssetDisclosuresToDebtors(ASSET_DISCLOSURE_CASES, allDebtorsForMatch), ...getMR(MK.assetDisclosures)], AD_OVERRIDES_KEY)));
       const collectionOrders  = applyCollectionOv(COLLECTION_ORDERS, allDebtorsForMatch);
       const installmentSchedules = installmentsRes.flatMap(p =>
         (p.schedules || []).map(s => ({ ...s, debtorId: p.debtorId, debtorName: p.debtorName, brand: p.brand, assignee: p.assignee, hubCode: p.hubCode, hubName: p.hubName }))
