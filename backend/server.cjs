@@ -719,6 +719,10 @@ app.use(cors());
 // kvPut()은 실패해도 console.warn만 하고 화면엔 표시하지 않아 사용자가 알 방법이 없었다.
 app.use(express.json({ strict: false, limit: "20mb" }));
 
+// ─── 서버 측 인증 (개인정보보호 조치 1번) ──────────────────
+// 이 아래에 등록되는 모든 /api 라우트는 로그인 세션이 있어야만 호출할 수 있다.
+require("./auth.cjs").setupAuth(app, db, { slackClient: slackNotify, ROLE_CHANGE_PASSCODE });
+
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();
 function broadcast(event, data) {
@@ -751,6 +755,8 @@ const USER_FIELD_CANDIDATES = ["_userName", "userName", "createdByName", "create
 // 컬럼(예: "�?�Ĵ�")으로 노출되므로 "알수없음"과 동일하게 취급해 걸러낸다.
 const hasReplacementChar = (s) => typeof s === "string" && s.includes("�");
 function extractUserName(req) {
+  // 로그인 세션이 있으면 클라이언트가 보낸 헤더/본문 대신 서버가 확인한 이름만 신뢰한다
+  if (req.user && req.user.name) return req.user.name;
   const headerName = req.headers["x-user-name"];
   if (typeof headerName === "string" && headerName.trim()) {
     try {
@@ -1031,7 +1037,7 @@ function genericBodyDetail(body) {
 }
 
 app.use((req, res, next) => {
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && req.path.startsWith("/api/") && !req.path.startsWith("/api/kv/") && !req.path.startsWith("/api/auth/") && !STATS_EXCLUDED_PATHS.includes(req.path) && !isDebtorPatch(req) && !isRelatedDataWrite(req)) {
     const userName = extractUserName(req);
     // 사용자를 식별할 수 없는 요청은 "알수없음"이라는 가짜 사용자로 통계에 남기지 않는다 —
     // 누구의 성과에도 귀속시킬 수 없는 기록이라 어차피 평가에 쓸 수 없고, 화면에 노이즈만 남긴다.
@@ -3223,7 +3229,8 @@ app.post("/api/documents/preview-html", (req, res) => {
 // ─── 정적 파일 서빙 (React 빌드) ────────────────
 // ─── 공유 KV 스토어 API (localStorage → DB 마이그레이션) ──
 // 내부 서버 전용 키는 클라이언트에 노출하지 않음
-const KV_INTERNAL_PREFIXES = ["slack_last_ts", "cmp_hist_migrated"];
+// app_users: 계정은 이제 서버 인증 테이블(auth_accounts)이 관리한다 (/api/auth/users)
+const KV_INTERNAL_PREFIXES = ["slack_last_ts", "cmp_hist_migrated", "app_users"];
 const isInternalKey = (k) => KV_INTERNAL_PREFIXES.some(p => k.startsWith(p));
 
 // GET /api/kv-all — 앱 공유 KV 전체 조회 (loadData 시 localStorage 동기화용)
@@ -4013,8 +4020,7 @@ app.get("/api/admin/stats", (req, res) => {
     // 활동 로그가 하나도 없는 사용자도 "0건/활동 없음"으로 표시되도록, 등록된 전체
     // 사용자 목록(app_users)을 기준으로 빠진 사용자를 채워 넣는다 (LEFT JOIN과 동일한 효과).
     try {
-      const appUsersRow = db.prepare("SELECT value FROM kv_store WHERE key='app_users'").get();
-      const allUsers = appUsersRow ? JSON.parse(appUsersRow.value) : [];
+      const allUsers = db.prepare("SELECT name FROM auth_accounts").all();
       for (const u of allUsers) {
         const name = u && u.name;
         if (name && !summaryMap.has(name)) {
@@ -5757,8 +5763,7 @@ app.post("/api/reports/generate", async (req, res) => {
     // 않게 한다.
     let registeredUserNames = null;
     try {
-      const appUsersRow = db.prepare("SELECT value FROM kv_store WHERE key='app_users'").get();
-      const allUsers = appUsersRow ? JSON.parse(appUsersRow.value) : [];
+      const allUsers = db.prepare("SELECT name FROM auth_accounts").all();
       registeredUserNames = new Set(allUsers.map(u => u && u.name).filter(Boolean));
     } catch { /* app_users 파싱 실패 시 필터링 없이 진행 */ }
     const activityByUser = db.prepare(`

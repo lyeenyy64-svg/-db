@@ -362,12 +362,18 @@ let CURRENT_USER_NAME = null;
 if (typeof window !== "undefined" && !window.__fetchWrappedForUserName) {
   window.__fetchWrappedForUserName = true;
   const origFetch = window.fetch.bind(window);
-  window.fetch = (input, init = {}) => {
+  window.fetch = async (input, init = {}) => {
     const headers = new Headers(init.headers || {});
     if (!headers.has("X-User-Name") && CURRENT_USER_NAME) {
       headers.set("X-User-Name", encodeURIComponent(CURRENT_USER_NAME));
     }
-    return origFetch(input, { ...init, headers });
+    const res = await origFetch(input, { ...init, headers });
+    // 서버 세션이 만료/종료되면 로그인 화면으로 돌려보낸다 (로그인 요청 자체의 401은 제외)
+    if (res.status === 401) {
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      if (url.startsWith("/api/") && !url.startsWith("/api/auth/") && window.__onUnauthorized) window.__onUnauthorized();
+    }
+    return res;
   };
 }
 
@@ -1936,14 +1942,14 @@ const PERM_MAP = {
 };
 
 // ─── User Store ────────────────────────────────────────────
-const APP_USERS_KEY = "app_users";
-const DEFAULT_USERS = [
-  { id: "U002", name: "배현진", email: "hjbae@barogo.com", avatar: "배", role: "admin", approved: true, registeredAt: "2026-06-10", password: "hj12345!" },
-  { id: "U003", name: "김준원", email: "kimjw@barogo.com", avatar: "김", role: "superadmin", approved: true, registeredAt: "2026-06-10", password: "0000" },
-  { id: "U004", name: "조혜원", email: "chohw1997@barogo.com", avatar: "조", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
-  { id: "U005", name: "장덕진", email: "djjang_bu@barogo.com", avatar: "장", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
-  { id: "U006", name: "유재선", email: "jsyoo6708@barogo.com", avatar: "유", role: "manager", approved: true, registeredAt: "2026-06-10", password: "0000" },
-];
+// 계정/비밀번호는 서버(auth_accounts)가 관리한다. 코드에는 어떤 계정 정보도 두지 않는다.
+// 서버 인증 API 호출 헬퍼 — 실패 시 서버가 준 한글 오류 메시지로 Error를 던진다.
+async function authApi(path, method = "GET", body) {
+  const r = await fetch(path, { method, headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(d.error || `요청 실패 (${r.status})`); e.status = r.status; e.data = d; throw e; }
+  return d;
+}
 
 // ─── Default Alert Rules ──────────────────────────────────
 const DEFAULT_ALERT_RULES = [
@@ -1990,11 +1996,13 @@ const BrandWordmark = ({ fontSize = 22 }) => (
 );
 
 // ─── Login Screen ─────────────────────────────────────────
-const LoginScreen = ({ onLogin, loginError }) => {
+const LoginScreen = ({ onLogin, loginError, otpChallenge, onVerifyOtp, onCancelOtp, busy }) => {
   const [id, setId]       = useState("");
   const [pw, setPw]       = useState("");
+  const [code, setCode]   = useState("");
   const [showPw, setShowPw] = useState(false);
-  const doLogin = () => onLogin(id, pw);
+  const doLogin = () => { if (!busy) onLogin(id, pw); };
+  const doVerify = () => { if (!busy && code.trim()) onVerifyOtp(code.trim()); };
   const brd = loginError ? "var(--err)" : "var(--brd)";
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
@@ -2006,6 +2014,17 @@ const LoginScreen = ({ onLogin, loginError }) => {
           </div>
           <div style={{ fontSize: 12, color: "var(--tm)" }}>NPL 채권관리 시스템</div>
         </div>
+        {otpChallenge ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ fontSize: 13, color: "var(--ts)", lineHeight: 1.6 }}>Slack DM으로 보낸 <b>6자리 인증코드</b>를 입력하세요. (5분 안에 입력)</div>
+            <KoreanInput value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" autoFocus inputMode="numeric"
+              style={{ width: "100%", padding: "11px 13px", borderRadius: 10, fontSize: 22, letterSpacing: 8, textAlign: "center", border: `1px solid ${brd}`, background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" }}
+              onKeyDown={e => e.key === "Enter" && doVerify()} />
+            {loginError && <div style={{ fontSize: 12, color: "var(--err)", padding: "8px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>{loginError}</div>}
+            <button onClick={doVerify} disabled={busy} style={{ width: "100%", padding: "13px 0", borderRadius: 10, fontSize: 15, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", marginTop: 4, opacity: busy ? 0.6 : 1 }}>확인</button>
+            <button onClick={onCancelOtp} style={{ background: "none", border: "none", color: "var(--tm)", fontSize: 12, cursor: "pointer" }}>처음으로 돌아가기</button>
+          </div>
+        ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 5, fontWeight: 500 }}>이름 또는 이메일</div>
@@ -2025,9 +2044,41 @@ const LoginScreen = ({ onLogin, loginError }) => {
             </div>
           </div>
           {loginError && <div style={{ fontSize: 12, color: "var(--err)", padding: "8px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>{loginError}</div>}
-          <button onClick={doLogin} style={{ width: "100%", padding: "13px 0", borderRadius: 10, fontSize: 15, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", marginTop: 4 }}>로그인</button>
+          <button onClick={doLogin} disabled={busy} style={{ width: "100%", padding: "13px 0", borderRadius: 10, fontSize: 15, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", marginTop: 4, opacity: busy ? 0.6 : 1 }}>로그인</button>
         </div>
+        )}
         <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 20, textAlign: "center" }}>접근 권한이 필요하면 관리자에게 문의하세요</div>
+      </div>
+    </div>
+  );
+};
+
+// 최초 로그인/관리자가 비밀번호를 초기화한 직후 새 비밀번호를 정하게 하는 화면
+const PasswordChangeScreen = ({ user, onSubmit, onLogout }) => {
+  const [cur, setCur] = useState("");
+  const [nw, setNw]   = useState("");
+  const [nw2, setNw2] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (nw !== nw2) { setErr("새 비밀번호 확인이 일치하지 않습니다"); return; }
+    setBusy(true); setErr("");
+    try { await onSubmit(cur, nw); } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const inp = { width: "100%", padding: "11px 13px", borderRadius: 10, fontSize: 14, border: "1px solid var(--brd)", background: "var(--bg)", color: "var(--tp)", boxSizing: "border-box" };
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
+      <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 40, width: 400, border: "1px solid var(--brd)" }}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>새 비밀번호 설정</div>
+        <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 20, lineHeight: 1.6 }}>{user.name}님, 보안을 위해 비밀번호를 새로 정해야 계속 사용할 수 있습니다.<br />8자 이상, 영문과 숫자를 모두 포함하세요.</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <input type="password" value={cur} onChange={e => setCur(e.target.value)} placeholder="현재 비밀번호" style={inp} />
+          <input type="password" value={nw} onChange={e => setNw(e.target.value)} placeholder="새 비밀번호" style={inp} />
+          <input type="password" value={nw2} onChange={e => setNw2(e.target.value)} placeholder="새 비밀번호 확인" style={inp} onKeyDown={e => e.key === "Enter" && submit()} />
+          {err && <div style={{ fontSize: 12, color: "var(--err)", padding: "8px 12px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca" }}>{err}</div>}
+          <button onClick={submit} disabled={busy} style={{ padding: "13px 0", borderRadius: 10, fontSize: 15, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer", opacity: busy ? 0.6 : 1 }}>비밀번호 변경</button>
+          <button onClick={onLogout} style={{ background: "none", border: "none", color: "var(--tm)", fontSize: 12, cursor: "pointer" }}>로그아웃</button>
+        </div>
       </div>
     </div>
   );
@@ -3200,48 +3251,66 @@ function computeAssigneeStatsForMonth(payments, assignees, assigneeTargets, year
   return rows;
 }
 
+// 인증 껍데기 — 서버 세션을 확인하고 로그인/2단계 인증/비밀번호 변경을 거친 뒤에만 MainApp을 띄운다.
+// (로그인 전에는 데이터 요청이 전혀 나가지 않는다.)
 export default function App() {
-  // ─── Auth & Users ─────────────────────────────────────
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loginError, setLoginError]   = useState("");
-  const [lastSaved,  setLastSaved]    = useState(null);
-  const REMOVED_USER_EMAILS = ["junwon@barogo.com"]; // 삭제된 계정 목록
-  // DEFAULT_USERS 기준으로 이름/역할 등 강제 동기화할 필드 (이메일 키)
-  const USER_OVERRIDES = { "hjbae@barogo.com": { name: "배현진", role: "admin" }, "kimjw@barogo.com": { role: "superadmin" } };
-  // localStorage에 저장된(혹은 서버에서 막 받아온) 사용자 목록을 REMOVED_USER_EMAILS/
-  // USER_OVERRIDES 규칙에 맞춰 정리한다. useState 초기값과 loadData의 서버 동기화 양쪽에서
-  // 같은 로직을 써야, 다른 기기·브라우저에서 사용자 관리 화면에서 바꾼 권한(예: 관리자 승격)이
-  // 이 세션에도 그대로 반영된다 — 안 그러면 localStorage가 비어있는(처음 접속하는) 브라우저는
-  // 항상 DEFAULT_USERS의 기본 권한으로만 로그인되어 "어드민 탭이 없어졌다"처럼 보인다.
-  const normalizeUsers = (stored) => {
+  const [user, setUser] = useState(null);
+  const [mustChangePw, setMustChangePw] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [otpChallenge, setOtpChallenge] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    window.__onUnauthorized = () => { setUser(null); setMustChangePw(false); setOtpChallenge(null); setLoginError("세션이 만료되었습니다. 다시 로그인하세요."); };
+    authApi("/api/auth/me")
+      .then(d => { setUser(d.user); setMustChangePw(!!d.mustChangePassword); })
+      .catch(() => {})
+      .finally(() => setChecked(true));
+    return () => { window.__onUnauthorized = null; };
+  }, []);
+
+  const finish = (d) => { setOtpChallenge(null); setLoginError(""); setUser(d.user); setMustChangePw(!!d.mustChangePassword); };
+  const handleLogin = async (id, password) => {
+    setBusy(true); setLoginError("");
     try {
-      const base = (stored && stored.length ? stored : DEFAULT_USERS)
-        .filter(u => !REMOVED_USER_EMAILS.includes(u.email))
-        .map(u => USER_OVERRIDES[u.email] ? { ...u, ...USER_OVERRIDES[u.email] } : u);
-      const extras = DEFAULT_USERS.filter(d => !base.find(s => s.email === d.email));
-      return extras.length ? [...base, ...extras] : base;
-    } catch { return DEFAULT_USERS; }
+      const d = await authApi("/api/auth/login", "POST", { id, password });
+      if (d.step === "otp") setOtpChallenge(d.challengeId); else finish(d);
+    } catch (e) { setLoginError(e.status ? e.message : "서버에 연결할 수 없습니다."); }
+    setBusy(false);
   };
-  const [users, setUsers] = useState(() => {
-    try {
-      return normalizeUsers(JSON.parse(localStorage.getItem(APP_USERS_KEY)));
-    } catch { return DEFAULT_USERS; }
-  });
-  // 마운트 직후엔 이 브라우저의 localStorage(비어있거나 오래된 값일 수 있음)로 users가
-  // 먼저 초기화되는데, 이 상태에서 곧바로 kvPut을 쏘면 loadData()가 서버의 최신 값을
-  // 받아오기도 전에 서버 kv_store를 이 브라우저의 (기본값일 수 있는) users로 덮어써버린다 —
-  // 다른 기기에서 부여한 관리자 권한 등이 그렇게 사라진 적이 있었다. loadData()가 서버 값을
-  // 한 번 받아올 때까지는 kvPut을 보류한다 (로컬 저장은 그대로 즉시 반영).
-  const usersHydratedRef = useRef(false);
+  const handleVerifyOtp = async (code) => {
+    setBusy(true); setLoginError("");
+    try { finish(await authApi("/api/auth/verify", "POST", { challengeId: otpChallenge, code })); }
+    catch (e) { setLoginError(e.message); if (e.data && e.data.expired) setOtpChallenge(null); }
+    setBusy(false);
+  };
+  const handleLogout = async () => {
+    try { await authApi("/api/auth/logout", "POST"); } catch {}
+    // 메모리에 남은 데이터까지 확실히 비우기 위해 페이지를 새로 불러온다
+    window.location.reload();
+  };
+
+  if (!checked) return <><style>{CSS}</style></>;
+  if (!user) return <><style>{CSS}</style><LoginScreen onLogin={handleLogin} loginError={loginError} otpChallenge={otpChallenge} onVerifyOtp={handleVerifyOtp} onCancelOtp={() => { setOtpChallenge(null); setLoginError(""); }} busy={busy} /></>;
+  if (mustChangePw) return <><style>{CSS}</style><PasswordChangeScreen user={user} onLogout={handleLogout}
+    onSubmit={async (cur, nw) => { await authApi("/api/auth/change-password", "POST", { currentPassword: cur, newPassword: nw }); setMustChangePw(false); }} /></>;
+  return <MainApp key={user.id} authUser={user} onLogout={handleLogout} />;
+}
+
+function MainApp({ authUser, onLogout }) {
+  // ─── Users ────────────────────────────────────────────
+  const [currentUser, setCurrentUser] = useState(authUser);
+  const [lastSaved,  setLastSaved]    = useState(null);
+  // 계정 목록은 서버(/api/auth/users)가 단일 출처 — 브라우저 저장소나 공유 KV에는 두지 않는다.
+  const [users, setUsers] = useState([]);
+  const reloadUsers = useCallback(async () => {
+    try { setUsers(await authApi("/api/auth/users")); } catch {}
+  }, []);
+  useEffect(() => { reloadUsers(); }, [reloadUsers]);
+  // currentUser는 로그인 시점의 스냅샷이라, 사용자 관리 화면에서 본인의 role이 바뀌어도
+  // 반영되지 않는 문제가 있었다 — users 목록이 갱신될 때마다 본인 항목으로 동기화한다.
   useEffect(() => {
-    localStorage.setItem(APP_USERS_KEY, JSON.stringify(users));
-    if (usersHydratedRef.current) kvPut(APP_USERS_KEY, users);
-  }, [users]);
-  // currentUser는 로그인 시점의 스냅샷이라, 로그인된 세션 도중에 사용자 관리 화면에서
-  // 본인의 role/승인 상태가 바뀌어도(예: 관리자→마스터 승격) 반영되지 않아 재로그인 전까지
-  // 예전 권한으로 남는 문제가 있었다 — users 목록이 갱신될 때마다 본인 항목으로 동기화한다.
-  useEffect(() => {
-    if (!currentUser) return;
     const fresh = users.find(u => u.id === currentUser.id);
     if (fresh && (fresh.role !== currentUser.role || fresh.approved !== currentUser.approved || fresh.name !== currentUser.name)) {
       setCurrentUser(prev => ({ ...prev, ...fresh }));
@@ -3268,17 +3337,9 @@ export default function App() {
     fetch(`/api/alert-rules/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
-  const handleLogin = (nameOrEmail, password) => {
-    const user = users.find(u => u.name === nameOrEmail || u.email === nameOrEmail);
-    if (!user) { setLoginError("존재하지 않는 계정입니다."); return; }
-    if (user.password !== password) { setLoginError("비밀번호가 올바르지 않습니다."); return; }
-    setLoginError("");
-    setCurrentUser({ ...user });
-  };
-  const handleLogout = () => { setCurrentUser(null); setLoginError(""); };
+  const handleLogout = onLogout;
   // 어드민 통계용 접속 하트비트 — 로그인 중이고 화면이 활성 상태일 때만 60초마다 전송
   useEffect(() => {
-    if (!currentUser) return;
     const sendHeartbeat = () => {
       if (document.visibilityState !== "visible") return;
       fetch("/api/admin/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userName: currentUser.name }) }).catch(() => {});
@@ -3487,21 +3548,7 @@ export default function App() {
         const kvAll = kvRes.ok ? await kvRes.json() : null;
         if (kvAll) {
           for (const [key, value] of Object.entries(kvAll)) {
-            // 유저 계정: DB 값이 있을 때만 덮어씀 (초기 설정 보호).
-            // localStorage뿐 아니라 React 상태(users)도 같이 갱신해야 다른 기기·브라우저에서
-            // 바뀐 권한(예: 관리자 승격)이 이 세션에도 반영된다 — useState 초기값은 마운트 시
-            // 1회만 읽고 끝나서, 여기서 갱신 안 하면 어드민 탭이 계속 안 보일 수 있다.
-            if (key === APP_USERS_KEY) {
-              if (Array.isArray(value) && value.length > 0) {
-                localStorage.setItem(key, JSON.stringify(value));
-                // 실제로 내용이 달라졌을 때만 setUsers — 매번 새 배열을 만들면 [users] 이펙트가
-                // 매 로드마다 kvPut을 다시 쏴서 서버에 같은 값을 계속 재전송하게 된다.
-                const next = normalizeUsers(value);
-                setUsers(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
-              }
-            } else {
-              localStorage.setItem(key, JSON.stringify(value));
-            }
+            localStorage.setItem(key, JSON.stringify(value));
           }
           // case_event_{id}(사건 기일)는 kvPut이 네트워크 오류 등으로 조용히 실패해도
           // localStorage에는 이미 저장된 채로 남아, 그 사건이 서버 데이터엔 없는데도 이
@@ -3514,8 +3561,6 @@ export default function App() {
           }
         }
       } catch {}
-      // 서버 kv_store를 한 번 받아온 뒤부터는 [users] 이펙트의 kvPut을 허용한다.
-      usersHydratedRef.current = true;
 
       const [debtorsRes, paymentsRes, installmentsRes, complaintsRes, activitiesRes] = await Promise.all([
         fetch("/api/debtors").then(r => { if (!r.ok) throw new Error(`debtors ${r.status}`); return r.json(); }),
@@ -12733,12 +12778,14 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                   </div>
                   <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                     <button onClick={() => setAddUserForm(null)} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
-                    <button onClick={() => {
+                    <button onClick={async () => {
                       if (!addUserForm.name.trim() || !addUserForm.password.trim()) { showToast("이름과 비밀번호는 필수입니다"); return; }
-                      const newUser = { id: uid("U"), name: addUserForm.name.trim(), email: addUserForm.email.trim(), avatar: addUserForm.avatar.trim() || addUserForm.name[0], role: addUserForm.role, approved: true, registeredAt: today(), password: addUserForm.password };
-                      setUsers(prev => [...prev, newUser]);
-                      setAddUserForm(null);
-                      showToast(`${newUser.name} 추가 완료`);
+                      try {
+                        const created = await authApi("/api/auth/users", "POST", { name: addUserForm.name.trim(), email: addUserForm.email.trim(), avatar: addUserForm.avatar.trim(), role: addUserForm.role, password: addUserForm.password });
+                        await reloadUsers();
+                        setAddUserForm(null);
+                        showToast(`${created.name} 추가 완료 (첫 로그인 시 비밀번호를 새로 정하게 됩니다)`);
+                      } catch (e) { showToast(e.message); }
                     }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>추가</button>
                   </div>
                 </div>
@@ -12766,16 +12813,10 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                           if (newRole === u.role) return;
                           const input = window.prompt(`"${u.name}"의 권한을 "${ROLES.find(r => r.key === newRole)?.label}"로 변경합니다.\n확인 암호를 입력하세요.`);
                           if (input === null) return; // 취소
-                          let verified = false;
                           try {
-                            const res = await fetch("/api/admin/verify-role-passcode", {
-                              method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }),
-                            });
-                            const data = await res.json();
-                            verified = !!data.ok;
-                          } catch { showToast("암호 확인 중 오류가 발생했습니다"); return; }
-                          if (!verified) { showToast("암호가 일치하지 않아 권한이 변경되지 않았습니다"); return; }
-                          setUsers(prev => prev.map((x) => x.id === u.id ? { ...x, role: newRole } : x));
+                            await authApi(`/api/auth/users/${u.id}`, "PATCH", { role: newRole, passcode: input });
+                          } catch (e) { showToast(e.message); return; }
+                          await reloadUsers();
                           if (currentUser?.id === u.id) setCurrentUser(prev => ({ ...prev, role: newRole }));
                           showToast(`${u.name} 권한: ${ROLES.find(r => r.key === newRole)?.label}`);
                         }} style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--inp)" }}>
@@ -12794,16 +12835,15 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                       )}
                       {/* 승인/비활성화/삭제 — 관리자만 */}
                       {isAdmin && !u.approved && (
-                        <button onClick={() => { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: true } : x)); showToast(`${u.name} 승인 완료`); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--ok)", color: "#fff", cursor: "pointer", border: "none" }}>승인</button>
+                        <button onClick={async () => { try { await authApi(`/api/auth/users/${u.id}`, "PATCH", { approved: true }); await reloadUsers(); showToast(`${u.name} 승인 완료`); } catch (e) { showToast(e.message); } }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--ok)", color: "#fff", cursor: "pointer", border: "none" }}>승인</button>
                       )}
                       {isAdmin && u.approved && currentUser?.id !== u.id && (
-                        <button onClick={() => { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, approved: false } : x)); showToast(`${u.name} 비활성화`); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>비활성화</button>
+                        <button onClick={async () => { try { await authApi(`/api/auth/users/${u.id}`, "PATCH", { approved: false }); await reloadUsers(); showToast(`${u.name} 비활성화`); } catch (e) { showToast(e.message); } }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>비활성화</button>
                       )}
                       {isAdmin && currentUser?.id !== u.id && (
-                        <button onClick={() => {
+                        <button onClick={async () => {
                           if (!confirm(`"${u.name}" 계정을 삭제하시겠습니까?`)) return;
-                          setUsers(prev => prev.filter(x => x.id !== u.id));
-                          showToast(`${u.name} 삭제 완료`);
+                          try { await authApi(`/api/auth/users/${u.id}`, "DELETE"); await reloadUsers(); showToast(`${u.name} 삭제 완료`); } catch (e) { showToast(e.message); }
                         }} style={{ padding: "6px 8px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--err)", border: "1px solid #fecaca", cursor: "pointer" }}>
                           <I name="trash" size={13} />
                         </button>
@@ -12815,8 +12855,32 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
                     <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", background: "var(--bg)", borderRadius: 8, border: "1px solid var(--brd)" }}>
                       <I name="key" size={14} />
                       <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>새 비밀번호</span>
-                      <input type="password" value={resetPwVal} onChange={e => setResetPwVal(e.target.value)} placeholder="새 비밀번호 입력" style={{ flex: 1, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} onKeyDown={e => { if (e.key === "Enter" && resetPwVal.trim()) { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, password: resetPwVal } : x)); setResetPwId(null); showToast("비밀번호 변경 완료"); } }} />
-                      <button onClick={() => { if (!resetPwVal.trim()) return; setUsers(prev => prev.map(x => x.id === u.id ? { ...x, password: resetPwVal } : x)); setResetPwId(null); showToast("비밀번호 변경 완료"); }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
+                      <input type="password" value={resetPwVal} onChange={e => setResetPwVal(e.target.value)} placeholder="새 비밀번호 입력" style={{ flex: 1, padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} onKeyDown={e => { if (e.key === "Enter") (async () => {
+                        if (!resetPwVal.trim()) return;
+                        try {
+                          if (currentUser?.id === u.id) {
+                            const cur = window.prompt("현재 비밀번호를 입력하세요");
+                            if (cur === null) return;
+                            await authApi("/api/auth/change-password", "POST", { currentPassword: cur, newPassword: resetPwVal });
+                          } else {
+                            await authApi(`/api/auth/users/${u.id}/reset-password`, "POST", { newPassword: resetPwVal });
+                          }
+                          setResetPwId(null); showToast("비밀번호 변경 완료");
+                        } catch (e) { showToast(e.message); }
+                      })(); }} />
+                      <button onClick={async () => {
+                        if (!resetPwVal.trim()) return;
+                        try {
+                          if (currentUser?.id === u.id) {
+                            const cur = window.prompt("현재 비밀번호를 입력하세요");
+                            if (cur === null) return;
+                            await authApi("/api/auth/change-password", "POST", { currentPassword: cur, newPassword: resetPwVal });
+                          } else {
+                            await authApi(`/api/auth/users/${u.id}/reset-password`, "POST", { newPassword: resetPwVal });
+                          }
+                          setResetPwId(null); showToast("비밀번호 변경 완료");
+                        } catch (e) { showToast(e.message); }
+                      }} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>저장</button>
                       <button onClick={() => setResetPwId(null)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
                     </div>
                   )}
@@ -13334,10 +13398,8 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
     ...(isAdmin ? [{ k: "admin", l: "어드민", i: "settings" }] : []),
   ];
 
-  // Login gate
-  if (!currentUser) return <><style>{CSS}</style><LoginScreen onLogin={handleLogin} loginError={loginError} /></>;
-  const approvedUser = users.find(u => u.id === currentUser.id);
-  if (!approvedUser?.approved) return <><style>{CSS}</style><PendingScreen user={currentUser} onLogout={handleLogout} /></>;
+  // 승인 여부는 서버가 로그인 시점에 이미 확인한다 (미승인 계정은 로그인 자체가 거부됨)
+  if (!currentUser.approved) return <><style>{CSS}</style><PendingScreen user={currentUser} onLogout={handleLogout} /></>;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: "#fff", overflow: "hidden", position: "relative" }}>
