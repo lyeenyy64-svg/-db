@@ -5,6 +5,7 @@
 // - 원문은 담당 권한자가 "사유"를 입력해 열람 허용(grant)을 받은 채무자에 한해 일정 시간만 내려간다.
 // - 마스킹된 값이 화면에서 다시 저장 요청으로 돌아와도 DB 원문을 덮어쓰지 않도록 쓰기 요청을 정리한다.
 // ============================================================
+const { decryptDeep } = require("./piiCrypto.cjs");
 const REVEAL_MINUTES = Number(process.env.PII_REVEAL_MINUTES) || 30;
 const MIN_REASON_LEN = 5;
 
@@ -173,7 +174,7 @@ function createPrivacy(db, { audit } = {}) {
       } else if (req.method === "PUT" && /^\/kv\/[^/]+$/.test(p)) {
         const key = decodeURIComponent(p.slice(4));
         const row = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
-        if (row) { try { req.body = restoreMasked(req.body, JSON.parse(row.value), undefined); } catch {} }
+        if (row) { try { req.body = restoreMasked(req.body, decryptDeep(JSON.parse(row.value)), undefined); } catch {} }
       }
     }
   }

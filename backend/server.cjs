@@ -37,6 +37,10 @@ const NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL_ID || process.env.SLACK_
 const DB_PATH = path.join(__dirname, "..", "db", "debtflow.db");
 const db = new Database(DB_PATH, { readonly: false });
 db.pragma("foreign_keys = ON");
+// 주민번호 등 고유식별정보는 컬럼 단위로 암호화해서 저장한다 (개인정보보호 조치 4번)
+const piiCrypto = require("./piiCrypto.cjs");
+const { encryptPii, decryptPii } = piiCrypto;
+db.function("pii_dec", { deterministic: true }, (s) => decryptPii(s));
 
 // ─── v_debtors 뷰 재생성 (재무기준잔액=원채무액-회수액, 법무기준잔액=원채무액+추가법무비용-회수액)
 db.exec(`
@@ -709,6 +713,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_reports_period ON ai_reports(period_type);
 `);
 
+// 기존에 평문으로 저장된 주민번호를 1회 암호화 (모든 테이블이 만들어진 뒤에 실행)
+piiCrypto.migrateDatabase(db, DB_PATH);
+
 const app = express();
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
@@ -1188,7 +1195,7 @@ app.get("/api/debtors", (req, res) => {
            credit_report_url AS creditReportUrl,
            resident_copy_date AS residentCopy, resident_copy_url AS residentCopyUrl,
            birth_date AS birthDate,
-           resident_number AS residentNumber,
+           pii_dec(resident_number) AS residentNumber,
            latest_address AS latestAddress,
            latest_address_lat AS latestAddressLat,
            latest_address_lng AS latestAddressLng,
@@ -2578,7 +2585,7 @@ app.post("/api/debtors", (req, res) => {
       id, b.brand || "B", b.category || "", b.assignee || "",
       b.name || "", b.phone || "", b.hubCode || "", b.hubName || "",
       b.debtCause || "", b.collectionStatus || "", b.execTitle ? 1 : 0, b.execTitleUrl || "",
-      b.loanDate || "", b.subrogationMonth || "", b.birthDate || "", b.residentNumber || "",
+      b.loanDate || "", b.subrogationMonth || "", b.birthDate || "", encryptPii(b.residentNumber || ""),
       b.salesRep || "", b.keyNotes || "",
       b.principalBalance || 0, b.adjustment || 0, b.collectedAmount || 0
     );
@@ -2719,7 +2726,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
       if (typeof v === "boolean") v = v ? 1 : 0;
       coercedVals[jsKey] = v;
       fields.push(`${dbCol} = ?`);
-      vals.push(v);
+      vals.push(dbCol === "resident_number" ? encryptPii(v) : v);
       changedJsKeys.push(jsKey);
     }
   }
@@ -2728,7 +2735,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
   // 수정 전 현재 값 조회 (로그 기록용) — 테이블에 실제로 존재하는 컬럼만 조회
   const selectParts = Object.entries(DEBTOR_FIELD_MAP)
     .filter(([, dbCol]) => DEBTOR_TABLE_COLS.has(dbCol))
-    .map(([jk, dbCol]) => `${dbCol} AS "${jk}"`).join(', ');
+    .map(([jk, dbCol]) => dbCol === "resident_number" ? `pii_dec(${dbCol}) AS "${jk}"` : `${dbCol} AS "${jk}"`).join(', ');
   const oldRow = db.prepare(`SELECT name, ${selectParts} FROM debtors WHERE id = ?`).get(id);
   if (!oldRow) return;
 
@@ -2777,7 +2784,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
       const oldVal = String(oldRow[jsKey] ?? '');
       const newVal = String(coercedVals[jsKey] ?? '');
       if (oldVal !== newVal) {
-        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, oldVal, newVal);
+        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, jsKey === "residentNumber" ? encryptPii(oldVal) : oldVal, jsKey === "residentNumber" ? encryptPii(newVal) : newVal);
         statsBytes += newVal.length;
       }
     }
@@ -2830,7 +2837,7 @@ app.post("/api/edit-logs/:id/restore", (req, res) => {
     // 합계/비교 연산이 깨질 수 있어, 숫자로 안전하게 변환 가능하면 숫자로 되돌린다.
     const dbCol = DEBTOR_FIELD_MAP[log.field_name];
     const isNumericCol = ["principal_balance", "adjustment", "collected_amount", "exec_title"].includes(dbCol);
-    let restoredVal = log.old_value ?? "";
+    let restoredVal = log.field_name === "residentNumber" ? decryptPii(log.old_value ?? "") : (log.old_value ?? "");
     if (isNumericCol && restoredVal !== "" && !isNaN(Number(restoredVal))) restoredVal = Number(restoredVal);
 
     const userName = req.body?.userName || req.headers["x-user-name"] || "관리자";
@@ -2861,7 +2868,7 @@ app.get("/api/edit-logs", (req, res) => {
       ORDER BY changed_at DESC, id DESC
       LIMIT @limit
     `).all(params);
-    res.json(rows);
+    res.json(rows.map(r => r.fieldName === "residentNumber" ? { ...r, oldValue: decryptPii(r.oldValue), newValue: decryptPii(r.newValue) } : r));
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -3239,7 +3246,7 @@ app.get("/api/kv-all", (req, res) => {
   const result = {};
   for (const { key, value } of rows) {
     if (isInternalKey(key)) continue;
-    try { result[key] = JSON.parse(value); } catch { result[key] = value; }
+    try { result[key] = piiCrypto.decryptDeep(JSON.parse(value)); } catch { result[key] = value; }
   }
   res.json(result);
 });
@@ -3411,7 +3418,7 @@ app.put("/api/kv/:key", (req, res) => {
   if (key !== "app_users" && !key.startsWith("__")) {
     try {
       const oldRow = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
-      const oldVal = oldRow ? JSON.parse(oldRow.value) : null;
+      const oldVal = oldRow ? piiCrypto.decryptDeep(JSON.parse(oldRow.value)) : null;
       const diffResult = diffDetailText(oldVal, req.body);
       // detail(화면에 보일 실제 내용)이 있으면 그 글자수를 그대로 쓴다 — 보이는 텍스트와
       // 세는 글자수가 항상 같아야 신뢰할 수 있다. 못 뽑아낸 경우만 예전 크기 추정치로 대체.
@@ -3465,7 +3472,7 @@ app.put("/api/kv/:key", (req, res) => {
   db.prepare(`
     INSERT INTO kv_store (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-  `).run(key, JSON.stringify(req.body));
+  `).run(key, JSON.stringify(piiCrypto.encryptDeep(req.body)));
   res.json({ ok: true });
 });
 
@@ -4485,7 +4492,7 @@ async function lookupResidentDetails(debtorId, debtor, priority) {
     if (!r.address && !r.registeredDate) continue;
 
     const updates = [], vals = [];
-    if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+    if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(encryptPii(r.number)); }
     if (!debtor.resident_address && r.address) {
       updates.push("resident_address = ?", "resident_address_lat = NULL", "resident_address_lng = NULL", "resident_source_date = ?");
       vals.push(r.address, c.parsed_date || null);
@@ -4514,7 +4521,7 @@ async function lookupResidentDetails(debtorId, debtor, priority) {
 app.get("/api/debtor/:id/resident-number", async (req, res) => {
   try {
     const debtor = db.prepare(
-      `SELECT d.name, d.resident_number, d.resident_match_excluded,
+      `SELECT d.name, pii_dec(d.resident_number) AS resident_number, d.resident_match_excluded,
               d.resident_address, d.resident_registered_date, d.resident_note, d.resident_issued_date
        FROM debtors d WHERE d.id = ?`
     ).get(req.params.id);
@@ -4561,7 +4568,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
             // 이 문서가 그 사람 것일 수 있어 DB에는 쓰지 않고 화면에만 "확인 필요"로 보여준다.
             const updates = [], vals = [];
             if (!ambiguous) {
-              if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(r.number); }
+              if (!debtor.resident_number && r.number) { updates.push("resident_number = ?"); vals.push(encryptPii(r.number)); }
               if (!debtor.resident_address && r.address) { updates.push("resident_address = ?", "resident_source_date = ?"); vals.push(r.address, c.parsed_date || null); }
               if (!debtor.resident_registered_date && r.registeredDate) { updates.push("resident_registered_date = ?"); vals.push(r.registeredDate); }
               if (!debtor.resident_note && r.note) { updates.push("resident_note = ?"); vals.push(r.note); }
@@ -4625,7 +4632,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
 // (주민등록번호는 그대로 둔다 — 이 문제와 무관하게 이미 맞는 경우가 대부분이라 건드리지 않음)
 app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
   try {
-    const existing = db.prepare("SELECT id, name, resident_number FROM debtors WHERE id = ?").get(req.params.id);
+    const existing = db.prepare("SELECT id, name, pii_dec(resident_number) AS resident_number FROM debtors WHERE id = ?").get(req.params.id);
     if (!existing) return res.json({ ok: false, error: "채무자 없음" });
 
     db.prepare(
@@ -4851,7 +4858,7 @@ app.get("/api/debtors/missing-address", (req, res) => {
 app.post("/api/debtor/:id/extract-address", async (req, res) => {
   try {
     const debtor = db.prepare(
-      `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
+      `SELECT id, name, pii_dec(resident_number) AS resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
               latest_address, credit_phone, credit_queried_date
        FROM debtors WHERE id = ?`
     ).get(req.params.id);
@@ -5077,7 +5084,7 @@ function isNightWindow() {
 // 대상은 건너뛰고, false면(수동 트리거) 시간대와 무관하게 끝까지 돌린다.
 async function runAddressBatch(respectNightWindow) {
   const targets = db.prepare(
-    `SELECT id, name, resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
+    `SELECT id, name, pii_dec(resident_number) AS resident_number, resident_address, resident_registered_date, resident_note, resident_issued_date,
             latest_address, credit_phone, credit_queried_date
      FROM debtors
      WHERE (resident_address IS NULL OR resident_address = '') OR (latest_address IS NULL OR latest_address = '')`
