@@ -33,7 +33,9 @@ const getRolloverChainDates = (sched, allSchedules) => {
 // 이름(+브랜드)이 같아도 주민등록번호가 둘 다 입력돼 있고 서로 다르면 동명이인(다른 사람)이
 // 확실하므로 묶지 않는다 — 하나라도 비어있으면(아직 확인 못한 상태) 판단 근거가 없어 기존대로 묶는다.
 const isConfirmedDifferentPerson = (a, b) =>
-  !!(a.residentNumber && b.residentNumber && a.residentNumber.trim() !== b.residentNumber.trim());
+  // 서버가 주민번호를 가려서 내려주므로 원문 대신 서버가 같이 보내는 지문(residentNumberFp)으로 비교한다
+  !!((a.residentNumberFp || a.residentNumber) && (b.residentNumberFp || b.residentNumber)
+    && String(a.residentNumberFp || a.residentNumber).trim() !== String(b.residentNumberFp || b.residentNumber).trim());
 // 채무자 목록 화면에서 같은 사람의 여러 채무 항목을 한 행으로 묶어 보여주는 것과 동일한
 // 기준(이름+브랜드 또는 유사 코드)으로 "몇 명"인지 센다 — "건수"(원장 행 개수)와는 다른 단위.
 const countDistinctPeople = (arr) => {
@@ -3621,6 +3623,35 @@ function MainApp({ authUser, onLogout }) {
   // 초기 로드
   useEffect(() => { loadData(); }, [loadData]);
 
+  // ─── 개인정보 원문 열람 ────────────────────────────────────
+  // 서버는 주민번호·연락처·주소·좌표를 기본으로 가려서 내려보낸다. 담당 권한자가 사유를 입력하면
+  // 해당 채무자에 한해 일정 시간 동안만 원문이 내려오고, 열람 사실과 사유는 서버에 기록된다.
+  const [revealedIds, setRevealedIds] = useState([]);
+  const revealedCountRef = useRef(0);
+  const loadGrants = useCallback(async () => {
+    try {
+      const g = await authApi("/api/privacy/grants");
+      setRevealedIds(g.map(x => String(x.debtorId)));
+      // 열람 허용 시간이 끝났으면 화면에 남은 원문을 다시 가려진 값으로 갱신
+      if (g.length < revealedCountRef.current) loadData();
+      revealedCountRef.current = g.length;
+    } catch {}
+  }, [loadData]);
+  useEffect(() => { loadGrants(); const t = setInterval(loadGrants, 60000); return () => clearInterval(t); }, [loadGrants]);
+  const revealPii = async (debtorIds) => {
+    const reason = window.prompt("개인정보 원문을 열람하는 사유를 입력하세요. (예: 정산 오류 확인, 초본 발급 대조)\n※ 사유에는 이름·주민번호 등 개인정보를 적지 마세요. 열람 기록이 남습니다.");
+    if (reason === null) return;
+    try {
+      const r = await authApi("/api/privacy/reveal", "POST", { debtorIds, reason });
+      showToast(`원문 열람이 ${r.minutes}분간 허용됩니다 (열람 기록이 남습니다)`);
+      await loadGrants();
+      loadData();
+    } catch (e) { showToast(e.message); }
+  };
+  const hidePii = async () => {
+    try { await authApi("/api/privacy/hide", "POST"); await loadGrants(); loadData(); } catch (e) { showToast(e.message); }
+  };
+
   // 채무자 선택 시 초본 PDF에서 주민등록번호 + 최근주소/등록일/비고/발급일 자동 추출
   // (entries: [{name, number}], residentDetails: {address, registeredDate, note, issuedDate})
   useEffect(() => {
@@ -6502,6 +6533,9 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
             </div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
+            {canEdit && (revealedIds.includes(String(d.id))
+              ? <button onClick={hidePii} title="원문 열람을 끝내고 다시 가립니다" style={{ padding: "7px 12px", borderRadius: 8, background: "#f59e0b18", color: "#b45309", fontSize: 12, fontWeight: 600, border: "1px solid #f59e0b40", cursor: "pointer" }}>🔓 원문 열람 중 · 가리기</button>
+              : <button onClick={() => revealPii(groupMemberIds)} title="주민번호·연락처·주소 원문을 사유를 남기고 확인합니다" style={{ padding: "7px 12px", borderRadius: 8, background: "var(--bg)", color: "var(--ts)", fontSize: 12, fontWeight: 600, border: "1px solid var(--brd)", cursor: "pointer" }}>🔒 개인정보 원문 보기</button>)}
             {canEdit && <button onClick={() => openDebtorEditModal(d)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#3b82f618", color: "#3b82f6", fontSize: 12, fontWeight: 600, border: "1px solid #3b82f640" }}><I name="edit" size={14} />수정</button>}
             {canEdit && <button onClick={() => {
               setModal({ type: "debtor", data: { brand: d.brand, name: d.name, category: d.category, assignee: d.assignee, hubName: d.hubName, phone: d.phone, guarantors: d.guarantors } });

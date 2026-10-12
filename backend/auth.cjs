@@ -5,6 +5,7 @@
 // - 모든 /api 요청은 세션이 있어야 통과한다 (PUBLIC_PATHS 제외)
 // ============================================================
 const crypto = require("crypto");
+const { createPrivacy } = require("./privacy.cjs");
 
 const SESSION_COOKIE = "df_session";
 const SESSION_HOURS = Number(process.env.AUTH_SESSION_HOURS) || 12;
@@ -290,6 +291,8 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
     res.json({ ok: true });
   });
 
+  const privacy = createPrivacy(db, { audit });
+
   // ─── 가드: 이 아래에 등록되는 모든 /api 라우트는 로그인이 필요하다 ───
   app.use("/api", (req, res, next) => {
     if (PUBLIC_PATHS.has(req.path)) return next();
@@ -304,8 +307,11 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
       log({ event: "access_denied", user: req.user.name, ip: req.ip, detail: `${req.method} ${req.path}` });
       return res.status(403).json({ error: denied, code: "FORBIDDEN" });
     }
+    req.sessionHash = s.session.token_hash;
+    privacy.attach(req, res); // 응답 개인정보 마스킹 + 마스킹된 값의 역저장 방지
     next();
   });
+  privacy.mount(app);
 
   const requireAdmin = (req, res, next) => {
     if (!req.user || !ADMIN_ROLES.includes(req.user.role)) return res.status(403).json({ error: "관리자 권한이 필요합니다" });
