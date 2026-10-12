@@ -1,0 +1,3 @@
+#!/bin/sh
+# 커밋 전에 API 키·비밀번호가 코드에 들어가지 않았는지 검사한다. (개발 PC에서 1회: git config core.hooksPath .githooks)
+node scripts/check_secrets.cjs || exit 1

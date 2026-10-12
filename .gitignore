@@ -35,3 +35,12 @@ CODEBASE_EXPORT.txt
 
 # 에러/로그 파일
 *.err
+
+# 키/인증서/개인정보 보호용 파일 (비밀값은 저장소에 올리지 않는다)
+*.pfx
+*.p12
+*.pem
+*.key
+*.pass
+.debtflow/
+audit.db*
