@@ -717,6 +717,25 @@ db.exec(`
 piiCrypto.migrateDatabase(db, DB_PATH);
 
 const app = express();
+// 앞단(vite)이 같은 PC에서 프록시하므로 loopback이 보낸 X-Forwarded-* 만 믿는다 (원래 접속이 HTTPS였는지 판단용)
+app.set("trust proxy", "loopback");
+
+// ─── 전송 구간 보안 (개인정보보호 조치 5번) ────────────────────
+// - HTTPS 접속이면 HSTS로 브라우저가 앞으로도 HTTPS만 쓰게 하고, 인증 쿠키에 Secure 플래그가 붙는다
+// - API 응답은 중간 장비/브라우저에 캐시되지 않게 한다
+// - REQUIRE_HTTPS=on 이면 사내 서버 PC 밖에서 들어오는 평문 HTTP 요청을 거부한다
+//   (인증서를 적용하고 모두 HTTPS로 접속하는 것을 확인한 뒤에 켠다)
+const REQUIRE_HTTPS = String(process.env.REQUIRE_HTTPS || "").toLowerCase() === "on";
+const isLoopbackAddr = (a) => a === "127.0.0.1" || a === "::1" || a === "::ffff:127.0.0.1";
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+  if (REQUIRE_HTTPS && !req.secure && !isLoopbackAddr(req.socket.remoteAddress)) {
+    return res.status(426).json({ error: "보안 연결(HTTPS)로 접속해야 합니다", code: "HTTPS_REQUIRED" });
+  }
+  next();
+});
 app.use(cors());
 // strict:false — 공유 KV 스토어(/api/kv/:key)는 문자열/null 같은 원시값도 그대로 저장해야 하는데
 // express.json() 기본값(strict:true)은 최상위가 객체/배열이 아닌 JSON 바디를 거부해서

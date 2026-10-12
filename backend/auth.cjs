@@ -171,10 +171,10 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
     const now = Date.now();
     db.prepare("INSERT INTO auth_sessions (token_hash, user_id, created_at, expires_at, ip) VALUES (?, ?, ?, ?, ?)")
       .run(sha256(token), userId, now, now + SESSION_HOURS * 3600 * 1000, req.ip || null);
-    res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_HOURS * 3600}`);
+    res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_HOURS * 3600}${req.secure ? "; Secure" : ""}`);
   }
-  function clearCookie(res) {
-    res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  function clearCookie(req, res) {
+    res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${req.secure ? "; Secure" : ""}`);
   }
   function sessionFromRequest(req) {
     const token = parseCookies(req)[SESSION_COOKIE];
@@ -287,7 +287,7 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
       db.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(sha256(token));
       if (s) log({ event: "logout", user: s.account.name, ip: req.ip });
     }
-    clearCookie(res);
+    clearCookie(req, res);
     res.json({ ok: true });
   });
 
