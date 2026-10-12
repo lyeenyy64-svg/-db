@@ -34,7 +34,7 @@ const { WebClient: SlackClient } = require("@slack/web-api");
 const slackNotify = process.env.SLACK_BOT_TOKEN ? new SlackClient(process.env.SLACK_BOT_TOKEN) : null;
 const NOTIFY_CHANNEL = process.env.SLACK_NOTIFY_CHANNEL_ID || process.env.SLACK_CHANNEL_ID;
 
-const DB_PATH = path.join(__dirname, "..", "db", "debtflow.db");
+const DB_PATH = process.env.DEBTFLOW_DB_PATH || path.join(__dirname, "..", "db", "debtflow.db");
 const db = new Database(DB_PATH, { readonly: false });
 db.pragma("foreign_keys = ON");
 // 주민번호 등 고유식별정보는 컬럼 단위로 암호화해서 저장한다 (개인정보보호 조치 4번)
