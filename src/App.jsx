@@ -3719,13 +3719,21 @@ function MainApp({ authUser, onLogout }) {
   // 서버는 주민번호·연락처·주소·좌표를 기본으로 가려서 내려보낸다. 담당 권한자가 사유를 입력하면
   // 해당 채무자에 한해 일정 시간 동안만 원문이 내려오고, 열람 사실과 사유는 서버에 기록된다.
   const [revealedIds, setRevealedIds] = useState([]);
+  // 열람 허용/종료가 바뀌면 "채무자 선택 시 한 번만 받아오던" 주민번호·주소 조회 결과도 다시 받아야 한다
+  const [piiEpoch, setPiiEpoch] = useState(0);
+  const refreshAfterPiiChange = () => {
+    setAutoResidentNums({}); setAutoResidentDetails({}); setAutoAddresses({});
+    setPiiEpoch(e => e + 1);
+    loadData();
+    setTimeout(loadData, 1500); // 다른 조회가 진행 중이라 첫 호출이 건너뛰어진 경우 대비
+  };
   const revealedCountRef = useRef(0);
   const loadGrants = useCallback(async () => {
     try {
       const g = await authApi("/api/privacy/grants");
       setRevealedIds(g.map(x => String(x.debtorId)));
       // 열람 허용 시간이 끝났으면 화면에 남은 원문을 다시 가려진 값으로 갱신
-      if (g.length < revealedCountRef.current) loadData();
+      if (g.length < revealedCountRef.current) refreshAfterPiiChange();
       revealedCountRef.current = g.length;
     } catch {}
   }, [loadData]);
@@ -3737,11 +3745,22 @@ function MainApp({ authUser, onLogout }) {
       const r = await authApi("/api/privacy/reveal", "POST", { debtorIds, reason });
       showToast(`원문 열람이 ${r.minutes}분간 허용됩니다 (열람 기록이 남습니다)`);
       await loadGrants();
-      loadData();
+      refreshAfterPiiChange();
     } catch (e) { showToast(e.message); }
   };
+  // 선택된 채무자(sel)는 목록과 따로 들고 있는 복사본이라 새로 받은 데이터가 자동 반영되지 않는다 —
+  // 개인정보 필드만 최신 목록 값(마스킹 여부 포함)으로 맞춘다.
+  const PII_FIELDS = ["phone", "residentNumber", "residentNumberFp", "latestAddress", "manualAddress", "residentAddress", "creditPhone", "latestAddressLat", "latestAddressLng", "manualAddressLat", "manualAddressLng"];
+  useEffect(() => {
+    if (!sel) return;
+    const fresh = (data.debtors || []).find(x => x.id === sel.id);
+    if (!fresh) return;
+    if (PII_FIELDS.some(k => fresh[k] !== sel[k])) {
+      setSel(prev => (prev && prev.id === fresh.id) ? { ...prev, ...Object.fromEntries(PII_FIELDS.filter(k => k in fresh).map(k => [k, fresh[k]])) } : prev);
+    }
+  }, [data.debtors, sel?.id, piiEpoch]);
   const hidePii = async () => {
-    try { await authApi("/api/privacy/hide", "POST"); await loadGrants(); loadData(); } catch (e) { showToast(e.message); }
+    try { await authApi("/api/privacy/hide", "POST"); await loadGrants(); refreshAfterPiiChange(); } catch (e) { showToast(e.message); }
   };
 
   // 채무자 선택 시 초본 PDF에서 주민등록번호 + 최근주소/등록일/비고/발급일 자동 추출
@@ -3759,7 +3778,7 @@ function MainApp({ authUser, onLogout }) {
         setAutoResidentNums(prev => ({ ...prev, [sel.id]: [] }));
         setAutoResidentDetails(prev => ({ ...prev, [sel.id]: false }));
       });
-  }, [sel?.id]);
+  }, [sel?.id, piiEpoch]);
 
   // 채무자 선택 시 CB종합보고서에서 신용점수 자동 추출
   useEffect(() => {
@@ -3799,7 +3818,7 @@ function MainApp({ authUser, onLogout }) {
         setAutoAddresses(prev => ({ ...prev, [sel.id]: data.ok && data.address ? { address: data.address, phone: data.phone, queriedDate: data.queriedDate, filename: data.filename } : false }));
       })
       .catch(() => { setAutoAddresses(prev => ({ ...prev, [sel.id]: false })); });
-  }, [sel?.id]);
+  }, [sel?.id, piiEpoch]);
 
   // SSE 실시간 동기화 — 다른 사용자가 데이터 변경 시 자동 반영
   // 변경이 있을 때마다 즉시 새로고침하지 않고, 변경이 멈춘 뒤 IDLE_REFRESH_MS만큼
