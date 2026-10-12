@@ -1943,6 +1943,22 @@ const PERM_MAP = {
   member:     { view: true, edit: false, delete: false, admin: false, superAdmin: false },
 };
 
+// 전역 스타일 — 로그인 화면과 메인 앱이 함께 쓰므로 모듈 최상위에 둔다 (브라우저 내장 CSS 객체와 이름이 겹치지 않게 주의)
+const CSS = `@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#f3f4f6;--bg2:#f9fafb;--card:#ffffff;--hover:#fff5ed;--inp:#f9fafb;--brd:#e5e7eb;--bf:#ff5f00;--tp:#111827;--ts:#475569;--tm:#94a3b8;--acc:#ff5f00;--ok:#10b981;--err:#ef4444;--warn:#f59e0b}
+body{background:#fff;color:var(--tp);font-family:'Noto Sans KR',sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
+input,select,textarea{font-family:'Noto Sans KR',sans-serif;background:var(--inp);color:var(--tp);border:1px solid var(--brd);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;transition:border .2s}
+input:focus,select:focus,textarea:focus{border-color:var(--bf)}
+button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:none;transition:all .15s}button:hover{opacity:.85}
+.mono{font-family:'JetBrains Mono',monospace}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.anim{animation:fadeIn .3s ease-out}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}.slide{animation:slideIn .3s ease-out}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+@keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spinning{animation:spin .8s linear infinite}`;
+
 // ─── User Store ────────────────────────────────────────────
 // 계정/비밀번호는 서버(auth_accounts)가 관리한다. 코드에는 어떤 계정 정보도 두지 않는다.
 // 서버 인증 API 호출 헬퍼 — 실패 시 서버가 준 한글 오류 메시지로 Error를 던진다.
@@ -4637,20 +4653,6 @@ function MainApp({ authUser, onLogout }) {
   };
 
   // ─── CSS ────────────────────────────────────────────────
-  const CSS = `@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#f3f4f6;--bg2:#f9fafb;--card:#ffffff;--hover:#fff5ed;--inp:#f9fafb;--brd:#e5e7eb;--bf:#ff5f00;--tp:#111827;--ts:#475569;--tm:#94a3b8;--acc:#ff5f00;--ok:#10b981;--err:#ef4444;--warn:#f59e0b}
-body{background:#fff;color:var(--tp);font-family:'Noto Sans KR',sans-serif}
-::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
-input,select,textarea{font-family:'Noto Sans KR',sans-serif;background:var(--inp);color:var(--tp);border:1px solid var(--brd);border-radius:8px;padding:8px 12px;font-size:13px;outline:none;transition:border .2s}
-input:focus,select:focus,textarea:focus{border-color:var(--bf)}
-button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:none;transition:all .15s}button:hover{opacity:.85}
-.mono{font-family:'JetBrains Mono',monospace}
-@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.anim{animation:fadeIn .3s ease-out}
-@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}.slide{animation:slideIn .3s ease-out}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
-@keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spinning{animation:spin .8s linear infinite}`;
 
   const KPI = ({ label, value, sub, color, onClick, active }) => (
     <div
