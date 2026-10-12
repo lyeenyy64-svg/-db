@@ -751,6 +751,8 @@ app.use(express.json({ strict: false, limit: "20mb" }));
 const auditLog = require("./audit.cjs").createAudit({ slackClient: slackNotify, notifyChannel: NOTIFY_CHANNEL });
 require("./auth.cjs").setupAuth(app, db, { slackClient: slackNotify, ROLE_CHANGE_PASSCODE, audit: auditLog.record, auditAttach: auditLog.attach });
 auditLog.mount(app);
+// 목록 다운로드는 서버 허가(사유·건수 상한·일일 한도)를 받아야 한다 (개인정보보호 조치 7번)
+require("./exportControl.cjs").mount(app, db, { audit: auditLog.record });
 
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();

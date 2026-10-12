@@ -3899,7 +3899,13 @@ function MainApp({ authUser, onLogout }) {
   const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", statuteExtensionDate: "채권 소멸시효 연장일", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", manualAddress: "직접 입력 주소", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
 
   // ─── Excel Download ─────────────────────────────────────
-  const downloadCSV = (filename, headers, rows) => {
+  const downloadCSV = async (filename, headers, rows) => {
+    // 목록 내려받기는 서버 허가가 필요하다: 사유 입력 + 1회/일일 건수 상한 + 다운로드 기록 (개인정보보호 조치 7번)
+    const reason = window.prompt(`"${filename}" 내려받기 (${rows.length}건)\n사유를 입력하세요. (예: 월 정산 대조)\n※ 사유에는 이름·주민번호 등 개인정보를 적지 마세요. 다운로드 기록이 남습니다.`);
+    if (reason === null) return;
+    try {
+      await authApi("/api/exports/request", "POST", { kind: filename.replace(/_\d{4}-\d{2}-\d{2}\.csv$/, ""), rowCount: rows.length, reason });
+    } catch (e) { showToast(e.message); return; }
     const BOM = "\uFEFF";
     const escape = (v) => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
     const csv = BOM + [headers.join(","), ...rows.map(r => r.map(escape).join(","))].join("\n");

@@ -6,6 +6,7 @@
 // ============================================================
 const crypto = require("crypto");
 const { createPrivacy } = require("./privacy.cjs");
+const { rateLimited } = require("./exportControl.cjs");
 
 const SESSION_COOKIE = "df_session";
 const SESSION_HOURS = Number(process.env.AUTH_SESSION_HOURS) || 12;
@@ -68,7 +69,11 @@ function authorize(req) {
     if (p.startsWith("/admin/stats")) return level >= 3 ? null : "마스터 권한이 필요합니다";
     return level >= 2 ? null : "관리자 권한이 필요합니다";
   }
-  if (isRead) return null;
+  // 개인정보가 담긴 파일 열람/내려받기는 구성원에게 허용하지 않는다
+  if (isRead) {
+    if (level < 1 && (p === "/file-stream" || /^\/reports\/[^/]+\/docx$/.test(p))) return "다운로드 권한이 없습니다";
+    return null;
+  }
   if (level < 1 && !MEMBER_SAFE_POST.some(re => re.test(p))) return "구성원 권한은 조회만 할 수 있습니다";
   if (level < 2) {
     if (req.method === "DELETE" && /^\/debtors\/[^/]+$/.test(p)) return "관리자 권한이 필요합니다";
@@ -302,6 +307,10 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
       return res.status(403).json({ error: "비밀번호를 먼저 변경해야 합니다", code: "MUST_CHANGE_PASSWORD" });
     }
     req.user = publicUser(s.account);
+    if (req.path !== "/admin/heartbeat" && rateLimited(req.user.id)) {
+      log({ event: "rate_limited", user: req.user.name, ip: req.ip, detail: `${req.method} ${req.path}` });
+      return res.status(429).json({ error: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.", code: "RATE_LIMITED" });
+    }
     const denied = authorize(req);
     if (denied) {
       log({ event: "access_denied", user: req.user.name, ip: req.ip, detail: `${req.method} ${req.path}` });
