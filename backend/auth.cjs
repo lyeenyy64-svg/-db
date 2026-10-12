@@ -46,6 +46,36 @@ function validatePassword(pw) {
   return null;
 }
 
+// ─── 권한(RBAC) 정책 — 화면에서 버튼을 숨기는 것과 별개로 서버가 직접 막는다 ───
+// member(구성원): 읽기만 / manager(매니저): + 등록·수정·삭제(핵심 항목 제외)
+// admin(관리자): + 채무자 삭제, 어드민 메뉴 / superadmin(마스터): + 통계
+const ROLE_LEVEL = { member: 0, manager: 1, admin: 2, superadmin: 3 };
+// 구성원도 호출해야 하는 "읽기 성격"의 POST (AI 질의, 문서 미리보기 등)
+const MEMBER_SAFE_POST = [
+  /^\/ai-chat$/, /^\/ai\/(doc-chat|extract-pdf-text)$/, /^\/documents\/(preview-html|generate-hwpx)$/,
+  /^\/slack\/preview$/, /^\/payments\/verify-excel$/, /^\/admin\/heartbeat$/,
+];
+function authorize(req) {
+  const level = ROLE_LEVEL[req.user.role] ?? 0;
+  const p = req.path;
+  const isRead = req.method === "GET" || req.method === "HEAD";
+  // 계정 관리 API는 auth.cjs 안에서 자체 권한을 검사한다
+  if (p.startsWith("/auth/")) return null;
+  // 어드민 영역
+  if (p.startsWith("/admin/")) {
+    if (p === "/admin/heartbeat") return null;
+    if (p.startsWith("/admin/stats")) return level >= 3 ? null : "마스터 권한이 필요합니다";
+    return level >= 2 ? null : "관리자 권한이 필요합니다";
+  }
+  if (isRead) return null;
+  if (level < 1 && !MEMBER_SAFE_POST.some(re => re.test(p))) return "구성원 권한은 조회만 할 수 있습니다";
+  if (level < 2) {
+    if (req.method === "DELETE" && /^\/debtors\/[^/]+$/.test(p)) return "관리자 권한이 필요합니다";
+    if (p.startsWith("/alert-rules") || p.startsWith("/edit-logs/")) return "관리자 권한이 필요합니다";
+  }
+  return null;
+}
+
 function parseCookies(req) {
   const out = {};
   const raw = req.headers.cookie;
@@ -269,6 +299,11 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
       return res.status(403).json({ error: "비밀번호를 먼저 변경해야 합니다", code: "MUST_CHANGE_PASSWORD" });
     }
     req.user = publicUser(s.account);
+    const denied = authorize(req);
+    if (denied) {
+      log({ event: "access_denied", user: req.user.name, ip: req.ip, detail: `${req.method} ${req.path}` });
+      return res.status(403).json({ error: denied, code: "FORBIDDEN" });
+    }
     next();
   });
 
