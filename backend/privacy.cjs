@@ -26,7 +26,8 @@ const PII_WRITE_KEYS = new Set([...RRN_KEYS, ...PHONE_KEYS, ...ADDR_KEYS]);
 const RRN_RE = /(?<!\d)(\d{6})-([1-8]\d{6})(?!\d)/g;
 const PHONE_RE = /(0\d{1,2})[-\s.]?(\d{3,4})[-\s.]?(\d{4})/g;
 
-const maskRrnText = (s) => s.replace(RRN_RE, "$1-*******");
+// 뒷자리는 첫 숫자(성별·세기 구분)만 남기고 가린다 — 화면이 이 숫자로 출생 세기(19xx/20xx)와 나이를 계산한다
+const maskRrnText = (s) => s.replace(RRN_RE, (m, front, back) => `${front}-${back[0]}******`);
 const maskPhoneText = (s) => s.replace(PHONE_RE, "$1-****-$3");
 function maskAddressText(s) {
   const t = s.trim().split(/\s+/);
@@ -44,7 +45,7 @@ const rrnFingerprint = (s) => require("crypto").createHash("sha256").update(FP_S
 // 키 이름에 맞는 마스킹 (문자열 값)
 function maskStringByKey(key, s) {
   let out = maskRrnText(s);
-  if (RRN_KEYS.has(key)) out = out.replace(/^(\d{6})[-\s]?\d+$/, "$1-*******");
+  if (RRN_KEYS.has(key)) out = out.replace(/^(\d{6})[-\s]?(\d)\d*$/, "$1-$2******");
   else if (PHONE_KEYS.has(key)) out = maskPhoneText(out);
   else if (ADDR_KEYS.has(key)) out = maskAddressText(out);
   return out;
@@ -83,10 +84,10 @@ function restoreMasked(next, prev, key) {
     if (maskStringByKey(key, prev) === next) return prev;
     // 자유 텍스트(메모 등)에 섞인 가려진 주민번호는 앞 6자리가 같은 원문으로 되돌린다 (그 외 편집 내용은 유지)
     const origs = prev.match(RRN_RE);
-    if (origs && next.includes("-*******")) {
+    if (origs && /-\d\*{6}/.test(next)) {
       const pool = origs.slice();
-      return next.replace(/(?<!\d)(\d{6})-\*{7}/g, (m, head) => {
-        const i = pool.findIndex(o => o.startsWith(head));
+      return next.replace(/(?<!\d)(\d{6})-(\d)\*{6}/g, (m, head, first) => {
+        const i = pool.findIndex(o => o.startsWith(`${head}-${first}`));
         return i >= 0 ? pool.splice(i, 1)[0] : m;
       });
     }
