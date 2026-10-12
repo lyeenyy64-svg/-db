@@ -2086,6 +2086,82 @@ const PasswordChangeScreen = ({ user, onSubmit, onLogout }) => {
   );
 };
 
+// ─── 접속기록 (마스터 전용) — 누가·언제·무엇을 했는지 확인하고 이상 행위/변조 여부를 점검한다 ─────────
+// 서버의 별도 저장소(audit.cjs)에서 읽어오며, 기록에는 개인정보 원문이 들어있지 않다.
+const AuditLogPanel = () => {
+  const [filters, setFilters] = useState({ user: "", action: "", from: "", to: "" });
+  const [data, setData] = useState(null);
+  const [anomalies, setAnomalies] = useState(null);
+  const [verify, setVerify] = useState(null);
+  const [error, setError] = useState("");
+  const load = useCallback(async (f) => {
+    setError("");
+    try {
+      const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v)).toString();
+      setData(await authApi(`/api/admin/audit?limit=300${qs ? "&" + qs : ""}`));
+    } catch (e) { setError(e.message); }
+  }, []);
+  useEffect(() => {
+    load(filters);
+    authApi("/api/admin/audit/anomalies?days=7").then(setAnomalies).catch(() => {});
+  }, []);
+  const sel = { padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--inp)", color: "var(--tp)" };
+  const th = { textAlign: "left", padding: "6px 8px", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" };
+  const td = { padding: "5px 8px", fontSize: 12, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap", maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis" };
+  const hasAlerts = anomalies && (anomalies.flagged.length || anomalies.night.length || anomalies.failures.length);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>이상 행위 점검 (최근 {anomalies?.days || 7}일)</div>
+        {!anomalies ? <div style={{ fontSize: 12, color: "var(--tm)" }}>불러오는 중…</div>
+          : !hasAlerts ? <div style={{ fontSize: 12, color: "var(--ok)" }}>감지된 이상 행위가 없습니다.</div>
+          : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+              {anomalies.flagged.map((f, i) => <div key={"f" + i} style={{ color: "var(--err)" }}>⚠ {f.user} · {f.hour}시대 — {f.reasons.join(", ")}</div>)}
+              {anomalies.night.map((n, i) => <div key={"n" + i} style={{ color: "#b45309" }}>🌙 {n.user} · {n.day} 새벽(0~5시) 활동 — 요청 {n.requests}건{n.reveals ? `, 원문 열람 ${n.reveals}건` : ""}{n.downloads ? `, 다운로드 ${n.downloads}건` : ""}</div>)}
+              {anomalies.failures.map((x, i) => <div key={"x" + i} style={{ color: "#b45309" }}>🔑 {x.user || "(알 수 없음)"} — 로그인/인증 실패·권한 거부 {x.fails}건</div>)}
+            </div>
+          )}
+      </div>
+      <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <select value={filters.user} onChange={e => setFilters(p => ({ ...p, user: e.target.value }))} style={sel}>
+            <option value="">전체 사용자</option>{(data?.users || []).map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+          <select value={filters.action} onChange={e => setFilters(p => ({ ...p, action: e.target.value }))} style={sel}>
+            <option value="">전체 행위</option>{(data?.actions || []).map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <input type="date" value={filters.from} onChange={e => setFilters(p => ({ ...p, from: e.target.value }))} style={sel} />
+          <span style={{ fontSize: 12, color: "var(--tm)" }}>~</span>
+          <input type="date" value={filters.to} onChange={e => setFilters(p => ({ ...p, to: e.target.value }))} style={sel} />
+          <button onClick={() => load(filters)} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--acc)", color: "#fff", border: "none", cursor: "pointer" }}>조회</button>
+          <button onClick={async () => { try { setVerify(await authApi("/api/admin/audit/verify")); } catch (e) { setError(e.message); } }}
+            style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: "pointer" }}>무결성 검증</button>
+          {verify && <span style={{ fontSize: 12, fontWeight: 600, color: verify.ok ? "var(--ok)" : "var(--err)" }}>{verify.ok ? `이상 없음 (${verify.total}건)` : `변조/삭제 의심: #${verify.brokenAtId} 부근`}</span>}
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--tm)" }}>보관 기간 {data?.retentionDays || "-"}일 · 최근 300건 표시</span>
+        </div>
+        {error && <div style={{ fontSize: 12, color: "var(--err)", marginBottom: 8 }}>{error}</div>}
+        <div style={{ overflowX: "auto", maxHeight: 520, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>{["일시", "사용자", "권한", "IP", "행위", "대상 경로", "ID", "결과", "건수", "비고"].map(h => <th key={h} style={th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {(data?.rows || []).map(r => (
+                <tr key={r.id}>
+                  <td style={td}>{r.ts}</td><td style={td}>{r.user || "-"}</td><td style={td}>{r.role || ""}</td><td style={td}>{r.ip || ""}</td>
+                  <td style={{ ...td, fontWeight: 600, color: ["pii_reveal", "access_denied", "login_fail", "otp_fail", "다운로드"].includes(r.action) ? "var(--err)" : "var(--tp)" }}>{r.action}</td>
+                  <td style={td} title={r.route || ""}>{r.method ? `${r.method} ` : ""}{r.route || ""}</td><td style={td}>{r.target || ""}</td>
+                  <td style={td}>{r.status ?? ""}</td><td style={td}>{r.count ?? ""}</td><td style={td} title={r.detail || ""}>{r.detail || ""}</td>
+                </tr>
+              ))}
+              {data && !data.rows.length && <tr><td colSpan={10} style={{ ...td, textAlign: "center", color: "var(--tm)" }}>기록이 없습니다</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const PendingScreen = ({ user, onLogout }) => (
   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "var(--bg)", fontFamily: "'Noto Sans KR', sans-serif" }}>
     <div className="anim" style={{ background: "var(--card)", borderRadius: 20, padding: 48, width: 420, textAlign: "center", border: "1px solid var(--brd)" }}>
@@ -12748,7 +12824,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* 상단 4탭 */}
         <div style={{ display: "flex", gap: 2, background: "var(--card)", borderRadius: 10, padding: 4, border: "1px solid var(--brd)" }}>
-          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }, ...(isSuperAdmin ? [{ k: "stats", l: "통계" }] : [])].map(t => (
+          {[{ k: "settings", l: "시스템 설정" }, { k: "users", l: `사용자 관리 (${users.length})` }, { k: "alerts", l: "알림 설정" }, { k: "slack", l: "Slack 수집" }, { k: "logs", l: `수정 로그${adminEditLogs ? ` (${adminEditLogs.length})` : ""}` }, ...(isSuperAdmin ? [{ k: "stats", l: "통계" }, { k: "audit", l: "접속기록" }] : [])].map(t => (
             <button key={t.k} onClick={() => { setMainTab(t.k); if (t.k === "logs") setAdminEditLogs(null); if (t.k === "stats") setAdminStats(null); }} style={{ flex: 1, padding: "10px 0", borderRadius: 8, fontSize: 13, fontWeight: 600, background: mainTab === t.k ? "var(--bg)" : "transparent", color: mainTab === t.k ? "var(--tp)" : "var(--tm)" }}>{t.l}</button>
           ))}
         </div>
@@ -13087,6 +13163,7 @@ button{font-family:'Noto Sans KR',sans-serif;cursor:pointer;border:none;outline:
         })()}
 
         {/* 통계 (마스터 전용) */}
+        {mainTab === "audit" && isSuperAdmin && <AuditLogPanel />}
         {mainTab === "stats" && isSuperAdmin && (() => {
           const EMPTY_GRAN = { daily: [], monthly: [], yearly: [] };
           const EMPTY_STATS = { access: EMPTY_GRAN, volume: EMPTY_GRAN, todo: { register: EMPTY_GRAN, complete: EMPTY_GRAN, remove: EMPTY_GRAN }, summary: [] };

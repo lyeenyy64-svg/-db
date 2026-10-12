@@ -89,7 +89,7 @@ function parseCookies(req) {
   return out;
 }
 
-function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
+function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAttach } = {}) {
   const log = typeof audit === "function" ? audit : () => {};
 
   db.exec(`
@@ -309,6 +309,7 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit } = {}) {
     }
     req.sessionHash = s.session.token_hash;
     privacy.attach(req, res); // 응답 개인정보 마스킹 + 마스킹된 값의 역저장 방지
+    if (typeof auditAttach === "function") auditAttach(req, res); // 접속기록 (누가·언제·무엇을)
     next();
   });
   privacy.mount(app);

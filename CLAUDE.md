@@ -10,6 +10,7 @@
 - **로그인/2단계 인증**: 서버가 계정·세션을 관리하고 로그인 때 Slack DM으로 일회용 코드를 보낸다 (봇에 `users:read.email`, `chat:write` 필요). Slack 장애로 아무도 로그인 못 하면 `backend/.env`에 `AUTH_2FA=off` 후 재시작. 비밀번호 분실 비상 복구: `node backend/set_password.cjs <이름|이메일> <새비밀번호>`.
 - **암호화 키**: 주민번호는 AES-256-GCM으로 암호화 저장. 키는 서버 계정의 `~/.debtflow/pii.key`(최초 실행 시 자동 생성) 또는 `PII_ENC_KEY`/`PII_ENC_KEY_FILE`. 저장소·OneDrive 밖에 따로 보관할 것 — 분실하면 복구 불가.
 - **HTTPS**: `setup_tls_cert.ps1 -HostName <서버IP>`로 인증서를 만들면 vite(3001)가 HTTPS로 뜨고 3000 포트의 HTTP는 HTTPS로 넘어간다. 전원 HTTPS 접속 확인 후 `backend/.env`에 `REQUIRE_HTTPS=on`.
+- **접속기록**: 누가·언제·무엇을(조회/수정/삭제/다운로드/원문열람/로그인 등) 했는지 앱 DB와 별도 파일(`~/.debtflow/audit/audit.db`)에 해시 체인으로 기록, 개인정보 원문은 남기지 않는다. 마스터 계정은 어드민 > 접속기록에서 조회·무결성 검증·이상 행위 확인. 보관 기간 기본 730일 — 법정 기준은 정보보안팀/법무팀 확인값으로 `AUDIT_RETENTION_DAYS` 조정. 이 파일도 백업 대상에 포함할 것.
 
 ## 커밋/푸시 정책
 사용자가 요청한 하나의 기능/작업 단위가 완료되면, 별도로 매번 확인받지 않고 자동으로 `git add` → `git commit` → `git push origin master`를 수행한다.

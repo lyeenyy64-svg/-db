@@ -747,7 +747,10 @@ app.use(express.json({ strict: false, limit: "20mb" }));
 
 // ─── 서버 측 인증 (개인정보보호 조치 1번) ──────────────────
 // 이 아래에 등록되는 모든 /api 라우트는 로그인 세션이 있어야만 호출할 수 있다.
-require("./auth.cjs").setupAuth(app, db, { slackClient: slackNotify, ROLE_CHANGE_PASSCODE });
+// 접속기록(개인정보보호 조치 6번)은 앱 DB와 분리된 별도 파일에 남긴다 (audit.cjs)
+const auditLog = require("./audit.cjs").createAudit({ slackClient: slackNotify, notifyChannel: NOTIFY_CHANNEL });
+require("./auth.cjs").setupAuth(app, db, { slackClient: slackNotify, ROLE_CHANGE_PASSCODE, audit: auditLog.record, auditAttach: auditLog.attach });
+auditLog.mount(app);
 
 // ─── SSE 실시간 브로드캐스트 ─────────────────────────
 const sseClients = new Set();
