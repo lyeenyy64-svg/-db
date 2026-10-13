@@ -27,6 +27,20 @@ const COMBINED_LINE = /^(\d{1,2})\s*\/\s*(\d{1,2})\s+(.+?)\s+([\d]{1,3}(?:,\d{3}
 // 그룹1: 입금자명 (공백 포함 가능), 그룹2: 금액 (콤마 포함)
 const PAYMENT_LINE = /^(.+?)\s+([\d]{1,3}(?:,\d{3})+|\d{4,})원?$/;
 
+// MM/DD에 붙일 연도: 메시지 작성 시각에 가장 가까운 해를 고른다.
+// (1월 2일에 올라온 "12/30" 입금이 올해 12/30(미래)로 들어가던 연말연초 오류 방지)
+function yearFor(mm, dd, messageDate) {
+  const ref = messageDate ? new Date(messageDate) : new Date();
+  const base = isNaN(ref) ? new Date() : ref;
+  const y = base.getFullYear();
+  let best = y, bestDiff = Infinity;
+  for (const c of [y - 1, y, y + 1]) {
+    const diff = Math.abs(new Date(c, parseInt(mm, 10) - 1, parseInt(dd, 10)).getTime() - base.getTime());
+    if (diff < bestDiff) { best = c; bestDiff = diff; }
+  }
+  return best;
+}
+
 function parse(text, messageDate) {
   const lines = String(text || "").split(/\r?\n/);
   const messageYear = messageDate
@@ -72,7 +86,7 @@ function parse(text, messageDate) {
     if (cm) {
       const mm = cm[1].padStart(2, "0");
       const dd = cm[2].padStart(2, "0");
-      const date = `${messageYear}-${mm}-${dd}`;
+      const date = `${yearFor(mm, dd, messageDate)}-${mm}-${dd}`;
       const payerName = cm[3].trim().replace(/\s+/g, " ");
       const amount = parseInt(cm[4].replace(/,/g, ""), 10);
       if (!isNaN(amount) && amount > 0) {
@@ -87,7 +101,7 @@ function parse(text, messageDate) {
     if (dm) {
       const mm = dm[1].padStart(2, "0");
       const dd = dm[2].padStart(2, "0");
-      currentDate = `${messageYear}-${mm}-${dd}`;
+      currentDate = `${yearFor(mm, dd, messageDate)}-${mm}-${dd}`;
       meta.foundDates.push(currentDate);
       continue;
     }
@@ -143,7 +157,7 @@ function parseMoaline(text, messageDate) {
     if (cm) {
       const mm = cm[1].padStart(2, "0");
       const dd = cm[2].padStart(2, "0");
-      const date = `${messageYear}-${mm}-${dd}`;
+      const date = `${yearFor(mm, dd, messageDate)}-${mm}-${dd}`;
       const payerName = cm[3].trim().replace(/\s+/g, " ");
       const amount = parseInt(cm[4].replace(/,/g, ""), 10);
       if (!isNaN(amount) && amount > 0) {

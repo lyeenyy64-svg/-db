@@ -14,11 +14,18 @@ describe("parseKoreanDates", () => {
     const found = parseKoreanDates("8월 11일에 입금 예정", ref);
     expect(asYmd(found)).toContain("2026-08-11");
   });
-  it("다음주 화요일을 기록일 기준으로 해석한다 (2026-08-05는 수요일)", () => {
+  it("다음주 화요일은 다음 주(월~일)의 화요일이다 (2026-08-05는 수요일 → 8/11)", () => {
     const ref = new Date(2026, 7, 5); // 2026-08-05 수요일
     const found = parseKoreanDates("다음주 화요일에 입금하겠다고 함", ref);
-    // 화요일(2) - 수요일(3) = -1 -> (+7)%7=6, +7(다음주) = 13일 뒤 = 8/18
-    expect(asYmd(found)).toContain("2026-08-18");
+    expect(asYmd(found)).toContain("2026-08-11");
+  });
+  it("요일만 있으면 가장 가까운 앞으로의 그 요일이다", () => {
+    const ref = new Date(2026, 7, 5); // 수요일
+    expect(asYmd(parseKoreanDates("화요일에 입금", ref))).toContain("2026-08-11");
+  });
+  it("연말 메모의 1월 5일은 내년으로 해석한다", () => {
+    const ref = new Date(2026, 11, 28);
+    expect(asYmd(parseKoreanDates("1월 5일에 입금 약속", ref))).toContain("2027-01-05");
   });
   it("이번주 X요일은 다음주를 더하지 않는다", () => {
     const ref = new Date(2026, 7, 5); // 수요일

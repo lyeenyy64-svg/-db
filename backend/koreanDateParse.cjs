@@ -19,18 +19,28 @@ function parseKoreanDates(text, refDate) {
   if (!text) return [];
   const ref = refDate instanceof Date && !isNaN(refDate.getTime()) ? refDate : null;
   const anchorYear = (ref || new Date()).getFullYear();
+  // 월/일만 있는 표현은 기준일에 가장 가까운 해로 해석한다(12월 말 메모의 "1월 5일"은 내년, 1월 초 메모의 "12/30"은 작년)
+  const nearestYearDate = (mo0, day) => {
+    if (!ref) return clampDate(anchorYear, mo0, day);
+    let best = null;
+    for (const yy of [anchorYear - 1, anchorYear, anchorYear + 1]) {
+      const c = clampDate(yy, mo0, day);
+      if (!best || Math.abs(c - ref) < Math.abs(best - ref)) best = c;
+    }
+    return best;
+  };
   const found = [];
   const push = (date, raw) => { if (date && !isNaN(date.getTime())) found.push({ date, raw }); };
 
   // "8월 11일" / "8월11" (일 생략 가능)
   for (const m of text.matchAll(/(\d{1,2})\s*월\s*(\d{1,2})\s*일?/g)) {
     const mo = parseInt(m[1], 10), day = parseInt(m[2], 10);
-    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) push(clampDate(anchorYear, mo - 1, day), m[0]);
+    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) push(nearestYearDate(mo - 1, day), m[0]);
   }
   // "8.11" / "8/11" / "8-11"
   for (const m of text.matchAll(/(?<!\d)(\d{1,2})[./-](\d{1,2})(?!\d)/g)) {
     const mo = parseInt(m[1], 10), day = parseInt(m[2], 10);
-    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) push(clampDate(anchorYear, mo - 1, day), m[0]);
+    if (mo >= 1 && mo <= 12 && day >= 1 && day <= 31) push(nearestYearDate(mo - 1, day), m[0]);
   }
 
   if (ref) {
@@ -42,9 +52,16 @@ function parseKoreanDates(text, refDate) {
     for (const m of text.matchAll(/(이번\s?주|다음\s?주|차주|담주)?\s*([일월화수목금토])요일/g)) {
       const targetDow = WEEKDAY[m[2]];
       const refDow = ref.getDay();
-      let diff = (targetDow - refDow + 7) % 7;
-      if (m[1] && /다음|차주|담주/.test(m[1])) diff += 7;
-      push(addDays(ref, diff), m[0]);
+      if (m[1]) {
+        // 한국식 주 단위(월~일): 이번주/다음주 X요일은 그 주의 해당 요일이다
+        // (기준이 수요일일 때 "다음주 화요일"은 6일 뒤+7이 아니라 다음 주 화요일 = 6일 뒤)
+        const idx = (d) => (d + 6) % 7; // 월=0 … 일=6
+        let diff = idx(targetDow) - idx(refDow);
+        if (/다음|차주|담주/.test(m[1])) diff += 7;
+        push(addDays(ref, diff), m[0]);
+      } else {
+        push(addDays(ref, (targetDow - refDow + 7) % 7), m[0]);
+      }
     }
 
     // (이번달|이달|다음달|익월) (말/말일/초/중순)

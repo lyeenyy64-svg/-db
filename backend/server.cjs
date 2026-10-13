@@ -10,6 +10,19 @@ const cors = require("cors");
 const fs = require("fs");
 const Database = require("better-sqlite3");
 const path = require("path");
+
+// 서버(KST) 로컬 기준 YYYY-MM-DD. toISOString()은 UTC라 KST 00:00~09:00에 하루(월초엔 한 달) 어긋난다
+// ISO 시각 문자열(UTC, 예: 프론트의 toISOString)은 로컬 날짜로 바꿔서 비교한다. 날짜만 있는 값은 그대로.
+const createdLocalDate = (v) => {
+  const t = String(v || "");
+  if (t.length <= 10) return t;
+  const d = new Date(t);
+  return isNaN(d) ? t.slice(0, 10) : localDate(d);
+};
+const localDate = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
 const os = require("os");
 let pdfParse; try { pdfParse = require("pdf-parse"); } catch(e) { pdfParse = null; }
 // Power Automate 등 외부에서 /api/todo-list/from-outlook-flag 호출 시 검증할 공유 비밀값.
@@ -209,7 +222,7 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
   if (!migrated) {
     const rows = db.prepare("SELECT id, complaint_date, status_note FROM complaints WHERE status_note IS NOT NULL AND status_note != ''").all();
     const ins = db.prepare("INSERT OR IGNORE INTO complaint_history (complaint_id, date, content) VALUES (?, ?, ?)");
-    const tx = db.transaction(() => { rows.forEach(r => ins.run(r.id, r.complaint_date || new Date().toISOString().slice(0,10), r.status_note)); });
+    const tx = db.transaction(() => { rows.forEach(r => ins.run(r.id, r.complaint_date || localDate(), r.status_note)); });
     tx();
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('cmp_hist_migrated', '1')").run();
   }
@@ -1709,11 +1722,11 @@ app.get("/api/payments/:id/history", (req, res) => {
 // 이벤트형 규칙(new_payment/new_debtor/status_change)은 해당 API 처리 성공 시 즉시 발송한다.
 // seizure_collected는 압류 회수액을 서버 DB에서 신뢰성 있게 추적할 데이터가 아직 없어 평가하지 않는다.
 function alertAlreadySentToday(ruleId) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   return !!db.prepare("SELECT 1 FROM alert_sent_log WHERE rule_id = ? AND sent_date = ?").get(ruleId, today);
 }
 function markAlertSentToday(ruleId, count) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   db.prepare("INSERT OR REPLACE INTO alert_sent_log (rule_id, sent_date, entity_count) VALUES (?, ?, ?)").run(ruleId, today, count);
 }
 
@@ -1767,7 +1780,7 @@ async function runAlertRules() {
       `).all();
       lines = matched.map(d => `• ${d.name} (${d.hub_name || "-"}) | 잔액 ${(d.final_balance_legal || 0).toLocaleString()}원`);
     } else if (rule.trigger_type === "no_contact") {
-      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const cutoff = localDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
       matched = db.prepare(`
         SELECT d.id, d.name, d.hub_name FROM debtors d
         WHERE d.collection_status = '추심진행'
@@ -1874,7 +1887,7 @@ async function sendInstallmentOverdueNotify(overdueList) {
 async function sendInstallmentMonthlyNotify(database) {
   if (!slackNotify || !NOTIFY_CHANNEL) return { ok: false, reason: "Slack 미설정" };
   const today = new Date();
-  const monthStr = today.toISOString().slice(0, 7);
+  const monthStr = localDate(today).slice(0, 7);
   const kvKey = `installment_monthly_notify_${monthStr}`;
   const lastSent = database.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey);
   if (lastSent) return { ok: false, reason: "이미 이번달 전송됨", lastSent: lastSent.value };
@@ -1954,7 +1967,7 @@ app.get("/api/installments/schedules", (req, res) => {
 
 // POST /api/installments/auto-overdue - 지연 자동 처리
 app.post("/api/installments/auto-overdue", async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const overdue = db.prepare(`
     SELECT s.*, p.debtor_id, d.name AS debtor_name, d.assignee, d.hub_name
     FROM installment_schedules s
@@ -1973,7 +1986,7 @@ app.post("/api/installments/auto-overdue", async (req, res) => {
 // POST /api/installments/monthly-notify - 월간 알림 수동 트리거
 app.post("/api/installments/monthly-notify", async (req, res) => {
   if (req.body?.force) {
-    const monthStr = new Date().toISOString().slice(0, 7);
+    const monthStr = localDate().slice(0, 7);
     db.prepare("DELETE FROM kv_store WHERE key = ?").run(`installment_monthly_notify_${monthStr}`);
   }
   const result = await sendInstallmentMonthlyNotify(db);
@@ -1993,7 +2006,7 @@ app.post("/api/installments/import-excel", (req, res) => {
     const byCode = {};
     debtors.forEach(d => { if (d.hub_code) byCode[String(d.hub_code).trim()] = d; });
 
-    const today = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const today = localDate().slice(0, 7); // YYYY-MM
 
     // 열 이름에서 YYYY-MM 파싱 ("2024년 1월", "2025년 12월", "2026년 1월 " 등)
     function parseMonthCol(colName) {
@@ -2343,7 +2356,7 @@ app.post("/api/installments/schedules/sync-memo-amounts", (req, res) => {
 // (입금 삭제/재매칭으로 완납의 근거가 사라졌을 때 상태를 다시 열기 위함).
 function runInstallmentAutoSync(opts = {}) {
   const forceDebtorIds = new Set(opts.forceDebtorIds || []);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDate();
   const todayMonth = today.slice(0, 7);
 
   const fmtAmt = (n) => {
@@ -2355,7 +2368,8 @@ function runInstallmentAutoSync(opts = {}) {
     return `${n.toLocaleString("ko-KR")}원`;
   };
 
-  const plans = db.prepare("SELECT id, debtor_id FROM installment_plans").all();
+  // 중단/완료된 플랜은 재판정하지 않는다(안 그러면 종료된 플랜 일정이 계속 미납으로 찍히고 이력이 쌓임)
+  const plans = db.prepare("SELECT id, debtor_id FROM installment_plans WHERE status = '진행중'").all();
   let updated = 0;
 
   db.transaction(() => {
@@ -2444,9 +2458,10 @@ function runInstallmentAutoSync(opts = {}) {
             else                     newStatus = "예정";
           }
 
-          const paidAmtToStore = allocated > 0 ? allocated : (newStatus === "예정" ? 0 : (s.paid_amount || 0));
+          // 배분액이 없으면(입금 삭제/재매칭으로 일부납→미납이 된 경우 포함) 납부액도 0으로 맞춘다
+          const paidAmtToStore = allocated > 0 ? allocated : 0;
           const statusChanged   = newStatus !== s.status;
-          const amountChanged   = newStatus === "일부납" && allocated !== (s.paid_amount || 0);
+          const amountChanged   = paidAmtToStore !== (s.paid_amount || 0);
 
           if (statusChanged || amountChanged) {
             db.prepare("UPDATE installment_schedules SET status=?, paid_amount=? WHERE id=?")
@@ -2522,7 +2537,7 @@ app.get("/api/installments/schedules/:id/diagnose", (req, res) => {
     const target = db.prepare("SELECT s.*, p.debtor_id FROM installment_schedules s JOIN installment_plans p ON s.plan_id = p.id WHERE s.id = ?").get(req.params.id);
     if (!target) return res.status(404).json({ ok: false, error: "일정 없음" });
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDate();
     const todayMonth = today.slice(0, 7);
 
     const allScheds = db.prepare(`
@@ -2727,7 +2742,7 @@ app.patch("/api/debtors/bulk", (req, res) => {
     const _userName = userName || "관리자";
     const effDate = /^\d{4}-\d{2}-\d{2}$/.test(assigneeEffectiveDate || "")
       ? assigneeEffectiveDate
-      : new Date().toISOString().slice(0, 10);
+      : localDate();
 
     const getOld = db.prepare("SELECT id, name, assignee, collection_status AS collectionStatus FROM debtors WHERE id = ?");
     const updBoth = db.prepare("UPDATE debtors SET assignee = ?, collection_status = ?, updated_at = datetime('now','localtime') WHERE id = ?");
@@ -2857,7 +2872,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
   if (changedJsKeys.includes('assignee') && String(oldRow.assignee ?? '') !== String(coercedVals.assignee ?? '')) {
     const effDate = /^\d{4}-\d{2}-\d{2}$/.test(body.assigneeEffectiveDate || '')
       ? body.assigneeEffectiveDate
-      : new Date().toISOString().slice(0, 10);
+      : localDate();
     db.prepare(`
       INSERT INTO assignee_history (debtor_id, assignee, effective_date) VALUES (?, ?, ?)
       ON CONFLICT(debtor_id, effective_date) DO UPDATE SET assignee = excluded.assignee
@@ -3597,7 +3612,7 @@ app.post("/api/todo-list/from-outlook-flag", (req, res) => {
     task: subject,
     result: "",
     status: "진행중",
-    createdAt: new Date().toISOString().split("T")[0],
+    createdAt: localDate(),
     completedAt: null,
     deleted: false,
     outlookMessageId: messageId,
@@ -3766,7 +3781,7 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
         task: item.title,
         result: "",
         status: "진행중",
-        createdAt: new Date().toISOString().split("T")[0],
+        createdAt: localDate(),
         completedAt: null,
         deleted: false,
         notionPageId: item.id,
@@ -5873,7 +5888,7 @@ app.post("/api/reports/generate", async (req, res) => {
       let arr;
       try { arr = JSON.parse(row.value); } catch { continue; }
       if (!Array.isArray(arr)) continue;
-      const inPeriod = arr.filter(n => n && n.createdAt && n.createdAt.slice(0, 10) >= periodStart && n.createdAt.slice(0, 10) <= periodEnd);
+      const inPeriod = arr.filter(n => n && n.createdAt && createdLocalDate(n.createdAt) >= periodStart && createdLocalDate(n.createdAt) <= periodEnd);
       if (inPeriod.length > 0) {
         caseNoteCount += inPeriod.length;
         for (const n of inPeriod.slice(0, 2)) caseNoteSamples.push(String(n.content || "").slice(0, 90));
@@ -5918,7 +5933,7 @@ app.post("/api/reports/generate", async (req, res) => {
       let arr;
       try { arr = JSON.parse(row.value); } catch { continue; }
       if (!Array.isArray(arr)) continue;
-      const inPeriod = arr.filter(h => h && h.createdAt && h.createdAt.slice(0, 10) >= periodStart && h.createdAt.slice(0, 10) <= periodEnd);
+      const inPeriod = arr.filter(h => h && h.createdAt && createdLocalDate(h.createdAt) >= periodStart && createdLocalDate(h.createdAt) <= periodEnd);
       if (inPeriod.length > 0) {
         histCount += inPeriod.length; histDebtorCount++;
         const debtorId = row.key.slice("hist_m_".length);
@@ -6350,7 +6365,7 @@ app.listen(PORT, () => {
   const checkNightlyAddressBatch = () => {
     if (!isNightWindow()) return;
     if (addressBatchStatus.running) return; // 수동 실행 중이거나 이미 오늘 밤 시작됨
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = localDate();
     const kvKey = `address_batch_night_${dateStr}`;
     if (db.prepare("SELECT value FROM kv_store WHERE key = ?").get(kvKey)) return;
     db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)").run(kvKey, JSON.stringify({ startedAt: new Date().toISOString() }));

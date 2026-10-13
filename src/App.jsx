@@ -12,7 +12,12 @@ const fmtDate = (d) => {
   const dt = new Date(d);
   return `${dt.getFullYear()}.${String(dt.getMonth() + 1).padStart(2, "0")}.${String(dt.getDate()).padStart(2, "0")}`;
 };
-const today = () => new Date().toISOString().split("T")[0];
+// 브라우저(KST) 로컬 기준 YYYY-MM-DD — toISOString()은 UTC라 KST 00:00~09:00에 하루 전 날짜가 나온다
+const localDateStr = (d = new Date()) => {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+const today = () => localDateStr();
 const fmtSeconds = (s) => { if (!s) return "-"; const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h > 0 ? `${h}시간 ${m}분` : `${m}분`; };
 // 한 분할상환 일정이 여러 번 이월됐을 수 있어(예: 7/1 → 7/15 → 8/7), rolledOverFrom을
 // 계속 따라가며 원래 납부일들을 전부 모은다 (사이클 방지용 seen 가드).
@@ -449,7 +454,7 @@ const saveHistD = (id, arr) => { localStorage.setItem(`hist_d_${id}`, JSON.strin
 const addInstallmentMemoToDebtorHistory = (debtorId, dueDate, amount, text, userName, sourceHistoryId) => {
   if (!debtorId) return;
   const hist = getHistM(debtorId);
-  const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+  const todayDot = localDateStr().replace(/-/g, ".");
   const context = [dueDate ? fmtDate(dueDate) : "", amount ? fmt(amount) : ""].filter(Boolean).join(" ");
   const content = `[분할상환${context ? " " + context : ""}] ${text}`;
   saveHistM(debtorId, [{ id: uid("HIST"), date: todayDot, content, type: "분할상환", createdBy: userName || "관리자", sourceHistoryId, createdAt: new Date().toISOString() }, ...hist]);
@@ -2627,7 +2632,7 @@ const NegotiationTable = ({ rows, debtors, brands, addKeyIssue, updateKeyIssue, 
     const text = (noteText || "").trim();
     if (!debtorId || !text) return;
     const hist = getHistM(debtorId);
-    const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+    const todayDot = localDateStr().replace(/-/g, ".");
     if (r.histId) {
       const idx = hist.findIndex(h => h.id === r.histId);
       if (idx >= 0) {
@@ -3505,7 +3510,7 @@ function MainApp({ authUser, onLogout }) {
   // installmentsFocusDate를 소비/초기화하는 과정에서 InstallmentsView가 다시 마운트되어
   // 방금 연 dayPopup이 곧바로 사라져버린다
   const [instTab, setInstTab] = useState("이번달");
-  const [viewMonth, setViewMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [viewMonth, setViewMonth] = useState(localDateStr().slice(0, 7));
   const [dayPopup, setDayPopup] = useState(null);
   // 대시보드 CHECK 사항 패널에서 특정 건수를 클릭했을 때, 해당 탭으로 이동한 뒤
   // 그 날짜만 보도록 열어주기 위한 신호값 (설정되면 해당 뷰가 소비하고 다시 null로 되돌린다)
@@ -4512,7 +4517,7 @@ function MainApp({ authUser, onLogout }) {
       const bucket = buckets.find(b => daysLeft >= b.min && daysLeft < b.max) || buckets[buckets.length - 1];
       bucket.count++;
       bucket.amount += (d.finalBalanceLegal || 0);
-      bucket.items.push({ ...d, daysLeft, statuteYears: years, expiryDate: expiry.toISOString().split("T")[0], anchorDate, isExtended: !!d.statuteExtensionDate });
+      bucket.items.push({ ...d, daysLeft, statuteYears: years, expiryDate: localDateStr(expiry), anchorDate, isExtended: !!d.statuteExtensionDate });
     });
     buckets.forEach(b => b.items.sort((a, c) => a.daysLeft - c.daysLeft));
     noAnchorItems.sort((a, c) => (c.finalBalanceLegal || 0) - (a.finalBalanceLegal || 0));
@@ -6354,7 +6359,7 @@ function MainApp({ authUser, onLogout }) {
       setHistHighlight(null);
     }, [histHighlight, detailTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const todayDot = new Date().toISOString().slice(0, 10).replace(/-/g, ".");
+    const todayDot = localDateStr().replace(/-/g, ".");
     // 새 히스토리는 지금 열어본 항목(d)에 저장한다 — 어느 항목을 보고 있었든 통합 목록에는
     // 바로 합쳐져 보인다. 수정/삭제는 글이 실제로 저장된 항목(h.sourceId)을 그대로 따라간다.
     const openAdd  = () => setHistForm({ mode: "add",  date: todayDot, content: "", type: config.activityTypes[0] || "" });
@@ -7509,7 +7514,7 @@ function MainApp({ authUser, onLogout }) {
     const pageNums = []; for (let p = winStart; p <= winEnd; p++) pageNums.push(p);
     const setQuickRange = (days) => {
       const t = new Date(); const f = new Date(); f.setDate(f.getDate() - days);
-      setPFrom(f.toISOString().slice(0, 10)); setPTo(t.toISOString().slice(0, 10)); setPPage(1);
+      setPFrom(localDateStr(f)); setPTo(localDateStr(t)); setPPage(1);
     };
     const clearRange = () => { setPFrom(""); setPTo(""); setPPage(1); };
     const PCOLS = [
@@ -7749,7 +7754,7 @@ function MainApp({ authUser, onLogout }) {
       return thisMonthScheds.filter(s => s.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
     }, [thisMonthScheds]);
 
-    const todayStr = now.toISOString().slice(0, 10);
+    const todayStr = localDateStr(now);
     const cellDate = (day) => `${viewMonth}-${String(day).padStart(2, "0")}`;
 
     // ── 일정 추가 모달 (달력 + 버튼) ──────────────────────────
@@ -8103,7 +8108,7 @@ function MainApp({ authUser, onLogout }) {
               <button onClick={onPlanStartEdit} style={{ padding: "5px 12px", borderRadius: 7, background: "var(--bg2)", color: "var(--tp)", border: "1px solid var(--brd)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✏ 정보 수정</button>
             )}
             {canEdit && (
-              <button onClick={() => setAddSchedModal({ date: new Date().toISOString().slice(0, 10), planId: plan.id })}
+              <button onClick={() => setAddSchedModal({ date: localDateStr(), planId: plan.id })}
                 style={{ padding: "5px 12px", borderRadius: 7, background: "var(--acc)", color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>+ 일정 추가</button>
             )}
             {d && (
@@ -8517,7 +8522,7 @@ function MainApp({ authUser, onLogout }) {
                   <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>예정: </span><b className="mono">{fmt(monthStats.totalAmt)}</b></div>
                   <div style={{ fontSize: 11 }}><span style={{ color: "var(--tm)" }}>완납: </span><b className="mono" style={{ color: "#047857" }}>{fmt(monthStats.doneAmt)}</b></div>
                 </div>
-                {viewMonth !== now.toISOString().slice(0, 7) && <button onClick={() => setViewMonth(now.toISOString().slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
+                {viewMonth !== localDateStr(now).slice(0, 7) && <button onClick={() => setViewMonth(localDateStr(now).slice(0, 7))} style={{ padding: "3px 10px", borderRadius: 6, background: "var(--acc)", color: "#fff", fontSize: 11, fontWeight: 600, border: "none", cursor: "pointer" }}>오늘</button>}
               </div>
               <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 {canEdit && <button onClick={() => setModal({ type: "addInstallment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}><I name="plus" size={13} />플랜 추가</button>}
@@ -9396,7 +9401,7 @@ function MainApp({ authUser, onLogout }) {
       const liveLoan  = isEditingComplaint ? cmpEdit.loanAmount  : c.loanAmount;
       const total = (Number(liveLoan) || 0) + (Number(liveGoods) || 0);
       const statusOptions = ["준비중", "수사중", "기소", "불송치", "혐의없음", "취하"];
-      const today2 = () => new Date().toISOString().slice(0, 10);
+      const today2 = () => localDateStr();
       const Stat = ({ label, editing }) => (
         <div><div style={{ fontSize: 10, color: "var(--tm)", marginBottom: 3 }}>{label}</div>{editing}</div>
       );
@@ -13619,7 +13624,7 @@ function MainApp({ authUser, onLogout }) {
         <div style={{ padding: 16, borderTop: "1px solid var(--brd)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#000", marginBottom: 2 }}>[CHECK 사항]</div>
           {(() => {
-            const dOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+            const dOffset = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return localDateStr(d); };
             const yestStr = dOffset(-1), todayStr = dOffset(0), tmrwStr = dOffset(1);
             const scheds = data.installmentSchedules || [];
             const minsaEventCases = (data.minsaCases || []).filter(c => {
