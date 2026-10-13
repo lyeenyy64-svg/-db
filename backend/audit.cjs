@@ -95,6 +95,14 @@ function createAudit({ slackClient, notifyChannel } = {}) {
     return adb.prepare(`SELECT COUNT(*) c FROM audit_log WHERE user = @user AND ts >= @since AND ${whereSql}`).get({ user, since: sinceTs, ...params }).c;
   }
 
+  // 원문 열람은 요청 수가 아니라 열람한 채무자 수(count)로 센다 — 한 요청에 50명씩 여러 번 열어도 임계치에 걸리게
+  function revealHourCount(user) {
+    const since = new Date(Date.now() - 3600 * 1000);
+    const p = (n) => String(n).padStart(2, "0");
+    const sinceTs = `${since.getFullYear()}-${p(since.getMonth() + 1)}-${p(since.getDate())} ${p(since.getHours())}:${p(since.getMinutes())}:${p(since.getSeconds())}`;
+    return adb.prepare("SELECT COALESCE(SUM(COALESCE(count, 1)), 0) c FROM audit_log WHERE user = ? AND ts >= ? AND action = 'pii_reveal'").get(user, sinceTs).c;
+  }
+
   // 한 건 기록 — 실패해도 업무 요청을 막지 않는다
   function record(evt) {
     try {
@@ -108,7 +116,7 @@ function createAudit({ slackClient, notifyChannel } = {}) {
       row.hash = hashOf(row);
       insert.run(row);
       lastHash = row.hash;
-      if (row.action === "pii_reveal") maybeAlert(row.user, "reveal", hourCount(row.user, "action = 'pii_reveal'"), ALERT_REVEALS_PER_HOUR, "개인정보 원문 열람");
+      if (row.action === "pii_reveal") maybeAlert(row.user, "reveal", revealHourCount(row.user), ALERT_REVEALS_PER_HOUR, "개인정보 원문 열람");
       else if (row.action === "다운로드") maybeAlert(row.user, "download", hourCount(row.user, "action = '다운로드'"), ALERT_DOWNLOADS_PER_HOUR, "다운로드");
     } catch (e) { console.error("[audit] 기록 실패:", e.message); }
   }
@@ -196,7 +204,7 @@ function createAudit({ slackClient, notifyChannel } = {}) {
       const sinceTs = `${since.getFullYear()}-${p(since.getMonth() + 1)}-${p(since.getDate())} 00:00:00`;
       const hourly = adb.prepare(`
         SELECT user, substr(ts, 1, 13) AS hour,
-               SUM(action = 'pii_reveal') AS reveals, SUM(action = '다운로드') AS downloads, COUNT(*) AS requests
+               SUM(CASE WHEN action = 'pii_reveal' THEN COALESCE(count, 1) ELSE 0 END) AS reveals, SUM(action = '다운로드') AS downloads, COUNT(*) AS requests
         FROM audit_log WHERE ts >= ? AND user IS NOT NULL GROUP BY user, hour`).all(sinceTs);
       const flagged = [];
       for (const h of hourly) {
@@ -207,7 +215,7 @@ function createAudit({ slackClient, notifyChannel } = {}) {
         if (reasons.length) flagged.push({ user: h.user, hour: h.hour, reasons });
       }
       const night = adb.prepare(`
-        SELECT user, substr(ts, 1, 10) AS day, COUNT(*) AS requests, SUM(action = 'pii_reveal') AS reveals, SUM(action = '다운로드') AS downloads
+        SELECT user, substr(ts, 1, 10) AS day, COUNT(*) AS requests, SUM(CASE WHEN action = 'pii_reveal' THEN COALESCE(count, 1) ELSE 0 END) AS reveals, SUM(action = '다운로드') AS downloads
         FROM audit_log WHERE ts >= ? AND user IS NOT NULL AND CAST(substr(ts, 12, 2) AS INTEGER) < 5
           AND action NOT IN ('login_fail','otp_fail','logout')
         GROUP BY user, day HAVING reveals > 0 OR downloads > 0 OR requests >= 100 ORDER BY day DESC`).all(sinceTs);

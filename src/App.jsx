@@ -567,7 +567,7 @@ function getRehabOverrides() {
 }
 function saveRehabOverride(rehabId, debtorId) {
   const ov = getRehabOverrides();
-  if (debtorId === null) delete ov[rehabId]; else ov[rehabId] = debtorId;
+  ov[rehabId] = debtorId; // null = 명시적 "연결 해제" — 항목을 지우면 다음 로드 때 이름 자동매칭이 같은 채무자로 다시 연결해버린다
   localStorage.setItem(REHAB_OVERRIDES_KEY, JSON.stringify(ov));
   kvPut(REHAB_OVERRIDES_KEY, ov);
 }
@@ -653,7 +653,7 @@ const AD_OVERRIDES_KEY    = "ad_manual_overrides";
 function getLegalOv(key)  { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch { return {}; } }
 function saveLegalOv(key, caseId, debtorId) {
   const ov = getLegalOv(key);
-  if (debtorId === null) delete ov[caseId]; else ov[caseId] = debtorId;
+  ov[caseId] = debtorId; // null = 명시적 "연결 해제" — 항목을 지우면 다음 로드 때 이름 자동매칭이 같은 채무자로 다시 연결해버린다
   localStorage.setItem(key, JSON.stringify(ov));
   kvPut(key, ov);
 }
@@ -680,7 +680,7 @@ function getCollectionManual()  { try { return JSON.parse(localStorage.getItem(C
 function getCollectionDeleted() { try { return JSON.parse(localStorage.getItem(COLLECTION_DELETED_KEY) || "[]"); } catch { return []; } }
 function saveCollectionOv(orderId, debtorId) {
   const ov = getCollectionOv();
-  if (debtorId === null) delete ov[orderId]; else ov[orderId] = debtorId;
+  ov[orderId] = debtorId; // null = 명시적 "연결 해제" — 항목을 지우면 다음 로드 때 이름 자동매칭이 같은 채무자로 다시 연결해버린다
   localStorage.setItem(COLLECTION_OV_KEY, JSON.stringify(ov));
   kvPut(COLLECTION_OV_KEY, ov);
 }
@@ -713,7 +713,7 @@ function applyCollectionOv(orders, debtors) {
     .filter(o => !deleted.includes(o.id))
     .map(o => {
       let debtorId = ov[o.id] !== undefined ? ov[o.id] : o.debtorId;
-      if (!debtorId) {
+      if (!debtorId && ov[o.id] !== null) { // 명시적으로 연결 해제한 건은 자동 이름매칭을 하지 않는다
         const on = normName(o.debtorName);
         const candidates = debtors.filter(d => normName(d.name) === on);
         const match = candidates.find(d => d.brand === o.brand) || candidates[0] || null;
@@ -4693,6 +4693,16 @@ function MainApp({ authUser, onLogout }) {
   const pagedFlatIds = paged.flatMap(flatIds);
   const filteredFlatIds = filtered.flatMap(flatIds);
   useEffect(() => { setPage(1); }, [q, brandFilter, catFilter, statusFilter, assigneeFilter]);
+  // 필터·검색을 바꿔 화면에서 사라진 행이 선택에 남아 있으면 일괄 변경이 보이지 않는 행까지 적용된다
+  const filteredFlatIdKey = filteredFlatIds.join(",");
+  useEffect(() => {
+    setCheckedDebtorIds(prev => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(filteredFlatIds);
+      const next = new Set([...prev].filter(id => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredFlatIdKey]);
   const doSort = (f) => {
     if (sort.f === f) {
       if (sort.d === "desc") setSort({ f, d: "asc" });
@@ -6428,7 +6438,7 @@ function MainApp({ authUser, onLogout }) {
     const _normD = normNameForMatch(d.name);
     // 회생파산/법적절차내역도 같은 사람의 다른 항목에 연결된 것까지 합쳐서 보여준다.
     const debtorRehabs = data.rehabilitations.filter(r =>
-      groupMemberIds.includes(r.debtorId) || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand)
+      groupMemberIds.includes(r.debtorId) || (normNameForMatch(r.debtorName) === _normD && r.brand === d.brand && getRehabOverrides()[r.id] !== null) // 연결 해제한 건은 이름이 같아도 다시 붙이지 않는다
     );
     const debtorLegalAll = [
       ...data.legalCases.filter(c => groupMemberIds.includes(c.debtorId)),

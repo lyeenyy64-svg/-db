@@ -191,7 +191,9 @@ function createPrivacy(db, { audit } = {}) {
       const exp = Date.now() + REVEAL_MINUTES * 60 * 1000;
       const ins = db.prepare("INSERT OR REPLACE INTO pii_reveal_grants (session_hash, debtor_id, expires_at) VALUES (?, ?, ?)");
       for (const id of debtorIds) ins.run(req.sessionHash, id, exp);
-      log({ event: "pii_reveal", user: req.user.name, ip: req.ip, detail: `대상 ${debtorIds.join(",")} / 사유: ${reason.slice(0, 200)}` });
+      // 사유를 앞에 둔다 — 접속기록 detail은 300자에서 잘리는데, 대상 ID가 많으면 뒤에 있던 사유가 통째로 사라졌다.
+      // count는 이번 요청으로 열람한 채무자 수 — 이상 행위 판정이 요청 수가 아니라 열람 인원 기준이 되게 한다.
+      log({ event: "pii_reveal", user: req.user.name, ip: req.ip, count: debtorIds.length, detail: `사유: ${reason.slice(0, 150)} / 대상 ${debtorIds.length}건: ${debtorIds.join(",")}` });
       res.json({ ok: true, expiresAt: exp, minutes: REVEAL_MINUTES });
     });
     app.get("/api/privacy/grants", (req, res) => {

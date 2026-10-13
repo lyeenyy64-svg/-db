@@ -107,6 +107,16 @@ function matchDebtor(index, criteria) {
       });
       if (pool.length === 0) return null;
     }
+    // 후보가 여러 명인데 서로 다른 허브(원코드가 다름)에 걸려 있으면 어느 쪽 입금인지 알 수 없다.
+    // 예전엔 코드가 가장 짧은 사람에게 그냥 귀속시켜 동명 채무자에게 입금이 잘못 붙었다 — 매칭 실패로 돌려
+    // 미매칭 대기열에서 사람이 고르게 한다. (같은 허브의 하이픈 코드 "4134-1" 등은 기존대로 원코드 우선)
+    if (pool.length > 1) {
+      const bases = new Set(pool.map(id => {
+        const d = debtors.find(x => x.id === id);
+        return String(d?.hub_code || "").split("-")[0];
+      }));
+      if (bases.size > 1) return null;
+    }
     const picked = pickByOriginalCode(pool, debtors);
     return picked ? { debtorId: picked, matchedBy: label } : null;
   }
@@ -150,7 +160,11 @@ function matchDebtor(index, criteria) {
   // 4단계: 코드만으로 (유일한 경우만)
   if (hubCode) {
     const candidates = byHubCode.get(hubCode) || [];
-    if (candidates.length === 1) return { debtorId: candidates[0], matchedBy: "코드유일" };
+    if (candidates.length === 1) {
+      // 브랜드가 주어졌는데 다르면 다른 브랜드 채무자로 오매칭되므로 실패 처리(다른 단계와 동일한 fail closed)
+      const d = debtors.find(x => x.id === candidates[0]);
+      if (!brand || (d && d.brand_code === brand)) return { debtorId: candidates[0], matchedBy: "코드유일" };
+    }
   }
 
   return null;

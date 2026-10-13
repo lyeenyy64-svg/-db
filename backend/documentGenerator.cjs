@@ -53,8 +53,24 @@ function findParaStart(xml, text) {
   return xml.lastIndexOf("<hp:p ", pos);
 }
 
+// XML/HTML에 그대로 들어가는 사용자 입력(채무자명·상호·집행권원 문구)의 특수문자 이스케이프.
+// 안 하면 상호에 &가 있을 때 HWPX가 깨져 열리지 않고, 미리보기 HTML에는 스크립트가 들어갈 수 있다.
+const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+function sanitizeDocData(d) {
+  const items = (arr) => (Array.isArray(arr) ? arr : []).map(it => ({ ...it, name: escText(it && it.name) }));
+  return {
+    ...d,
+    debtorName: escText(d.debtorName),
+    residentId: escText(d.residentId),
+    executionTitleText: escText(d.executionTitleText),
+    bankItems: items(d.bankItems),
+    platformItems: items(d.platformItems),
+  };
+}
+
 // ─── HWPX 생성 ───────────────────────────────────────────────
 async function generateHwpx(docData) {
+  docData = sanitizeDocData(docData);
   const {
     debtorName,
     residentId,
@@ -73,17 +89,17 @@ async function generateHwpx(docData) {
 
   // ── 1. 고정 필드 전체 치환 ─────────────────────────────────
   xml = xml
-    .replace(/\[ 홍길동  \]/g,       `[ ${debtorName} ]`)
+    .replace(/\[ 홍길동  \]/g,       () => `[ ${debtorName} ]`)
     .replace(/\[ 123,345,678 \]/g,   `[ ${fmt(totalAmount)} ]`)
     .replace(/\(1\+2\+3\+4\+5\+6\+7\+8\+9\+10\)/g, buildFormula(allItemCount))
-    .replace(/홍길동/g, debtorName)
-    .replace(/000000-0000000/g, residentId);
+    .replace(/홍길동/g, () => debtorName)
+    .replace(/000000-0000000/g, () => residentId);
 
   // 집행권원 텍스트 치환 (프론트에서 생성된 전체 문자열)
   if (executionTitleText) {
     xml = xml.replace(
       /<hp:t>\* 청구금액 산정내역 : .*?<\/hp:t>/,
-      `<hp:t>* 청구금액 산정내역 : ${executionTitleText}</hp:t>`
+      () => `<hp:t>* 청구금액 산정내역 : ${executionTitleText}</hp:t>`
     );
   }
 
@@ -135,6 +151,7 @@ async function generateHwpx(docData) {
 
 // ─── HTML 미리보기 생성 ──────────────────────────────────────
 function buildPreviewHtml(docData) {
+  docData = sanitizeDocData(docData);
   const {
     debtorName, residentId, totalAmount,
     executionTitleText = "",

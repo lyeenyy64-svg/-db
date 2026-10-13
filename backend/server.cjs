@@ -2331,19 +2331,20 @@ app.post("/api/installments/schedules/sync-memo-amounts", (req, res) => {
     if (wonMatches.length) return parseInt(wonMatches[wonMatches.length - 1][1].replace(/,/g, ""), 10) || null;
     return null;
   }
-  const schedules = db.prepare("SELECT id, scheduled_amount, memo FROM installment_schedules WHERE memo IS NOT NULL AND memo != ''").all();
-  let updated = 0;
+  // 파괴적 작업이라 관리자만, 그리고 기본은 미리보기(변경 대상 목록만 반환) — body.apply === true일 때만 실제 반영.
+  // "50만원 중 20만원 일부납" 같은 메모의 마지막 금액으로 예정금액을 덮어쓰면 완납 판정이 뒤집히므로
+  // 아직 처리되지 않은 일정(예정/미납)만 대상으로 한다.
+  if (!["admin", "superadmin"].includes(req.user?.role)) return res.status(403).json({ ok: false, error: "관리자 권한이 필요합니다" });
+  const schedules = db.prepare("SELECT id, scheduled_amount, memo FROM installment_schedules WHERE memo IS NOT NULL AND memo != '' AND status IN ('예정','미납')").all();
+  const changes = [];
+  for (const s of schedules) {
+    const amt = parseAmountFromText(s.memo);
+    if (amt && amt > 0 && amt !== s.scheduled_amount) changes.push({ id: s.id, from: s.scheduled_amount, to: amt, memo: String(s.memo).slice(0, 80) });
+  }
+  if (req.body?.apply !== true) return res.json({ ok: true, preview: true, wouldUpdate: changes.length, total: schedules.length, changes: changes.slice(0, 200) });
   const updateStmt = db.prepare("UPDATE installment_schedules SET scheduled_amount = ? WHERE id = ?");
-  db.transaction(() => {
-    for (const s of schedules) {
-      const amt = parseAmountFromText(s.memo);
-      if (amt && amt > 0 && amt !== s.scheduled_amount) {
-        updateStmt.run(amt, s.id);
-        updated++;
-      }
-    }
-  })();
-  res.json({ ok: true, updated, total: schedules.length });
+  db.transaction(() => { for (const c of changes) updateStmt.run(c.to, c.id); })();
+  res.json({ ok: true, updated: changes.length, total: schedules.length });
 });
 
 // ── 분할상환 자동 동기화 함수 (예정월 = 입금월 매칭 방식) ──
@@ -3519,6 +3520,14 @@ function voidKvItemLogs(path, itemId) {
 app.put("/api/kv/:key", (req, res) => {
   const key = req.params.key;
   if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
+  // JSON이 아닌 Content-Type 등으로 본문이 비어 {}가 들어오면 기존 배열(To Do 등)이 통째로 날아간다
+  {
+    const cur = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
+    if (cur) {
+      let curVal; try { curVal = JSON.parse(cur.value); } catch { curVal = undefined; }
+      if (Array.isArray(curVal) && !Array.isArray(req.body)) return res.status(400).json({ error: "배열 형태의 값만 저장할 수 있습니다" });
+    }
+  }
   // 시스템 설정성 키(app_users)와 "__"로 시작하는 테스트/진단용 키는 통계 집계 대상이 아니므로
   // diff 계산 없이 바로 저장
   if (key !== "app_users" && !key.startsWith("__")) {
@@ -3528,7 +3537,8 @@ app.put("/api/kv/:key", (req, res) => {
       const diffResult = diffDetailText(oldVal, req.body);
       // detail(화면에 보일 실제 내용)이 있으면 그 글자수를 그대로 쓴다 — 보이는 텍스트와
       // 세는 글자수가 항상 같아야 신뢰할 수 있다. 못 뽑아낸 경우만 예전 크기 추정치로 대체.
-      const detail = diffResult ? diffResult.text : null;
+      // 활동 로그 detail은 어드민 통계에 평문으로 남으므로, 메모에 섞인 주민번호는 뒷자리를 가린다
+      const detail = diffResult ? require("./privacy.cjs").maskRrnText(String(diffResult.text)) : null;
       const bytes = detail ? detail.length : diffByteEstimate(oldVal, req.body);
       const userName = extractUserName(req);
       logKvDataInput(userName, req.path, bytes, detail, diffResult ? diffResult.itemId : null);
@@ -3758,6 +3768,13 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
     return res.status(400).json({ ok: false, error: "연결된 노션 페이지가 없습니다 — '노션 연결하기' 버튼으로 본인의 노션 데이터베이스/페이지를 먼저 연결해주세요" });
   }
   try {
+
+    const items = sourceType === "page"
+      ? await fetchNotionPageListItems(sourceId)
+      : await fetchNotionDatabaseItems(sourceId);
+
+    // 노션 호출(await) 전에 목록을 읽어 두면 그 사이 다른 사용자가 저장한 To Do가 통째로 덮어써져 사라진다 —
+    // 호출이 끝난 뒤 읽고 곧바로(동기 구간에서) 저장한다.
     const row = db.prepare("SELECT value FROM kv_store WHERE key='manual_todo_list'").get();
     const arr = row ? JSON.parse(row.value) : [];
     // manual_todo_list에 남아있는 notionPageId만으로 "이미 가져온 항목"을 판단하면, 완료 처리한
@@ -3766,10 +3783,6 @@ app.post("/api/todo-list/from-notion-flag", async (req, res) => {
     const ledgerRow = db.prepare("SELECT value FROM kv_store WHERE key='notion_imported_ids'").get();
     const ledger = new Set(ledgerRow ? JSON.parse(ledgerRow.value) : []);
     const already = new Set([...ledger, ...arr.filter(x => x.notionPageId).map(x => x.notionPageId)]);
-
-    const items = sourceType === "page"
-      ? await fetchNotionPageListItems(sourceId)
-      : await fetchNotionDatabaseItems(sourceId);
 
     let imported = 0, skipped = 0;
     for (const item of items) {
@@ -5383,8 +5396,36 @@ app.get("/{*splat}", (req, res, next) => {
 
 // ─── AI 종합분석 ──────────────────────────────────
 const OpenAI = require("openai");
+
+// 외부(OpenAI)로 나가는 프롬프트에서 주민등록번호·전화번호를 가린다.
+// 응답 마스킹(privacy.cjs)은 클라이언트로 나가는 JSON에만 적용되고, OpenAI로 보내는 요청에는 적용되지 않아
+// 업로드 문서 원문(주민번호 포함 가능)이나 채무자 연락처가 그대로 외부로 전송되고 있었다.
+// 이름·금액·사건번호는 분석에 필요해 유지한다(전송 범위 자체는 정보보안팀 확인 대상).
+const LLM_RRN_RE = /(?<![\d-])(\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))-?[1-8]\d{6}(?![\d])/g;
+const LLM_PHONE_RE = /(?<![\d,.-])0(?:1[016789]|2|[3-6]\d|70)[-\s.]?\d{3,4}[-\s.]?\d{4}(?![\d])/g;
+function sanitizeForLlm(text) {
+  if (typeof text !== "string") return text;
+  return text.replace(LLM_RRN_RE, (m, front) => `${front}-*******`).replace(LLM_PHONE_RE, "[전화번호]");
+}
+function wrapLlmClient(client) {
+  if (!client || client.__piiWrapped) return client;
+  const orig = client.chat.completions.create.bind(client.chat.completions);
+  client.chat.completions.create = (params, ...rest) => {
+    const messages = Array.isArray(params && params.messages)
+      ? params.messages.map(m => {
+          if (!m) return m;
+          if (typeof m.content === "string") return { ...m, content: sanitizeForLlm(m.content) };
+          if (Array.isArray(m.content)) return { ...m, content: m.content.map(p => (p && typeof p.text === "string" ? { ...p, text: sanitizeForLlm(p.text) } : p)) };
+          return m;
+        })
+      : params && params.messages;
+    return orig({ ...params, messages }, ...rest);
+  };
+  client.__piiWrapped = true;
+  return client;
+}
 let openaiClient = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  ? wrapLlmClient(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }))
   : null;
 
 // .env가 서버 기동 이후에 추가/수정된 경우 재시작 없이도 다음 요청에서 자동으로 반영되도록 재시도
@@ -5392,7 +5433,7 @@ function getOpenAIClient() {
   if (openaiClient) return openaiClient;
   require("dotenv").config({ path: path.join(__dirname, ".env"), override: true });
   if (process.env.OPENAI_API_KEY) {
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openaiClient = wrapLlmClient(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }));
   }
   return openaiClient;
 }
