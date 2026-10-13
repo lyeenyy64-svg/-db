@@ -4515,22 +4515,48 @@ function spawnOcr(script, pdfPath, timeout) {
   });
 }
 
+// OCR 결과 캐시 — 상세 화면을 열 때마다(GET) 같은 PDF를 처음부터 다시 OCR해서 슬롯을 독점하고 응답이 수 분 걸리던 문제.
+// 키는 (종류, 경로, 수정시각, 크기)라 파일이 바뀌면 자동으로 무효화된다. 같은 키의 동시 요청은 한 번만 실행한다.
+// 성공은 12시간, 실패(타임아웃 등)는 10분만 기억한다. "재조회" 버튼은 clearOcrCache()로 우회한다.
+const ocrCache = new Map();
+const OCR_CACHE_MAX = 400;
+const OCR_OK_TTL_MS = 12 * 60 * 60 * 1000;
+const OCR_FAIL_TTL_MS = 10 * 60 * 1000;
+function clearOcrCache() { ocrCache.clear(); }
+function cachedOcr(kind, script, pdfPath, timeout, priority) {
+  let key;
+  try {
+    const st = fs.statSync(pdfPath);
+    key = `${kind}|${pdfPath}|${st.mtimeMs}|${st.size}`;
+  } catch {
+    return withOcrSlot(() => spawnOcr(script, pdfPath, timeout), priority); // 파일 상태를 못 읽으면 캐시 없이
+  }
+  const hit = ocrCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.promise;
+  const promise = withOcrSlot(() => spawnOcr(script, pdfPath, timeout), priority);
+  const entry = { promise, expires: Date.now() + OCR_FAIL_TTL_MS };
+  ocrCache.set(key, entry);
+  if (ocrCache.size > OCR_CACHE_MAX) ocrCache.delete(ocrCache.keys().next().value);
+  promise.then(r => { if (r && r.ok) entry.expires = Date.now() + OCR_OK_TTL_MS; }, () => ocrCache.delete(key));
+  return promise;
+}
+
 function ocrPdfForResident(pdfPath, priority) {
   // 주소이력표 파싱 때문에 최대 6페이지까지 OCR. Windows OCR(winrt) 기준이라 여유를 둔다.
-  return withOcrSlot(() => spawnOcr(OCR_SCRIPT, pdfPath, 150000), priority);
+  return cachedOcr("resident", OCR_SCRIPT, pdfPath, 150000, priority);
 }
 
 function ocrPdfForSubrogationDate(pdfPath, priority) {
-  return withOcrSlot(() => spawnOcr(OCR_SUBROGATION_SCRIPT, pdfPath, 90000), priority);
+  return cachedOcr("subro", OCR_SUBROGATION_SCRIPT, pdfPath, 90000, priority);
 }
 
 function ocrPdfForCreditScore(pdfPath, priority) {
-  return withOcrSlot(() => spawnOcr(OCR_CREDIT_SCRIPT, pdfPath, 90000), priority);
+  return cachedOcr("score", OCR_CREDIT_SCRIPT, pdfPath, 90000, priority);
 }
 
 function ocrPdfForCreditAddress(pdfPath, priority) {
   // 자택정보이력표(보통 3페이지)까지 스캔. Windows OCR(winrt) 기준이라 여유를 둔다.
-  return withOcrSlot(() => spawnOcr(OCR_ADDRESS_SCRIPT, pdfPath, 150000), priority);
+  return cachedOcr("address", OCR_ADDRESS_SCRIPT, pdfPath, 150000, priority);
 }
 
 function ocrPdfForDocument(pdfPath, priority) {
@@ -4541,6 +4567,32 @@ function ocrPdfForDocument(pdfPath, priority) {
 function korName3(name) {
   const kor = String(name || "").replace(/[^가-힣]/g, "");
   return kor.length >= 2 ? kor.slice(0, 3) : null;
+}
+
+// 한글만 남긴 전체 이름
+const fullKor = (n) => String(n || "").replace(/[^가-힣]/g, "");
+// 파일이 이 사람의 것인지 엄격하게 판정한다.
+// 예전엔 이름 앞 3글자 LIKE만 써서 "홍길동"이 "홍길동수"나 4글자 이름("남궁XX" 계열)의 파일에도 걸려
+// 타인의 주민번호·주소·신용점수가 저장될 수 있었다. 이제는 파싱된 이름이 있으면 한글 전체가 같아야 하고,
+// 없을 때만 파일명에 전체 이름이 들어 있는 경우로 인정한다.
+function personFileMatches(row, name) {
+  const want = fullKor(name);
+  if (want.length < 2) return false;
+  const parsed = fullKor(row.parsed_person_name);
+  if (parsed) return parsed === want;
+  // 파일명에서는 한글 덩어리가 이름과 정확히 같아야 한다("이수"가 "이수진.pdf"에 걸리지 않게)
+  return (String(row.filename || "").match(/[가-힣]+/g) || []).some(chunk => chunk === want || chunk.endsWith(want) && /^(초본|등본|주민등록|cb|신용)/.test(chunk.slice(0, chunk.length - want.length)));
+}
+// file_index에서 이 사람의 문서만 최신순으로 limit개 — extraCond는 문서 종류 조건(SQL 조각, 고정 문자열만 전달)
+function queryPersonFiles(name, selectCols, extraCond, limit) {
+  const want = fullKor(name);
+  if (want.length < 2) return [];
+  const rows = db.prepare(
+    `SELECT ${selectCols}, filename, parsed_person_name FROM file_index
+     WHERE (parsed_person_name LIKE ? OR filename LIKE ?) AND ${extraCond}
+     ORDER BY parsed_date DESC LIMIT 80`
+  ).all(`%${want}%`, `%${want}%`);
+  return rows.filter(r => personFileMatches(r, name)).slice(0, limit);
 }
 
 // 이름이 완전히 같은 다른 채무자가 이미 있으면(동명이인), 이름만으로 찾은 문서가
@@ -4586,14 +4638,8 @@ async function findCreditScoreForName(name, limit, priority) {
 
   let fuzzy = false;
   if (rows.length === 0) {
-    const kor = korName3(name);
-    if (!kor) return null;
-    fuzzy = true;
-    rows = db.prepare(
-      `SELECT file_path, filename, parsed_person_name FROM file_index
-       WHERE (parsed_person_name LIKE ? OR filename LIKE ?) AND ${CB_FILTER}
-       ORDER BY parsed_date DESC LIMIT ?`
-    ).all(`%${kor}%`, `%${kor}%`, limit);
+    // 파싱된 이름이 없는 파일은 파일명에 전체 이름이 들어 있을 때만 인정(앞 2~3글자 부분일치는 타인 파일이 섞임)
+    rows = queryPersonFiles(name, "file_path", CB_FILTER, limit);
   }
 
   // 이름이 완전히 일치하는 파일이 하나도 없어 앞 2~3글자 부분일치로 넓힌 경우에만 해당 —
@@ -4622,13 +4668,7 @@ async function lookupResidentDetails(debtorId, debtor, priority) {
   // 배치로 여러 채무자를 순회할 때 후보를 다 시도하면 한 명당 최악의 경우 너무 오래 걸린다.
   // 보통 가장 최근 파일에서 바로 성공하므로 2개면 충분하고, 그래도 실패하면 상세화면의
   // "재조회"로 다시 시도할 수 있다.
-  const rows = db.prepare(
-    `SELECT file_path, filename, parsed_date FROM file_index
-     WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-     AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
-     AND ext = 'pdf'
-     ORDER BY parsed_date DESC LIMIT 2`
-  ).all(`%${kor}%`, `%${kor}%`);
+  const rows = queryPersonFiles(debtor.name, "file_path, parsed_date", "(doc_type LIKE '%초본%' OR filename LIKE '%초본%') AND ext = 'pdf'", 2);
 
   for (const c of rows) {
     const r = await ocrPdfForResident(c.file_path, priority);
@@ -4692,13 +4732,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
       } else {
         const kor = korName3(debtor.name);
         if (kor) {
-          const rows = db.prepare(
-            `SELECT file_path, filename, parsed_date FROM file_index
-             WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-             AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
-             AND ext = 'pdf'
-             ORDER BY parsed_date DESC LIMIT 5`
-          ).all(`%${kor}%`, `%${kor}%`);
+          const rows = queryPersonFiles(debtor.name, "file_path, parsed_date", "(doc_type LIKE '%초본%' OR filename LIKE '%초본%') AND ext = 'pdf'", 5);
           for (const c of rows) {
             const r = await ocrPdfForResident(c.file_path);
             const gotNumber = r.ok && r.number;
@@ -4754,13 +4788,7 @@ app.get("/api/debtor/:id/resident-number", async (req, res) => {
       // 이 연대보증인과 이름이 같은 다른 채무자가 이미 있으면(동명이인), 아래에서 이름만으로
       // 찾은 초본이 사실 그 사람 것일 수 있다 — 주채무자 항목과 동일하게 경고를 붙인다.
       const gAmbiguous = hasNameCollision(req.params.id, g.name);
-      const rows = db.prepare(
-        `SELECT file_path, filename FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
-         AND ext = 'pdf'
-         ORDER BY parsed_date DESC LIMIT 3`
-      ).all(`%${kor}%`, `%${kor}%`);
+      const rows = queryPersonFiles(g.name, "file_path", "(doc_type LIKE '%초본%' OR filename LIKE '%초본%') AND ext = 'pdf'", 3);
       for (const c of rows) {
         const r = await ocrPdfForResident(c.file_path);
         if (r.ok && r.number) { entries.push({ name: g.name, number: r.number, source: "ocr", filename: c.filename, ambiguous: gAmbiguous, target: "guarantor", guarantorId: g.id }); break; }
@@ -4777,6 +4805,7 @@ app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
   try {
     const existing = db.prepare("SELECT id, name, pii_dec(resident_number) AS resident_number FROM debtors WHERE id = ?").get(req.params.id);
     if (!existing) return res.json({ ok: false, error: "채무자 없음" });
+    clearOcrCache(); // 재조회는 캐시된 OCR 결과를 쓰지 않고 다시 읽는다
 
     // 재추출이 실패(OCR 오류/파일 없음/동명이인 건너뜀)해도 기존 값이 영영 사라지지 않게 백업해 둔다
     const backup = db.prepare(
@@ -4833,7 +4862,7 @@ app.get("/api/debtor/:id/credit-score", async (req, res) => {
       const mainResult = await findCreditScoreForName(debtor.name, 5);
       if (mainResult) {
         entries.push({ name: debtor.name, ...mainResult, source: "ocr", ambiguous: mainResult.ambiguous || ambiguous, target: "self" });
-        if (!debtor.credit_grade && !ambiguous) {
+        if (!debtor.credit_grade && !ambiguous && !mainResult.ambiguous) {
           db.prepare("UPDATE debtors SET credit_grade = ? WHERE id = ?").run(String(mainResult.score), req.params.id);
         }
       }
@@ -4895,13 +4924,7 @@ async function lookupCreditAddress(debtor, priority) {
   const ambiguous = hasNameCollision(debtor.id, debtor.name);
 
   // 후보 파일을 5개→2개로 줄임 (사유는 lookupResidentDetails 주석 참고)
-  const rows = db.prepare(
-    `SELECT file_path, filename, parsed_date FROM file_index
-     WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-     AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-     AND ext = 'pdf'
-     ORDER BY parsed_date DESC LIMIT 2`
-  ).all(`%${kor}%`, `%${kor}%`);
+  const rows = queryPersonFiles(debtor.name, "file_path, parsed_date", "(LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%') AND ext = 'pdf'", 2);
 
   const _debugAttempts = []; // 임시 디버그 — 추출 실패 원인 파악용 (원인 확인되면 제거할 것)
   let noHistoryResult = null;
@@ -4946,8 +4969,10 @@ async function lookupCreditAddress(debtor, priority) {
     };
   }
 
-  if (noHistoryResult) return { ...noHistoryResult, _debugAttempts };
-  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패", _debugAttempts };
+  // 추출 실패 원인(stderr/파일명)은 서버 경로·트레이스백이 섞여 있어 응답에 싣지 않고 서버 로그에만 남긴다
+  if (noHistoryResult) return noHistoryResult;
+  console.warn(`[CB 주소추출] ${debtor.id} 주소 인식 실패 — ${JSON.stringify(_debugAttempts)}`);
+  return { ok: false, address: debtor.latest_address || null, phone: debtor.credit_phone || null, error: "주소 인식 실패" };
 }
 
 app.get("/api/debtor/:id/credit-address", async (req, res) => {
@@ -4969,6 +4994,7 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
   try {
     const existing = db.prepare("SELECT id, name FROM debtors WHERE id = ?").get(req.params.id);
     if (!existing) return res.json({ ok: false, address: null, error: "채무자 없음" });
+    clearOcrCache(); // 재조회는 캐시된 OCR 결과를 쓰지 않고 다시 읽는다
 
     // 재추출이 실패해도 기존 값이 영영 사라지지 않게 백업해 둔다
     const backup = db.prepare(
@@ -5070,12 +5096,7 @@ async function runAutoAddressRefreshCheck() {
     for (const deb of residentTargets) {
       const kor = korName3(deb.name);
       if (!kor) continue;
-      const newest = db.prepare(
-        `SELECT parsed_date FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (doc_type LIKE '%초본%' OR filename LIKE '%초본%')
-         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 1`
-      ).get(`%${kor}%`, `%${kor}%`);
+      const newest = queryPersonFiles(deb.name, "parsed_date", "(doc_type LIKE '%초본%' OR filename LIKE '%초본%') AND ext = 'pdf'", 1)[0];
       if (!newest || !newest.parsed_date) continue;
       if (!deb.resident_source_date || newest.parsed_date > deb.resident_source_date) {
         db.prepare(
@@ -5095,12 +5116,7 @@ async function runAutoAddressRefreshCheck() {
     for (const deb of creditTargets) {
       const kor = korName3(deb.name);
       if (!kor) continue;
-      const newest = db.prepare(
-        `SELECT parsed_date FROM file_index
-         WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-         AND (LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%')
-         AND ext = 'pdf' ORDER BY parsed_date DESC LIMIT 1`
-      ).get(`%${kor}%`, `%${kor}%`);
+      const newest = queryPersonFiles(deb.name, "parsed_date", "(LOWER(doc_type) LIKE '%cb%' OR LOWER(filename) LIKE '%cb%' OR LOWER(filename) LIKE '%신용%') AND ext = 'pdf'", 1)[0];
       if (!newest || !newest.parsed_date) continue;
       if (!deb.credit_source_date || newest.parsed_date > deb.credit_source_date) {
         db.prepare(
@@ -5341,13 +5357,7 @@ app.get("/api/debtor/:id/subrogation-date", async (req, res) => {
     const kor = korName3(debtor.name);
     if (!kor) return res.json({ ok: false, date: null });
 
-    const rows = db.prepare(
-      `SELECT file_path, filename FROM file_index
-       WHERE (parsed_person_name LIKE ? OR filename LIKE ?)
-       AND (LOWER(doc_type) LIKE '%대위변제%' OR LOWER(filename) LIKE '%대위변제%')
-       AND ext IN ('pdf', 'hwp', 'hwpx')
-       ORDER BY parsed_date DESC LIMIT 5`
-    ).all(`%${kor}%`, `%${kor}%`);
+    const rows = queryPersonFiles(debtor.name, "file_path", "(LOWER(doc_type) LIKE '%대위변제%' OR LOWER(filename) LIKE '%대위변제%') AND ext IN ('pdf', 'hwp', 'hwpx')", 5);
 
     for (const c of rows) {
       if (!c.file_path.toLowerCase().endsWith('.pdf')) continue;
