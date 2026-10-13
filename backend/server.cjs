@@ -714,6 +714,14 @@ db.exec(`
 `);
 
 // 기존에 평문으로 저장된 주민번호를 1회 암호화 (모든 테이블이 만들어진 뒤에 실행)
+if (String(process.env.PII_ALLOW_KEY_MISMATCH || "").toLowerCase() !== "on" && piiCrypto.keyMismatchesData(db)) {
+  // 키를 잘못 잡은 채로 기동하면 암호화된 주민번호가 빈 값으로 덮어써질 수 있어 시작하지 않는다
+  piiCrypto.discardNewlyCreatedKey();
+  console.error("[pii] ✖ DB에 암호화된 주민번호가 있는데 현재 암호화 키로 복호화할 수 없습니다.");
+  console.error("[pii]   원래 키 파일(~/.debtflow/pii.key 또는 PII_ENC_KEY/PII_ENC_KEY_FILE)을 복원한 뒤 다시 시작하세요.");
+  console.error("[pii]   (키를 정말 폐기하고 계속하려면 backend/.env에 PII_ALLOW_KEY_MISMATCH=on — 암호화된 값은 복구되지 않습니다)");
+  process.exit(1);
+}
 piiCrypto.migrateDatabase(db, DB_PATH);
 
 const app = express();
@@ -1291,6 +1299,38 @@ app.get("/api/dashboard", (req, res) => {
 //   성공: { ok:true, paymentId, debtorId, matchedBy, balanceAfter }
 //   매칭실패: { ok:false, pendingId, reason:'채무자 미발견' }
 //   입력오류: { ok:false, error }
+const AUTO_HOLD_TAG = "[자동추심보류]";
+
+// 입금 삭제/재매칭으로 채무자의 입금 근거가 사라졌을 때, 입금 등록 시 자동으로 걸렸던 것들을 되돌린다.
+// - 입금 때문에 자동으로 '추심보류'가 됐다가 잔액이 다시 생기면 이전 상태로 복구(사람이 직접 바꾼 보류는 건드리지 않음)
+// - 입금으로 자동완납 처리된 분할상환 월 로그를 미납으로 되돌림
+// 반환: 되돌린 내용 요약(응답/감사로그용)
+function revertPaymentSideEffects(debtorId, pay) {
+  const notes = [];
+  const d = db.prepare("SELECT collection_status, final_balance_legal FROM v_debtors WHERE id = ?").get(debtorId);
+  if (d && d.collection_status === "추심보류" && d.final_balance_legal > 0) {
+    const tag = db.prepare("SELECT detail FROM audit_logs WHERE target = '채무자' AND target_id = ? AND detail LIKE ? ORDER BY id DESC LIMIT 1")
+      .get(debtorId, AUTO_HOLD_TAG + "%");
+    const m = tag && tag.detail.match(/이전상태=(.*?) [(]입금/);
+    if (m) {
+      const prev = m[1] || null;
+      db.prepare("UPDATE debtors SET collection_status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?").run(prev, debtorId);
+      notes.push(`추심상태 '추심보류' → '${prev || "(없음)"}' 복구`);
+    } else {
+      notes.push("잔액이 다시 생겼지만 추심상태가 '추심보류'로 남아 있음(수동 확인 필요)");
+    }
+  }
+  const marker = `[자동완납:${pay.payment_date}]`;
+  const logs = db.prepare(`SELECT id, memo FROM installment_logs WHERE status = '완납' AND paid_amount = ? AND memo LIKE ?
+      AND plan_id IN (SELECT id FROM installment_plans WHERE debtor_id = ?)`).all(pay.total_amount, "%" + marker + "%", debtorId);
+  for (const l of logs) {
+    db.prepare("UPDATE installment_logs SET status = '미납', paid_amount = 0, memo = ? WHERE id = ?")
+      .run((l.memo || "").replace(" " + marker, "").replace(marker, "").trim() || null, l.id);
+  }
+  if (logs.length) notes.push(`분할상환 자동완납 ${logs.length}건 미납으로 복구`);
+  return notes;
+}
+
 function ingestPayment(b) {
   const date = b.paymentDate;
   const total = parseInt(b.totalAmount, 10) || 0;
@@ -1394,6 +1434,9 @@ function ingestPayment(b) {
     const after = db.prepare(`SELECT final_balance_legal, collection_status FROM v_debtors WHERE id = ?`).get(resolvedId);
     if (after && after.final_balance_legal <= 0 && after.collection_status !== "추심보류") {
       db.prepare(`UPDATE debtors SET collection_status = '추심보류' WHERE id = ?`).run(resolvedId);
+      // 입금이 삭제/재매칭돼 잔액이 되살아날 때 되돌릴 수 있게 이전 상태를 남긴다
+      db.prepare(`INSERT INTO audit_logs (user_name, action, target, target_id, detail) VALUES (?, '수정', '채무자', ?, ?)`)
+        .run(b.createdByName || "시스템(자동)", resolvedId, `${AUTO_HOLD_TAG} 이전상태=${after.collection_status || ""} (입금 ${payId})`);
     }
 
     const dt = new Date(date);
@@ -1484,8 +1527,8 @@ app.post("/api/slack/ingest", (req, res) => {
   if (!text) return res.status(400).json({ error: "text가 필요합니다" });
 
   const { entries, meta } = slackParser.parse(text, messageDate);
-  const results = entries.map(e =>
-    ingestPayment({
+  const results = entries.map(e => {
+    const r = ingestPayment({
       paymentDate: e.paymentDate,
       payerName: e.payerName,
       totalAmount: e.totalAmount,
@@ -1494,8 +1537,18 @@ app.post("/api/slack/ingest", (req, res) => {
       source: "slack",
       sourceRef: messageDate || null,
       createdByName: createdByName || "Slack 자동수집",
-    })
-  );
+    });
+    // 중복 감지·처리 불가 건은 미매칭 대기열에 남겨 조용히 사라지지 않게 한다(slackBot 폴링과 동일 처리)
+    if (!r.ok && !r.pendingId) {
+      try {
+        slackBot.queuePending(db, e, meta.brand, messageDate || null, messageDate,
+          r.isDuplicate ? `중복 감지(기존 ${r.existingPaymentId}) — 같은 채무자·날짜·금액의 추가 입금인지 확인 필요` : `자동 처리 불가 — ${r.error || "원인 불명"}`,
+          r.debtorName);
+        r.pendingQueued = true;
+      } catch (err) { r.queueError = err.message; }
+    }
+    return r;
+  });
 
   res.json({
     meta,
@@ -1503,8 +1556,8 @@ app.post("/api/slack/ingest", (req, res) => {
     summary: {
       total: results.length,
       success: results.filter(r => r.ok).length,
-      pending: results.filter(r => !r.ok && r.pendingId).length,
-      error: results.filter(r => !r.ok && r.error).length,
+      pending: results.filter(r => !r.ok && (r.pendingId || r.pendingQueued)).length,
+      error: results.filter(r => !r.ok && r.error && !r.pendingQueued).length,
     },
   });
 });
@@ -1530,14 +1583,15 @@ app.delete("/api/payments/:id", (req, res) => {
       // 입금 삭제
       db.prepare("DELETE FROM payments WHERE id = ?").run(payId);
 
+      const reverted = revertPaymentSideEffects(pay.debtor_id, pay);
       const debtor = db.prepare(`SELECT name, final_balance_legal FROM v_debtors WHERE id = ?`).get(pay.debtor_id);
       db.prepare(`
         INSERT INTO audit_logs (user_name, action, target, target_id, detail)
         VALUES (?, '삭제', '입금', ?, ?)
-      `).run(req.body?.userName || "시스템", payId,
-             `${debtor?.name || pay.debtor_id} 입금 ${pay.total_amount.toLocaleString()}원 삭제 (잔액 원복)`);
+      `).run(extractUserName(req), payId,
+             `${debtor?.name || pay.debtor_id} 입금 ${pay.total_amount.toLocaleString()}원 삭제 (잔액 원복)${reverted.length ? " — " + reverted.join(", ") : ""}`);
 
-      return { debtorId: pay.debtor_id, balanceAfter: debtor?.final_balance_legal ?? null };
+      return { debtorId: pay.debtor_id, balanceAfter: debtor?.final_balance_legal ?? null, reverted };
     })();
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
@@ -1553,7 +1607,8 @@ app.delete("/api/payments/:id", (req, res) => {
 // PATCH /api/payments/:id
 app.patch("/api/payments/:id", (req, res) => {
   const payId = req.params.id;
-  const { payerName, note, userName } = req.body || {};
+  const { payerName, note } = req.body || {};
+  const userName = extractUserName(req);
   const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(payId);
   if (!pay) return res.status(404).json({ ok: false, error: "해당 입금건 없음" });
 
@@ -1578,7 +1633,8 @@ app.patch("/api/payments/:id", (req, res) => {
 // PATCH /api/payments/:id/rematch
 app.patch("/api/payments/:id/rematch", (req, res) => {
   const payId = req.params.id;
-  const { newDebtorId, userName } = req.body || {};
+  const { newDebtorId } = req.body || {};
+  const userName = extractUserName(req);
   if (!newDebtorId) return res.status(400).json({ ok: false, error: "newDebtorId 필요" });
 
   const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(payId);
@@ -1595,6 +1651,15 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
       db.prepare(`UPDATE debtors SET collected_amount = collected_amount + ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(pay.total_amount, newDebtorId);
       db.prepare(`UPDATE payments SET debtor_id = ? WHERE id = ?`).run(newDebtorId, payId);
 
+      // 이전 채무자: 자동 보류/자동완납 원복, 새 채무자: 입금 등록과 같은 기준으로 잔액 0이면 자동 보류
+      const reverted = revertPaymentSideEffects(pay.debtor_id, pay);
+      const newAfter = db.prepare("SELECT final_balance_legal, collection_status FROM v_debtors WHERE id = ?").get(newDebtorId);
+      if (newAfter && newAfter.final_balance_legal <= 0 && newAfter.collection_status !== "추심보류") {
+        db.prepare("UPDATE debtors SET collection_status = '추심보류' WHERE id = ?").run(newDebtorId);
+        db.prepare(`INSERT INTO audit_logs (user_name, action, target, target_id, detail) VALUES (?, '수정', '채무자', ?, ?)`)
+          .run(userName, newDebtorId, `${AUTO_HOLD_TAG} 이전상태=${newAfter.collection_status || ""} (입금 ${payId})`);
+      }
+
       // 입금자명 학습 매핑 업데이트 (다음 자동매칭 때 올바른 채무자로 적용)
       if (pay.payer_name) {
         db.prepare(`
@@ -1610,9 +1675,9 @@ app.patch("/api/payments/:id/rematch", (req, res) => {
 
       db.prepare(`INSERT INTO audit_logs (user_name, action, target, target_id, detail) VALUES (?, '수정', '입금', ?, ?)`).run(
         userName || "시스템", payId,
-        `[재매칭] 입금 ${pay.total_amount.toLocaleString()}원: ${oldDebtor?.name || pay.debtor_id} → ${newDebtor.name}`
+        `[재매칭] 입금 ${pay.total_amount.toLocaleString()}원: ${oldDebtor?.name || pay.debtor_id} → ${newDebtor.name}${reverted.length ? " — " + reverted.join(", ") : ""}`
       );
-      return { ok: true, oldDebtorName: oldDebtor?.name || pay.debtor_id, newDebtorName: newDebtor.name };
+      return { ok: true, reverted, oldDebtorName: oldDebtor?.name || pay.debtor_id, newDebtorName: newDebtor.name };
     })();
     // 재매칭으로 이전/신규 채무자 양쪽의 분할상환 완납 근거가 바뀔 수 있으므로 재평가
     try { runInstallmentAutoSync({ forceDebtorIds: [pay.debtor_id, newDebtorId] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
@@ -4698,6 +4763,11 @@ app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
     const existing = db.prepare("SELECT id, name, pii_dec(resident_number) AS resident_number FROM debtors WHERE id = ?").get(req.params.id);
     if (!existing) return res.json({ ok: false, error: "채무자 없음" });
 
+    // 재추출이 실패(OCR 오류/파일 없음/동명이인 건너뜀)해도 기존 값이 영영 사라지지 않게 백업해 둔다
+    const backup = db.prepare(
+      `SELECT resident_address, resident_address_lat, resident_address_lng, resident_registered_date,
+              resident_note, resident_issued_date, resident_source_date FROM debtors WHERE id = ?`
+    ).get(existing.id);
     db.prepare(
       `UPDATE debtors SET resident_address = NULL, resident_address_lat = NULL, resident_address_lng = NULL,
               resident_registered_date = NULL, resident_note = NULL, resident_issued_date = NULL,
@@ -4708,7 +4778,22 @@ app.post("/api/debtor/:id/resident-number/refresh", async (req, res) => {
       name: existing.name, resident_number: existing.resident_number,
       resident_address: null, resident_registered_date: null, resident_note: null, resident_issued_date: null,
     };
-    const result = await lookupResidentDetails(existing.id, debtor);
+    const restoreIfEmpty = () => {
+      const now = db.prepare("SELECT resident_address FROM debtors WHERE id = ?").get(existing.id);
+      if (backup && backup.resident_address && !(now && now.resident_address)) {
+        db.prepare(
+          `UPDATE debtors SET resident_address = @resident_address, resident_address_lat = @resident_address_lat,
+                  resident_address_lng = @resident_address_lng, resident_registered_date = @resident_registered_date,
+                  resident_note = @resident_note, resident_issued_date = @resident_issued_date,
+                  resident_source_date = @resident_source_date WHERE id = @id`
+        ).run({ ...backup, id: existing.id });
+        console.warn(`[초본 재조회] ${existing.id} 재추출 실패 — 기존 값 복구`);
+      }
+    };
+    let result;
+    try { result = await lookupResidentDetails(existing.id, debtor); }
+    catch (err) { restoreIfEmpty(); throw err; }
+    restoreIfEmpty();
     res.json(result);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
@@ -4870,13 +4955,32 @@ app.post("/api/debtor/:id/credit-address/refresh", async (req, res) => {
     const existing = db.prepare("SELECT id, name FROM debtors WHERE id = ?").get(req.params.id);
     if (!existing) return res.json({ ok: false, address: null, error: "채무자 없음" });
 
+    // 재추출이 실패해도 기존 값이 영영 사라지지 않게 백업해 둔다
+    const backup = db.prepare(
+      `SELECT latest_address, latest_address_lat, latest_address_lng, credit_phone, credit_queried_date, credit_source_date
+       FROM debtors WHERE id = ?`
+    ).get(existing.id);
     db.prepare(
       `UPDATE debtors SET latest_address = NULL, latest_address_lat = NULL, latest_address_lng = NULL,
               credit_phone = NULL, credit_queried_date = NULL, credit_source_date = NULL WHERE id = ?`
     ).run(existing.id);
 
     const debtor = { id: existing.id, name: existing.name, latest_address: null, credit_phone: null, credit_queried_date: null };
-    const result = await lookupCreditAddress(debtor);
+    const restoreIfEmpty = () => {
+      const now = db.prepare("SELECT latest_address FROM debtors WHERE id = ?").get(existing.id);
+      if (backup && backup.latest_address && !(now && now.latest_address)) {
+        db.prepare(
+          `UPDATE debtors SET latest_address = @latest_address, latest_address_lat = @latest_address_lat,
+                  latest_address_lng = @latest_address_lng, credit_phone = @credit_phone,
+                  credit_queried_date = @credit_queried_date, credit_source_date = @credit_source_date WHERE id = @id`
+        ).run({ ...backup, id: existing.id });
+        console.warn(`[CB 재조회] ${existing.id} 재추출 실패 — 기존 값 복구`);
+      }
+    };
+    let result;
+    try { result = await lookupCreditAddress(debtor); }
+    catch (err) { restoreIfEmpty(); throw err; }
+    restoreIfEmpty();
     res.json(result);
   } catch (e) { res.status(500).json({ ok: false, address: null, error: e.message }); }
 });
@@ -4942,9 +5046,11 @@ app.post("/api/debtor/:id/extract-address", async (req, res) => {
 // 예전 버그로 잘못 저장된 값들을 사람이 일일이 "재조회"하지 않아도 자연스럽게 정리된다.
 async function runAutoAddressRefreshCheck() {
   try {
+    // 동명이인이거나 제외 처리된 채무자는 지워도 다시 추출되지 않으므로(조회 시 건너뜀) 건드리지 않는다
     const residentTargets = db.prepare(
-      `SELECT id, name, resident_source_date FROM debtors WHERE resident_address IS NOT NULL AND resident_address != ''`
-    ).all();
+      `SELECT id, name, resident_source_date FROM debtors WHERE resident_address IS NOT NULL AND resident_address != ''
+        AND COALESCE(resident_match_excluded, 0) = 0`
+    ).all().filter(d => !hasNameCollision(d.id, d.name));
     let residentInvalidated = 0;
     for (const deb of residentTargets) {
       const kor = korName3(deb.name);
@@ -4967,8 +5073,9 @@ async function runAutoAddressRefreshCheck() {
     }
 
     const creditTargets = db.prepare(
-      `SELECT id, name, credit_source_date FROM debtors WHERE latest_address IS NOT NULL AND latest_address != ''`
-    ).all();
+      `SELECT id, name, credit_source_date FROM debtors WHERE latest_address IS NOT NULL AND latest_address != ''
+        AND COALESCE(cb_match_excluded, 0) = 0`
+    ).all().filter(d => !hasNameCollision(d.id, d.name));
     let creditInvalidated = 0;
     for (const deb of creditTargets) {
       const kor = korName3(deb.name);

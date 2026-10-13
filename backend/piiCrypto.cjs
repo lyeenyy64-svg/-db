@@ -17,6 +17,9 @@ const PREFIX = "enc:v1:";
 // kv 저장소(수동 등록 채무자 등)의 JSON 안에서 암호화할 키 이름
 const ENCRYPT_KEYS = new Set(["residentNumber", "resident_number", "rrn"]);
 
+let keyFile = null;
+let keyWasCreated = false;
+
 function loadKey() {
   const fromHex = (hex) => {
     const h = String(hex || "").trim();
@@ -30,6 +33,7 @@ function loadKey() {
       return null;
     }
     const file = process.env.PII_ENC_KEY_FILE || path.join(os.homedir(), ".debtflow", "pii.key");
+    keyFile = file;
     if (fs.existsSync(file)) {
       const k = fromHex(fs.readFileSync(file, "utf8"));
       if (k) return k;
@@ -39,6 +43,7 @@ function loadKey() {
     // 키가 아직 없으면 새로 만든다 (최초 1회)
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, crypto.randomBytes(32).toString("hex"), { mode: 0o600 });
+    keyWasCreated = true;
     console.warn(`[pii] 암호화 키를 새로 만들었습니다: ${file}\n[pii] ※ 이 파일을 분실하면 암호화된 주민번호를 복구할 수 없습니다. 저장소/백업 폴더 밖의 안전한 곳에 별도로 보관하세요.`);
     return fromHex(fs.readFileSync(file, "utf8"));
   } catch (e) {
@@ -129,4 +134,18 @@ function migrateDatabase(db, dbPath) {
   tx();
 }
 
-module.exports = { encryptPii, decryptPii, isEncrypted, encryptDeep, decryptDeep, migrateDatabase, keyReady: !!KEY };
+// 서버 시작 시: DB에 이미 암호화된 값이 있는데 지금 키로 복호화가 안 되면(키 파일이 없어 새로 만들어졌거나
+// 서버 계정/홈 폴더가 바뀌어 다른 키가 잡힌 경우) true를 돌려준다. 이 상태로 계속 돌면 복호화 결과가 ""로 나와
+// 화면에서 저장할 때 암호문 자리를 빈 값으로 덮어써 주민번호가 영구 유실된다.
+function keyMismatchesData(db) {
+  const row = db.prepare("SELECT resident_number FROM debtors WHERE resident_number LIKE 'enc:v1:%' LIMIT 1").get();
+  if (!row) return false;
+  if (!KEY) return true;
+  return decryptPii(row.resident_number) === "";
+}
+// 방금 새로 만든 키 파일을 지운다 (불일치로 기동을 중단할 때 — 다음 기동에서 새 키가 정상 키처럼 쓰이지 않게)
+function discardNewlyCreatedKey() {
+  if (keyWasCreated && keyFile) { try { fs.unlinkSync(keyFile); } catch {} }
+}
+
+module.exports = { keyMismatchesData, discardNewlyCreatedKey, encryptPii, decryptPii, isEncrypted, encryptDeep, decryptDeep, migrateDatabase, keyReady: !!KEY };
