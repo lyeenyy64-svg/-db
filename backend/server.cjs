@@ -2571,8 +2571,10 @@ app.get("/api/slack/status", (req, res) => {
 
 // ─── Slack 즉시 폴링 (수동 트리거) ───────────────
 app.post("/api/slack/poll-now", async (req, res) => {
-  const result = await slackBot.pollOnce(db, ingestPayment);
-  res.json({ ...result, status: slackBot.getStatus() });
+  try {
+    const result = await slackBot.pollOnce(db, ingestPayment);
+    res.json({ ...result, status: slackBot.getStatus() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ─── 형사고소 목록 조회 ─────────────────────────
@@ -3504,8 +3506,16 @@ app.put("/api/kv/:key", (req, res) => {
 // 이 엔드포인트를 호출해 To Do List에 항목 하나를 추가한다. outlookMessageId로 같은 메일이
 // 이미 등록됐는지 확인해 중복 등록을 막는다(플로우가 같은 메일을 두 번 감지해도 안전).
 app.post("/api/todo-list/from-outlook-flag", (req, res) => {
-  if (OUTLOOK_FLAG_SECRET && req.get("x-webhook-secret") !== OUTLOOK_FLAG_SECRET) {
-    return res.status(401).json({ ok: false, error: "unauthorized" });
+  // 이 경로는 로그인 가드를 통과(PUBLIC_PATHS)하므로, 비밀값이 없으면 누구나 호출할 수 있게 되어 거부한다
+  if (!OUTLOOK_FLAG_SECRET) {
+    return res.status(503).json({ ok: false, error: "OUTLOOK_FLAG_SECRET 미설정 — 서버 .env에 설정해야 사용할 수 있습니다" });
+  }
+  {
+    const given = Buffer.from(String(req.get("x-webhook-secret") || ""));
+    const want = Buffer.from(OUTLOOK_FLAG_SECRET);
+    if (given.length !== want.length || !require("crypto").timingSafeEqual(given, want)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
   }
   const subject = String(req.body?.subject || "").trim();
   const messageId = req.body?.messageId ? String(req.body.messageId) : null;
@@ -3749,7 +3759,8 @@ app.get("/api/documents/:debtorId", (req, res) => {
 // 본인이 등록한 항목(created_by=viewer) + 공유(shared=1) 처리된 항목만 보임
 app.get("/api/related-data/:debtorId", (req, res) => {
   try {
-    const viewer = req.query.viewer || "";
+    // "내 것" 기준은 클라이언트가 보낸 viewer가 아니라 로그인 세션의 이름이다
+    const viewer = extractUserName(req);
     const rows = db.prepare("SELECT * FROM debtor_related_data WHERE debtor_id = ? AND (shared = 1 OR created_by = ?) ORDER BY occurred_at DESC")
       .all(req.params.debtorId, viewer);
     res.json(rows);
@@ -3759,7 +3770,8 @@ app.get("/api/related-data/:debtorId", (req, res) => {
 // 채무자별 관련 데이터 등록
 app.post("/api/related-data/:debtorId", (req, res) => {
   try {
-    const { source, title, summary, url, occurredAt, createdBy, shared } = req.body;
+    const { source, title, summary, url, occurredAt, shared } = req.body;
+    const createdBy = extractUserName(req);
     if (!source || !title || !url) return res.status(400).json({ error: "source, title, url은 필수입니다" });
     db.prepare(`
       INSERT OR IGNORE INTO debtor_related_data (debtor_id, source, title, summary, url, occurred_at, created_by, shared)
@@ -3772,9 +3784,20 @@ app.post("/api/related-data/:debtorId", (req, res) => {
 });
 
 // 관련 데이터 공유 여부 변경
+// 소유자(등록자) 또는 관리자 이상만 공유 여부를 바꾸거나 삭제할 수 있다
+function canModifyRelatedData(req, id) {
+  const row = db.prepare("SELECT created_by FROM debtor_related_data WHERE id = ?").get(id);
+  if (!row) return { ok: false, status: 404, error: "항목 없음" };
+  const isAdmin = ["admin", "superadmin"].includes(req.user?.role);
+  if (!isAdmin && row.created_by !== extractUserName(req)) return { ok: false, status: 403, error: "본인이 등록한 항목만 변경할 수 있습니다" };
+  return { ok: true };
+}
 app.patch("/api/related-data/:id", (req, res) => {
   try {
-    db.prepare("UPDATE debtor_related_data SET shared = ? WHERE id = ?").run(req.body.shared ? 1 : 0, parseInt(req.params.id, 10));
+    const id = parseInt(req.params.id, 10);
+    const chk = canModifyRelatedData(req, id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    db.prepare("UPDATE debtor_related_data SET shared = ? WHERE id = ?").run(req.body.shared ? 1 : 0, id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3782,7 +3805,10 @@ app.patch("/api/related-data/:id", (req, res) => {
 // 관련 데이터 삭제
 app.delete("/api/related-data/:id", (req, res) => {
   try {
-    db.prepare("DELETE FROM debtor_related_data WHERE id = ?").run(parseInt(req.params.id, 10));
+    const id = parseInt(req.params.id, 10);
+    const chk = canModifyRelatedData(req, id);
+    if (!chk.ok) return res.status(chk.status).json({ error: chk.error });
+    db.prepare("DELETE FROM debtor_related_data WHERE id = ?").run(id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3845,6 +3871,8 @@ function runReindex() {
 
     worker.on("message", result => {
       clearTimeout(timer);
+      // 이 콜백의 예외는 Promise reject가 아니라 uncaughtException이 되므로 직접 reject로 돌린다
+      try {
       if (!result.ok) return reject(new Error(result.error || "인덱싱 실패"));
       const ins = db.prepare(`INSERT OR REPLACE INTO file_index
         (file_path,filename,folder_name,rel_path,parsed_date,parsed_direction,parsed_person_name,doc_type,ext)
@@ -3854,6 +3882,7 @@ function runReindex() {
         for (const f of result.files) ins.run(f.filePath,f.filename,f.folderName,f.relPath,f.parsedDate,f.parsedDirection,f.parsedPersonName,f.docType,f.ext);
       })();
       resolve({ indexed: result.files.length });
+      } catch (e) { reject(e); }
     });
     worker.on("error", err => { clearTimeout(timer); reject(err); });
   });
@@ -4331,7 +4360,9 @@ app.get("/api/file-stream", (req, res) => {
     if (!normalizedFile.startsWith(normalizedRoot + path.sep) && normalizedFile !== normalizedRoot) {
       return res.status(403).json({ error: "허용되지 않은 경로" });
     }
-    if (!fs.existsSync(normalizedFile)) return res.status(404).json({ error: "파일 없음" });
+    let st;
+    try { st = fs.statSync(normalizedFile); } catch { return res.status(404).json({ error: "파일 없음" }); }
+    if (!st.isFile()) return res.status(400).json({ error: "파일이 아닙니다" });
 
     const ext = path.extname(normalizedFile).toLowerCase();
     const MIME = {
@@ -4343,7 +4374,15 @@ app.get("/api/file-stream", (req, res) => {
     const filename = path.basename(normalizedFile);
     res.setHeader("Content-Type", MIME[ext] || "application/octet-stream");
     res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(filename)}`);
-    fs.createReadStream(normalizedFile).pipe(res);
+    // pipe는 에러를 전달하지 않으므로(잠긴 파일/OneDrive 미동기화 등) 직접 처리하고,
+    // 클라이언트가 중간에 끊으면 원본 스트림을 닫아 파일 핸들·락이 남지 않게 한다
+    const stream = fs.createReadStream(normalizedFile);
+    stream.on("error", (err) => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+      else res.destroy(err);
+    });
+    res.on("close", () => stream.destroy());
+    stream.pipe(res);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -6145,6 +6184,10 @@ app.use("/api", (req, res) => {
 });
 
 // ─── 서버 기동 ──────────────────────────────────
+// 콜백 안 예외 하나로 프로세스가 죽어 진행 중이던 OCR·배치가 통째로 날아가지 않게 기록만 남긴다
+process.on("uncaughtException", (err) => { console.error("[uncaughtException]", err && err.stack || err); });
+process.on("unhandledRejection", (err) => { console.error("[unhandledRejection]", err && err.stack || err); });
+if (!OUTLOOK_FLAG_SECRET) console.warn("[outlook] OUTLOOK_FLAG_SECRET 미설정 — Outlook 플래그 연동(/api/todo-list/from-outlook-flag)이 거부됩니다");
 const PORT = 3010;
 app.listen(PORT, () => {
   const counts = {

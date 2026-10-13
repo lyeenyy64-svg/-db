@@ -55,16 +55,19 @@ const ROLE_LEVEL = { member: 0, manager: 1, admin: 2, superadmin: 3 };
 // 구성원도 호출해야 하는 "읽기 성격"의 POST (AI 질의, 문서 미리보기 등)
 const MEMBER_SAFE_POST = [
   /^\/ai-chat$/, /^\/ai\/(doc-chat|extract-pdf-text)$/, /^\/documents\/(preview-html|generate-hwpx)$/,
-  /^\/slack\/preview$/, /^\/payments\/verify-excel$/, /^\/admin\/heartbeat$/,
+  /^\/slack\/preview$/, /^\/admin\/heartbeat$/,
 ];
 function authorize(req) {
   const level = ROLE_LEVEL[req.user.role] ?? 0;
-  const p = req.path;
+  // Express 라우팅은 대소문자·끝 슬래시를 구분하지 않으므로, 가드도 같은 기준으로 정규화한다
+  // (안 그러면 /api/Admin/... 같은 변형 경로가 권한 검사를 피해 라우트에 도달한다)
+  const lower = req.path.toLowerCase();
+  const p = lower.length > 1 ? lower.replace(/\/+$/, "") : lower;
   const isRead = req.method === "GET" || req.method === "HEAD";
   // 계정 관리 API는 auth.cjs 안에서 자체 권한을 검사한다
-  if (p.startsWith("/auth/")) return null;
+  if (p === "/auth" || p.startsWith("/auth/")) return null;
   // 어드민 영역
-  if (p.startsWith("/admin/")) {
+  if (p === "/admin" || p.startsWith("/admin/")) {
     if (p === "/admin/heartbeat") return null;
     if (p.startsWith("/admin/stats")) return level >= 3 ? null : "마스터 권한이 필요합니다";
     return level >= 2 ? null : "관리자 권한이 필요합니다";
@@ -89,7 +92,9 @@ function parseCookies(req) {
   for (const part of raw.split(";")) {
     const i = part.indexOf("=");
     if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    const v = part.slice(i + 1).trim();
+    // 잘못된 % 시퀀스가 든 쿠키가 와도 500이 나지 않게 원문을 쓴다
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(v); } catch { out[part.slice(0, i).trim()] = v; }
   }
   return out;
 }
