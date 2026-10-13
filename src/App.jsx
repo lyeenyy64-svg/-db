@@ -1391,6 +1391,7 @@ const PaymentEditModalStandalone = ({ pay, onClose, onReload, showToast, userNam
   const [note, setNote] = useState(pay?.note || "");
   const [saving, setSaving] = useState(false);
   const doSave = async () => {
+    if (saving) return; // 더블클릭으로 중복 저장되지 않게
     setSaving(true);
     try {
       const r = await fetch("/api/payments/" + pay.id, {
@@ -1432,6 +1433,7 @@ const RematchModalStandalone = ({ pay, debtors, brands, onClose, onReload, showT
   const selectedNewDebtor = debtors.find(d => d.id === newDebtorId);
   const doRematch = async () => {
     if (!newDebtorId) { showToast("새 채무자를 선택하세요"); return; }
+    if (saving) return; // 더블클릭으로 중복 저장되지 않게
     setSaving(true);
     try {
       const r = await fetch("/api/payments/" + pay.id + "/rematch", {
@@ -1772,6 +1774,7 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
       showToast("2개 이상 날짜로 나눠 이월할 때는 각 날짜의 금액을 입력하세요");
       return;
     }
+    if (saving) return; // 더블클릭으로 중복 저장되지 않게
     setSaving(true);
     try {
       const payload = filledSplits.map(s => ({ date: s.date, amount: parsedAmt(s) > 0 ? parsedAmt(s) : null }));
@@ -3461,6 +3464,17 @@ function MainApp({ authUser, onLogout }) {
   const canDeleteReportsAndHistory = currentUser?.email === "kimjw@barogo.com";
 
   const [config, setConfig] = useState(DEFAULT_CONFIG);
+  // 어드민 > 시스템 설정(담당자/브랜드/분류 등)은 공유 KV("app_config")에 저장한다.
+  // 예전엔 React state뿐이라 새로고침하거나 SSE로 재로드되면 편집 내용이 사라졌다.
+  // last: 마지막으로 서버와 맞춘 JSON — 같은 내용을 다시 PUT해서 SSE 재로드가 반복되는 걸 막는다.
+  const configSyncRef = useRef({ loaded: false, last: JSON.stringify(DEFAULT_CONFIG) });
+  useEffect(() => {
+    if (!configSyncRef.current.loaded) return;
+    const json = JSON.stringify(config);
+    if (json === configSyncRef.current.last) return;
+    configSyncRef.current.last = json;
+    kvPut("app_config", config);
+  }, [config]);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
   const [tab, setTab] = useState("dashboard");
   const [sel, setSel] = useState(null);
@@ -3585,7 +3599,12 @@ function MainApp({ authUser, onLogout }) {
   const [collectionChannelsLoading, setCollectionChannelsLoading] = useState(false);
   const PP = 50;
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const toastTimerRef = useRef(null);
+  const showToast = (msg) => {
+    setToast(msg);
+    clearTimeout(toastTimerRef.current); // 이전 토스트의 타이머가 새 토스트를 먼저 지우지 않게
+    toastTimerRef.current = setTimeout(() => setToast(null), 3000);
+  };
   // 채무자 상세 화면 "수정" 버튼과 채무자 위치 지도의 리스트 클릭에서 공통으로 쓰는
   // 수정 모달 오픈 로직 — OCR로 추출된 값이 있으면 채워서 보여주되, 이미 수동으로
   // 입력된 값은 절대 덮어쓰지 않는다(백엔드 저장 우선순위와 동일하게 맞춤).
@@ -3661,6 +3680,18 @@ function MainApp({ authUser, onLogout }) {
         }
       } catch {}
 
+      // 공유 KV에 저장된 시스템 설정을 반영 (없으면 기본값)
+      try {
+        const rawCfg = localStorage.getItem("app_config");
+        if (rawCfg) {
+          const merged = { ...DEFAULT_CONFIG, ...JSON.parse(rawCfg) };
+          const json = JSON.stringify(merged);
+          configSyncRef.current.last = json;
+          setConfig(prev => (JSON.stringify(prev) === json ? prev : merged));
+        }
+      } catch {}
+      configSyncRef.current.loaded = true;
+
       const [debtorsRes, paymentsRes, installmentsRes, complaintsRes, activitiesRes] = await Promise.all([
         fetch("/api/debtors").then(r => { if (!r.ok) throw new Error(`debtors ${r.status}`); return r.json(); }),
         fetch("/api/payments").then(r => { if (!r.ok) throw new Error(`payments ${r.status}`); return r.json(); }),
@@ -3719,6 +3750,13 @@ function MainApp({ authUser, onLogout }) {
 
   // 초기 로드
   useEffect(() => { loadData(); }, [loadData]);
+  // 서버 재시작(update_server.bat) 등으로 한 번 갱신이 실패하면 "failed"에 머물러 SSE 재동기화도
+  // 저장도 멈춘 채 화면만 정상처럼 보였다 — 연결이 돌아올 때까지 10초마다 다시 시도한다.
+  useEffect(() => {
+    if (backendStatus !== "failed") return;
+    const t = setInterval(() => { loadData(); }, 10000);
+    return () => clearInterval(t);
+  }, [backendStatus, loadData]);
 
   // ─── 개인정보 원문 열람 ────────────────────────────────────
   // 서버는 주민번호·연락처·주소·좌표를 기본으로 가려서 내려보낸다. 담당 권한자가 사유를 입력하면
@@ -4063,16 +4101,18 @@ function MainApp({ authUser, onLogout }) {
   };
   const addDebtor = async (debtor) => {
     setData(prev => ({ ...prev, debtors: [debtor, ...prev.debtors] }));
-    // DB 저장 시도, 실패 시 localStorage 폴백
-    if (backendStatus === "connected") {
-      try {
-        const res = await fetch("/api/debtors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(debtor) });
-        const result = await res.json();
-        if (!result.ok) addMR(MK.debtors, debtor);
-      } catch { addMR(MK.debtors, debtor); }
-    } else {
-      addMR(MK.debtors, debtor);
-    }
+    // 서버가 거절/실패했는데 공유 KV(수동 등록 목록)에 남기면 모든 사용자 화면에 서버에 없는 유령 채무자가
+    // 영구히 남고 이후 수정도 전부 실패한다 — 화면에서 되돌리고 알린다.
+    const rollback = (why) => {
+      setData(prev => ({ ...prev, debtors: prev.debtors.filter(d => d.id !== debtor.id) }));
+      showToast(`채무자 등록 실패: ${why}`);
+    };
+    if (backendStatus !== "connected") { rollback("서버에 연결되어 있지 않습니다"); return; }
+    try {
+      const res = await fetch("/api/debtors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(debtor) });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) rollback(result.error || `서버 응답 ${res.status}`);
+    } catch (e) { rollback(e.message); }
   };
   // #2 채무자 삭제 — 관련 데이터 캐스케이드 삭제
   // installmentSchedules/legalCases/minsaCases/assetDisclosures/negotiations는 원래 안 지워지고
@@ -4104,7 +4144,9 @@ function MainApp({ authUser, onLogout }) {
     purgeMRByDebtor(MK.assetDisclosures, id);
     purgeMRByDebtor(MK.negotiations, id);
     if (backendStatus === "connected") {
-      fetch(`/api/debtors/${id}`, { method: "DELETE" }).catch(() => {});
+      fetch(`/api/debtors/${id}`, { method: "DELETE" })
+        .then(r => { if (!r.ok) throw new Error(`서버 응답 ${r.status}`); })
+        .catch(e => { showToast(`채무자 삭제가 서버에 반영되지 않았습니다(${e.message}) — 새로고침하면 다시 나타납니다`); loadData(); });
     }
   };
   // 채무자 잔액 재계산 헬퍼
@@ -4206,8 +4248,13 @@ function MainApp({ authUser, onLogout }) {
 
   // 입금 추가 — 백엔드 API 호출 (잔액·분할상환·추심상태 자동 처리)
   // 백엔드 미연결 시 기존 프론트 전용 로직으로 폴백
+  // 반환: true=등록 완료, "dup"=중복 확인 대화상자로 넘김, false=저장되지 않음
   const addPayment = async (payment, force = false) => {
-    if (backendStatus === "connected") {
+    if (backendStatus !== "connected") {
+      showToast("서버에 연결되어 있지 않아 입금이 저장되지 않았습니다. 연결이 복구된 뒤 다시 시도해주세요.");
+      return false;
+    }
+    {
       try {
         const res = await fetch("/api/payments", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -4223,38 +4270,16 @@ function MainApp({ authUser, onLogout }) {
         const result = await res.json();
         if (result.isDuplicate) {
           setDupConfirm({ payment, ...result });
-          return;
+          return "dup";
         }
-        if (!result.ok) { showToast(`입금 등록 실패: ${result.error || result.reason}`); return; }
+        if (!result.ok) { showToast(`입금 등록 실패: ${result.error || result.reason}`); return false; }
         await reloadFromBackend();
         applyRehabRoundIncrement(payment.debtorId, payment.payerName);
         const rehabMsg = isRehabPayerName(payment.payerName) ? ` (회생금 — 회차 자동 증가)` : "";
         showToast(`입금 등록 완료 — 잔액 자동 차감 (잔액 ${(result.balanceAfter || 0).toLocaleString()}원)${rehabMsg}`);
-        return;
-      } catch (e) { showToast(`백엔드 오류: ${e.message} — 프론트 임시 적용`); }
+        return true;
+      } catch (e) { showToast(`서버 오류로 입금이 저장되지 않았습니다: ${e.message}`); return false; }
     }
-    // 폴백: 프론트엔드 전용 갱신
-    const isRehab = isRehabPayerName(payment.payerName);
-    setData(prev => {
-      const newDebtors = prev.debtors.map(d => d.id === payment.debtorId ? recalcDebtor(d, payment.totalAmount, payment.paymentDate) : d);
-      const payMonth = new Date(payment.paymentDate).getMonth() + 1;
-      const payYear = new Date(payment.paymentDate).getFullYear();
-      const targetMonthStr = `${payYear}년 ${payMonth}월`;
-      const newInstallments = prev.installmentPlans.map(plan => {
-        if (plan.debtorId !== payment.debtorId) return plan;
-        return { ...plan, logs: (plan.logs || []).map(log => {
-          if (log.targetMonth === targetMonthStr && (log.status === "미납" || log.status === "지연")) {
-            return { ...log, status: "완납", paidAmount: payment.totalAmount, memo: `입금확인 ${fmtDate(payment.paymentDate)}` };
-          }
-          return log;
-        }) };
-      });
-      const newRehabs = isRehab
-        ? prev.rehabilitations.map(r => r.debtorId === payment.debtorId ? { ...r, currentRound: incrementRehabRound(r.currentRound) } : r)
-        : prev.rehabilitations;
-      return { ...prev, debtors: newDebtors, payments: [payment, ...prev.payments], installmentPlans: newInstallments, rehabilitations: newRehabs };
-    });
-    if (sel && sel.id === payment.debtorId) setSel(prev => recalcDebtor(prev, payment.totalAmount, payment.paymentDate));
   };
 
   // 입금 삭제 — 백엔드 API 호출 (잔액 자동 원복)
@@ -4304,8 +4329,9 @@ function MainApp({ authUser, onLogout }) {
     setData(prev => ({ ...prev, installmentPlans: [p, ...prev.installmentPlans] }));
     if (backendStatus === "connected") {
       try {
-        await fetch("/api/installments", { method: "POST", headers: { "Content-Type": "application/json" },
+        const r = await fetch("/api/installments", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: p.id, debtorId: p.debtorId, paymentTiming: p.paymentTiming, monthlyAmount: p.monthlyAmount, startDate: p.startDate, status: p.status, memo: p.memo }) });
+        if (!r.ok) throw new Error(`status ${r.status}`);
       } catch { addMR(MK.installmentPlans, p); }
     } else {
       addMR(MK.installmentPlans, p);
@@ -4812,20 +4838,24 @@ function MainApp({ authUser, onLogout }) {
       totalAmount: 0, channel: config.paymentChannels[0], note: "",
     });
     const set = (k, v) => setF(p => ({ ...p, [k]: v }));
-    const save = () => {
+    const [paySaving, setPaySaving] = useState(false);
+    const save = async () => {
+      if (paySaving) return; // 더블클릭으로 같은 입금이 두 번 등록되지 않게
       const d = data.debtors.find(x => x.id === f.debtorId);
       if (!d) { showToast("채무자를 선택하세요"); return; }
       if (!f.totalAmount) { showToast("금액을 입력하세요"); return; }
       const amt = Number(f.totalAmount);
-      addPayment({
+      setPaySaving(true);
+      const saved = await addPayment({
         id: uid("PAY"), debtorId: d.id, debtorName: d.name, brand: d.brand, assignee: d.assignee,
         hubName: d.hubName, hubCode: d.hubCode, paymentDate: f.paymentDate, payerName: f.payerName || d.name,
         totalAmount: amt, companyAccount: f.channel === "본사계좌" ? amt : 0,
         cashCharge: f.channel === "캐쉬충전" ? amt : 0, welcomeDirect: f.channel === "웰컴직접상환" ? amt : 0,
         note: f.note,
       });
-      addLog("등록", "입금", `${d.name} (${d.id}) — ${fmt(amt)} / ${f.channel}`);
-      showToast(`${d.name} 입금 ${fmt(amt)} 등록 완료`);
+      setPaySaving(false);
+      if (!saved) return; // 실패 사유는 addPayment가 토스트로 알렸다 — 입력 내용을 지키려고 모달은 유지
+      if (saved === true) addLog("등록", "입금", `${d.name} (${d.id}) — ${fmt(amt)} / ${f.channel}`);
       setModal(null);
     };
     return (
@@ -5707,6 +5737,7 @@ function MainApp({ authUser, onLogout }) {
       if (!firstDueDate) return showToast("첫 납부 예정일을 입력하세요");
       const existingPlan = data.installmentPlans.find(p => p.debtorId === debtorId);
       if (existingPlan) return showToast("이미 분할상환 플랜이 있습니다. 일정을 직접 추가하세요.");
+      if (saving) return; // 더블클릭으로 중복 저장되지 않게
       setSaving(true);
       try {
         const planId = uid("INS");
@@ -5716,6 +5747,7 @@ function MainApp({ authUser, onLogout }) {
         });
         const pResult = await pr.json();
         if (!pResult.ok) { showToast(pResult.error || "플랜 생성 실패"); setSaving(false); return; }
+        let schedError = null;
         if (previewDates.length > 0) {
           const amounts = buildScheduleAmounts(previewDates, parsedAmount, totalClaim);
           const schedules = previewDates.map((d, idx) => (
@@ -5726,11 +5758,12 @@ function MainApp({ authUser, onLogout }) {
             body: JSON.stringify({ planId, schedules }),
           });
           const sResult = await sr.json();
-          if (!sResult.ok) showToast(sResult.error || "일정 생성 오류");
+          if (!sResult.ok) schedError = sResult.error || "일정 생성 오류";
         }
         await reloadInstallments();
         setModal(null);
-        showToast(`플랜 추가 완료${previewDates.length > 1 ? ` (일정 ${previewDates.length}건)` : ""}`);
+        // 일정 생성이 실패했는데 "플랜 추가 완료"로 덮어쓰면 일정 없이 플랜만 생긴 걸 알 수 없다
+        showToast(schedError ? `플랜은 추가됐지만 일정 생성에 실패했습니다: ${schedError}` : `플랜 추가 완료${previewDates.length > 1 ? ` (일정 ${previewDates.length}건)` : ""}`);
       } catch(e) { showToast("저장 실패"); setSaving(false); }
     };
 
@@ -7798,6 +7831,7 @@ function MainApp({ authUser, onLogout }) {
       const handleSave = async () => {
         if (!debtorId) return showToast("채무자를 선택하세요");
         if (!date) return showToast("날짜를 입력하세요");
+        if (saving) return; // 더블클릭으로 중복 저장되지 않게
         setSaving(true);
         try {
           const isNewPlan = !plan?.id;
@@ -12654,6 +12688,7 @@ function MainApp({ authUser, onLogout }) {
       const handleSave = async () => {
         if (!rootPath.trim()) return;
         if (rootPath.trim().startsWith("http")) { showToast("URL이 아닌 로컬 폴더 경로를 입력해주세요 (예: C:\\Users\\...)", "err"); return; }
+        if (saving) return; // 더블클릭으로 중복 저장되지 않게
         setSaving(true);
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 8000);
@@ -12784,6 +12819,29 @@ function MainApp({ authUser, onLogout }) {
         };
       });
       if (sel && sel[debtorField] === oldVal) setSel(prev => ({ ...prev, [debtorField]: newVal }));
+      // 화면(state)만 바꾸면 3초 뒤 SSE 재로드에서 DB 값(옛 이름)으로 되돌아가므로 DB도 같이 바꾼다
+      const targets = data.debtors.filter(d => d[debtorField] === oldVal && !String(d.id).startsWith("MAN")).map(d => d.id);
+      if (targets.length) {
+        const run = async () => {
+          if (debtorField === "assignee" || debtorField === "collectionStatus") {
+            const r = await fetch("/api/debtors/bulk", {
+              method: "PATCH", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: targets, [debtorField]: newVal, userName: currentUser?.name }),
+            });
+            if (!r.ok) throw new Error(`status ${r.status}`);
+          } else {
+            for (const id of targets) {
+              const r = await fetch(`/api/debtors/${encodeURIComponent(id)}`, {
+                method: "PATCH", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ [debtorField]: newVal, _userName: currentUser?.name }),
+              });
+              if (!r.ok) throw new Error(`status ${r.status}`);
+            }
+          }
+        };
+        run().then(() => showToast(`${targets.length}건에 DB 반영 완료`))
+             .catch(e => showToast(`DB 반영 실패(${e.message}) — 일부 채무자에 이전 값이 남아 있을 수 있습니다`));
+      }
     };
     const updateList = (key) => ({
       onAdd: (item) => { setConfig(p => ({ ...p, [key]: [...p[key], item] })); showToast("추가 완료"); },

@@ -2184,7 +2184,7 @@ app.patch("/api/installments/schedules/:id", (req, res) => {
     db.prepare(`INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
       req.params.id, beforeSched.plan_id, beforeSched.debtor_id,
       status, beforeSched.due_date || beforeSched.due_month, beforeSched.scheduled_amount,
-      memo || null, userName || '관리자'
+      memo || null, extractUserName(req)
     );
   }
   // 드래그 등으로 월이 바뀌었을 때, 원래 월에 일정이 없어지면 날짜미정 플레이스홀더 생성
@@ -2276,7 +2276,7 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
         db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, to_date, amount, memo, user_name) VALUES (?, ?, ?, '이월', ?, ?, ?, ?, ?)").run(
           req.params.id, sched.plan_id, sched.debtor_id,
           sched.due_date || sched.due_month, item.date,
-          amt, memo || null, userName || '관리자'
+          amt, memo || null, extractUserName(req)
         );
         ids.push(newId);
       });
@@ -2304,7 +2304,7 @@ app.post("/api/installments/schedules/:id/memo", (req, res) => {
   const info = db.prepare("INSERT INTO installment_schedule_history (schedule_id, plan_id, debtor_id, event_type, from_date, amount, memo, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     req.params.id, sched.plan_id, sched.debtor_id,
     eventType || '메모', sched.due_date || sched.due_month,
-    sched.scheduled_amount, memo, userName || '관리자'
+    sched.scheduled_amount, memo, extractUserName(req)
   );
   db.prepare("UPDATE installment_schedules SET memo = ? WHERE id = ?").run(memo, req.params.id);
   res.json({ ok: true, historyId: info.lastInsertRowid });
@@ -2739,7 +2739,7 @@ app.patch("/api/debtors/bulk", (req, res) => {
     const { ids, assignee, collectionStatus, assigneeEffectiveDate, userName } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ ok: false, error: "ids가 필요합니다" });
     if (!assignee && !collectionStatus) return res.status(400).json({ ok: false, error: "변경할 담당자 또는 추심상태가 없습니다" });
-    const _userName = userName || "관리자";
+    const _userName = extractUserName(req); // 요청 본문 값이 아니라 로그인 세션의 이름
     const effDate = /^\d{4}-\d{2}-\d{2}$/.test(assigneeEffectiveDate || "")
       ? assigneeEffectiveDate
       : localDate();
@@ -2911,7 +2911,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
 app.patch("/api/debtors/:id", (req, res) => {
   try {
     const { id } = req.params;
-    let _userName = req.body._userName || '관리자';
+    let _userName = extractUserName(req);
     if (hasReplacementChar(_userName)) _userName = '알수없음';
 
     if (Object.keys(DEBTOR_FIELD_MAP).some(k => req.body[k] !== undefined)) {
@@ -2946,7 +2946,7 @@ app.post("/api/edit-logs/:id/restore", (req, res) => {
     let restoredVal = log.field_name === "residentNumber" ? decryptPii(log.old_value ?? "") : (log.old_value ?? "");
     if (isNumericCol && restoredVal !== "" && !isNaN(Number(restoredVal))) restoredVal = Number(restoredVal);
 
-    const userName = req.body?.userName || req.headers["x-user-name"] || "관리자";
+    const userName = extractUserName(req);
     applyDebtorFieldPatch(log.debtor_id, { [log.field_name]: restoredVal }, userName, "/api/edit-logs/:id/restore");
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
@@ -3989,7 +3989,7 @@ app.post("/api/admin/verify-role-passcode", (req, res) => {
 // 어드민 통계: 접속 하트비트 수신
 app.post("/api/admin/heartbeat", (req, res) => {
   try {
-    const userName = (req.body && req.body.userName) ? String(req.body.userName).trim() : "";
+    const userName = extractUserName(req) !== "알수없음" ? extractUserName(req) : ((req.body && req.body.userName) ? String(req.body.userName).trim() : "");
     // 사용자를 식별할 수 없는 하트비트는 "알수없음"으로 남기지 않고 그냥 무시한다.
     if (userName) insertActivityLog.run("heartbeat", userName, 0, "/api/admin/heartbeat", null, null);
     res.json({ ok: true });
