@@ -2886,13 +2886,14 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
 
   // 주소 텍스트가 바뀌면 예전 주소로 지오코딩된 좌표는 더 이상 유효하지 않으므로 비운다
   // (지도 화면에서 다시 조회할 때 자동으로 재지오코딩된다)
-  if (changedJsKeys.includes('latestAddress')) {
+  // 폼 저장은 주소 필드를 값이 같아도 매번 함께 보내므로, 실제로 값이 바뀐 경우에만 좌표를 비운다
+  if (changedJsKeys.includes('latestAddress') && String(oldRow.latestAddress ?? '') !== String(coercedVals.latestAddress ?? '')) {
     fields.push("latest_address_lat = NULL", "latest_address_lng = NULL", "latest_address_updated_at = datetime('now','localtime')");
   }
-  if (changedJsKeys.includes('residentAddress')) {
+  if (changedJsKeys.includes('residentAddress') && String(oldRow.residentAddress ?? '') !== String(coercedVals.residentAddress ?? '')) {
     fields.push("resident_address_lat = NULL", "resident_address_lng = NULL");
   }
-  if (changedJsKeys.includes('manualAddress')) {
+  if (changedJsKeys.includes('manualAddress') && String(oldRow.manualAddress ?? '') !== String(coercedVals.manualAddress ?? '')) {
     fields.push("manual_address_lat = NULL", "manual_address_lng = NULL");
   }
   // 대위변제일을 사람이 비워서 저장하면 "명시적으로 지움" 플래그를 세워, 대위변제증명서
