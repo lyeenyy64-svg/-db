@@ -393,15 +393,73 @@ if (typeof window !== "undefined" && !window.__fetchWrappedForUserName) {
 
 // ─── 공유 KV 스토어 헬퍼 (localStorage + DB 동시 저장) ─────
 // 저장: 로컬에 즉시 반영, DB에 비동기 전송 (SSE로 다른 사용자에게 전파)
+// 서버와 마지막으로 맞춘 값(메모리). 저장할 때 "내가 바꾼 부분(ops)"만 계산해 보내는 기준이 된다.
+// 예전엔 배열/객체 전체를 PUT해서, 두 사람이 동시에 저장하면 나중 저장이 먼저 저장된 항목을 지웠다.
+// 새로고침마다 loadData가 kv-all로 다시 채우므로 localStorage에 따로 저장하지 않는다(용량 이중 사용 방지).
+const kvBase = new Map();
+const kvClone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
+const kvEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const kvIsPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const kvIsScalar = (v) => v === null || ["string", "number", "boolean"].includes(typeof v);
+// base → next 변경분. 다룰 수 없는 형태면 null(전체 PUT으로 폴백).
+function kvDiff(base, next) {
+  if (Array.isArray(base) && Array.isArray(next)) {
+    if (next.every(x => kvIsScalar(x)) && base.every(x => kvIsScalar(x))) {
+      const ops = [];
+      for (const v of next) if (!base.some(b => kvEq(b, v)) && !ops.some(o => o.op === "addv" && kvEq(o.v, v))) ops.push({ op: "addv", v });
+      for (const v of base) if (!next.some(n => kvEq(n, v)) && !ops.some(o => o.op === "delv" && kvEq(o.v, v))) ops.push({ op: "delv", v });
+      return ops;
+    }
+    const hasId = (x) => kvIsPlain(x) && x.id !== undefined && x.id !== null;
+    if (!next.every(hasId) || !base.every(hasId)) return null;
+    const bById = new Map(base.map(x => [x.id, x]));
+    const nIds = new Set();
+    for (const x of next) { if (nIds.has(x.id)) return null; nIds.add(x.id); }
+    const ops = [];
+    const added = next.filter(x => !bById.has(x.id));
+    for (const x of added) ops.push({ op: "add", item: x });
+    for (const [id] of bById) if (!nIds.has(id)) ops.push({ op: "del", id });
+    for (const x of next) {
+      const b = bById.get(x.id);
+      if (!b || kvEq(b, x)) continue;
+      const fields = {}, unset = [];
+      for (const k of Object.keys(x)) if (!kvEq(b[k], x[k])) fields[k] = x[k];
+      for (const k of Object.keys(b)) if (!(k in x)) unset.push(k);
+      ops.push({ op: "patch", id: x.id, fields, unset });
+    }
+    return ops;
+  }
+  if (kvIsPlain(base) && kvIsPlain(next)) {
+    const ops = [];
+    for (const k of Object.keys(next)) if (!(k in base) || !kvEq(base[k], next[k])) ops.push({ op: "oset", k, v: next[k] });
+    for (const k of Object.keys(base)) if (!(k in next)) ops.push({ op: "odel", k });
+    return ops;
+  }
+  return null;
+}
 function kvPut(key, value) {
-  // 실패해도 로컬 화면은 정상으로 보이지만 다른 사용자/기기와는 조용히 어긋난다.
-  // 원인 추적이 가능하도록 최소한 콘솔에는 남긴다.
-  fetch(`/api/kv/${encodeURIComponent(key)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(value),
-  })
-    .then(r => { if (!r.ok) console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); })
+  const url = `/api/kv/${encodeURIComponent(key)}`;
+  const snapshot = kvClone(value);
+  const fullPut = () => fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(snapshot) })
+    .then(r => { if (r.ok) kvBase.set(key, snapshot); else console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); })
+    .catch(e => console.warn(`[kvPut] 서버 동기화 실패 (key=${key}):`, e.message));
+  // 서버 값을 아직 모르는 키(처음 쓰는 키)는 빈 배열/객체 기준으로 계산 — 추가만 있고 삭제는 없어 덮어쓰지 않는다
+  const base = kvBase.has(key) ? kvBase.get(key) : (Array.isArray(value) ? [] : kvIsPlain(value) ? {} : undefined);
+  const ops = base === undefined ? null : kvDiff(base, value);
+  if (!ops) { fullPut(); return; }
+  if (ops.length === 0) return; // 서버와 이미 같다
+  fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ops }) })
+    .then(async r => {
+      if (r.status === 409) { fullPut(); return; } // 서버에 저장된 형태가 달라 합칠 수 없음 — 기존 방식(전체 저장)으로
+      if (!r.ok) { console.warn(`[kvPut] 서버 동기화 실패 (key=${key}, status=${r.status})`); return; }
+      const j = await r.json().catch(() => null);
+      const merged = j && j.value !== undefined ? j.value : snapshot;
+      kvBase.set(key, kvClone(merged));
+      // 그 사이 이 키를 다시 고치지 않았다면 다른 사람 변경이 합쳐진 최신 값으로 로컬도 맞춘다
+      try {
+        if (localStorage.getItem(key) === JSON.stringify(snapshot)) localStorage.setItem(key, JSON.stringify(merged));
+      } catch {}
+    })
     .catch(e => console.warn(`[kvPut] 서버 동기화 실패 (key=${key}):`, e.message));
 }
 
@@ -3692,6 +3750,7 @@ function MainApp({ authUser, onLogout }) {
         if (kvAll) {
           for (const [key, value] of Object.entries(kvAll)) {
             localStorage.setItem(key, JSON.stringify(value));
+            kvBase.set(key, kvClone(value)); // 저장 시 변경분 계산의 기준(서버와 맞춘 값)
           }
           // case_event_{id}(사건 기일)는 kvPut이 네트워크 오류 등으로 조용히 실패해도
           // localStorage에는 이미 저장된 채로 남아, 그 사건이 서버 데이터엔 없는데도 이

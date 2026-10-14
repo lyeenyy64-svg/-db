@@ -727,6 +727,7 @@ db.exec(`
 `);
 
 // 기존에 평문으로 저장된 주민번호를 1회 암호화 (모든 테이블이 만들어진 뒤에 실행)
+// (수정 이력의 연락처/주소 평문 행 1회 암호화는 아래 migrateDatabase 뒤에서 처리)
 if (String(process.env.PII_ALLOW_KEY_MISMATCH || "").toLowerCase() !== "on" && piiCrypto.keyMismatchesData(db)) {
   // 키를 잘못 잡은 채로 기동하면 암호화된 주민번호가 빈 값으로 덮어써질 수 있어 시작하지 않는다
   piiCrypto.discardNewlyCreatedKey();
@@ -736,6 +737,23 @@ if (String(process.env.PII_ALLOW_KEY_MISMATCH || "").toLowerCase() !== "on" && p
   process.exit(1);
 }
 piiCrypto.migrateDatabase(db, DB_PATH);
+try {
+  const done = db.prepare("SELECT value FROM kv_store WHERE key='edit_log_pii_encrypt_v1'").get();
+  if (!done && piiCrypto.keyReady) {
+    const fields = ["phone", "creditPhone", "birthDate", "latestAddress", "manualAddress", "residentAddress"];
+    const rows = db.prepare(`SELECT id, old_value, new_value FROM debtor_edit_log WHERE field_name IN (${fields.map(() => "?").join(",")})`).all(...fields);
+    const upd = db.prepare("UPDATE debtor_edit_log SET old_value = ?, new_value = ? WHERE id = ?");
+    let n = 0;
+    db.transaction(() => {
+      for (const r of rows) {
+        const o = piiCrypto.encryptPii(r.old_value ?? ""), nv = piiCrypto.encryptPii(r.new_value ?? "");
+        if (o !== r.old_value || nv !== r.new_value) { upd.run(o, nv, r.id); n++; }
+      }
+      db.prepare("INSERT OR REPLACE INTO kv_store (key, value) VALUES ('edit_log_pii_encrypt_v1', '1')").run();
+    })();
+    if (n) console.log(`[pii] 수정 이력의 연락처/주소/생년월일 ${n}건을 암호화했습니다`);
+  }
+} catch (e) { console.error("[pii] 수정 이력 암호화 실패(다음 기동 때 다시 시도):", e.message); }
 
 const app = express();
 // 앞단(vite)이 같은 PC에서 프록시하므로 loopback이 보낸 X-Forwarded-* 만 믿는다 (원래 접속이 HTTPS였는지 판단용)
@@ -2809,6 +2827,19 @@ const DEBTOR_FIELD_MAP = {
   residentAddress:"resident_address",residentRegisteredDate:"resident_registered_date",
   residentNote:"resident_note",creditPhone:"credit_phone",
 };
+// 수정 이력에 변경 전/후 값이 그대로 남으면 DB·백업 유출 시 연락처/주소가 평문으로 읽힌다 — 개인정보 필드는 암호화해 저장한다.
+// 읽는 쪽(목록/복원/통계)은 decryptPii를 거치고, 평문 값은 그대로 통과하므로 과거 행과 섞여 있어도 안전하다.
+const SENSITIVE_LOG_FIELDS = new Set(["residentNumber", "phone", "creditPhone", "birthDate", "latestAddress", "manualAddress", "residentAddress"]);
+const encLogVal = (field, v) => (SENSITIVE_LOG_FIELDS.has(field) ? encryptPii(v) : v);
+// 수정 내역 화면에는 연락처/주소/생년월일을 가려서 내려보낸다 (원문 복원은 서버가 DB의 값으로 처리)
+function maskLogVal(field, v) {
+  if (typeof v !== "string" || !v) return v;
+  const pv = require("./privacy.cjs");
+  if (field === "phone" || field === "creditPhone") return pv.maskPhoneText(v);
+  if (field === "latestAddress" || field === "manualAddress" || field === "residentAddress") return pv.maskAddressText(v);
+  if (field === "birthDate") return v.replace(/^(\d{4})[-.]?(\d{2})[-.]?(\d{2})$/, "$1-**-**");
+  return v;
+}
 const DEBTOR_FIELD_LABELS = {
   category:"분류",assignee:"담당자",name:"채무자명",phone:"연락처",
   hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
@@ -2898,7 +2929,7 @@ function applyDebtorFieldPatch(id, body, userName, statsPath) {
       const oldVal = String(oldRow[jsKey] ?? '');
       const newVal = String(coercedVals[jsKey] ?? '');
       if (oldVal !== newVal) {
-        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, jsKey === "residentNumber" ? encryptPii(oldVal) : oldVal, jsKey === "residentNumber" ? encryptPii(newVal) : newVal);
+        insLog.run(id, debtorName, userName, jsKey, DEBTOR_FIELD_LABELS[jsKey] || jsKey, encLogVal(jsKey, oldVal), encLogVal(jsKey, newVal));
         statsBytes += newVal.length;
       }
     }
@@ -2951,7 +2982,7 @@ app.post("/api/edit-logs/:id/restore", (req, res) => {
     // 합계/비교 연산이 깨질 수 있어, 숫자로 안전하게 변환 가능하면 숫자로 되돌린다.
     const dbCol = DEBTOR_FIELD_MAP[log.field_name];
     const isNumericCol = ["principal_balance", "adjustment", "collected_amount", "exec_title"].includes(dbCol);
-    let restoredVal = log.field_name === "residentNumber" ? decryptPii(log.old_value ?? "") : (log.old_value ?? "");
+    let restoredVal = decryptPii(log.old_value ?? "");
     if (isNumericCol && restoredVal !== "" && !isNaN(Number(restoredVal))) restoredVal = Number(restoredVal);
 
     const userName = extractUserName(req);
@@ -2982,7 +3013,11 @@ app.get("/api/edit-logs", (req, res) => {
       ORDER BY changed_at DESC, id DESC
       LIMIT @limit
     `).all(params);
-    res.json(rows.map(r => r.fieldName === "residentNumber" ? { ...r, oldValue: decryptPii(r.oldValue), newValue: decryptPii(r.newValue) } : r));
+    res.json(rows.map(r => ({
+      ...r,
+      oldValue: maskLogVal(r.fieldName, decryptPii(r.oldValue)),
+      newValue: maskLogVal(r.fieldName, decryptPii(r.newValue)),
+    })));
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
@@ -3524,7 +3559,10 @@ function voidKvItemLogs(path, itemId) {
 }
 
 // PUT /api/kv/:key — 키 하나 저장 (저장 후 SSE broadcast)
-app.put("/api/kv/:key", (req, res) => {
+// PATCH /api/kv/:key — 변경분(ops)만 보내 서버의 "현재" 값에 합친다. PUT은 배열/객체 전체를 덮어써서
+// 두 사람이 동시에 저장하면 나중 저장이 먼저 저장된 항목을 지웠다(To Do, 사건 메모 등).
+// PATCH는 서버가 동기적으로(better-sqlite3) 읽고-합치고-쓰므로 서로의 변경이 사라지지 않는다.
+const kvSaveHandler = (req, res) => {
   const key = req.params.key;
   if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
   // JSON이 아닌 Content-Type 등으로 본문이 비어 {}가 들어오면 기존 배열(To Do 등)이 통째로 날아간다
@@ -3597,6 +3635,65 @@ app.put("/api/kv/:key", (req, res) => {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
   `).run(key, JSON.stringify(piiCrypto.encryptDeep(req.body)));
   res.json({ ok: true });
+};
+app.put("/api/kv/:key", kvSaveHandler);
+
+// ops: add{item} / patch{id,fields,unset} / del{id}  (id가 있는 객체 배열)
+//      addv{v} / delv{v}                              (원시값 배열)
+//      oset{k,v} / odel{k}                            (객체)
+function kvApplyOps(cur, ops) {
+  const kind = (op) => (["add", "patch", "del", "addv", "delv"].includes(op.op) ? "array" : ["oset", "odel"].includes(op.op) ? "object" : null);
+  const firstKind = ops.map(kind).find(Boolean);
+  if (!firstKind) throw new Error("알 수 없는 변경 유형");
+  let val = cur === undefined || cur === null ? (firstKind === "array" ? [] : {}) : cur;
+  if (firstKind === "array" ? !Array.isArray(val) : (typeof val !== "object" || Array.isArray(val))) throw new Error("저장된 값의 형태가 변경 유형과 다릅니다");
+  val = firstKind === "array" ? [...val] : { ...val };
+  const toAdd = [];
+  for (const op of ops) {
+    if (kind(op) !== firstKind) throw new Error("한 요청에서 배열/객체 변경을 섞을 수 없습니다");
+    if (op.op === "add") {
+      const it = op.item;
+      if (!it || typeof it !== "object" || it.id == null) throw new Error("id 없는 항목");
+      const i = val.findIndex(x => x && x.id === it.id);
+      if (i >= 0) val[i] = { ...val[i], ...it }; // 이미 있으면(중복 전송/동시 추가) 합친다
+      else toAdd.push(it);
+    } else if (op.op === "patch") {
+      const i = val.findIndex(x => x && x.id === op.id);
+      if (i < 0) continue; // 그 사이 다른 사람이 지운 항목 — 수정은 버린다
+      const next = { ...val[i], ...(op.fields || {}) };
+      for (const k of op.unset || []) delete next[k];
+      val[i] = next;
+    } else if (op.op === "del") {
+      val = val.filter(x => !(x && x.id === op.id));
+    } else if (op.op === "addv") {
+      if (!val.some(x => JSON.stringify(x) === JSON.stringify(op.v))) val.push(op.v);
+    } else if (op.op === "delv") {
+      val = val.filter(x => JSON.stringify(x) !== JSON.stringify(op.v));
+    } else if (op.op === "oset") {
+      val[String(op.k)] = op.v;
+    } else if (op.op === "odel") {
+      delete val[String(op.k)];
+    }
+  }
+  if (toAdd.length) val = [...toAdd, ...val]; // 클라이언트 addMR과 같이 새 항목은 앞에
+  return val;
+}
+app.patch("/api/kv/:key", (req, res) => {
+  const key = req.params.key;
+  if (isInternalKey(key)) return res.status(403).json({ error: "internal key" });
+  const ops = req.body && req.body.ops;
+  if (!Array.isArray(ops) || ops.length > 20000) return res.status(400).json({ error: "ops 배열이 필요합니다" });
+  const row = db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key);
+  let cur;
+  try { cur = row ? piiCrypto.decryptDeep(JSON.parse(row.value)) : undefined; } catch { cur = undefined; }
+  let merged;
+  try { merged = kvApplyOps(cur, ops); } catch (e) { return res.status(409).json({ error: e.message }); }
+  // 클라이언트가 가려진 값(주민번호 등)을 그대로 보냈다면 서버의 원본으로 되돌린다 (PUT과 같은 보호)
+  if (cur !== undefined) { try { merged = require("./privacy.cjs").restoreMasked(merged, cur, undefined); } catch {} }
+  req.body = merged;
+  const origJson = res.json.bind(res);
+  res.json = (b) => origJson(b && b.ok ? { ok: true, value: merged } : b); // 합쳐진 최신 값을 돌려줘 클라이언트가 맞춘다
+  return kvSaveHandler(req, res);
 });
 
 // POST /api/todo-list/from-outlook-flag — Outlook에서 메일에 플래그를 걸면 Power Automate가
@@ -4048,8 +4145,8 @@ function computeNetDebtorVolume(len) {
     ORDER BY debtor_id, field_name, changed_at ASC, id ASC
   `).all().map(r => ({
     ...r,
-    old_value: stripAiAnalysisBlock(r.field_name, r.old_value),
-    new_value: stripAiAnalysisBlock(r.field_name, r.new_value),
+    old_value: stripAiAnalysisBlock(r.field_name, decryptPii(r.old_value)),
+    new_value: stripAiAnalysisBlock(r.field_name, decryptPii(r.new_value)),
   }));
 
   const groups = new Map();

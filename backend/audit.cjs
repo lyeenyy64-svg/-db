@@ -61,6 +61,24 @@ function createAudit({ slackClient, notifyChannel } = {}) {
     CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
     CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user, ts);
   `);
+  // 해시 버전: 1=키 없는 SHA-256(기존 행), 2=HMAC-SHA256(키 필요, 필드 구분자 모호성 제거). 기존 행은 그대로 검증된다.
+  try { adb.exec("ALTER TABLE audit_log ADD COLUMN hv INTEGER NOT NULL DEFAULT 1"); } catch { /* 이미 있음 */ }
+  // 키 없는 해시는 파일에 쓰기 권한이 있으면 체인 전체를 다시 계산해 위조할 수 있다 — 키는 DB 파일과 분리해 둔다
+  // (AUDIT_HMAC_KEY 환경변수 → AUDIT_KEY_FILE → 접속기록 폴더의 audit.key(없으면 자동 생성)). 가능하면 별도 위치에 보관·백업할 것.
+  const keyFile = process.env.AUDIT_KEY_FILE || path.join(path.dirname(file), "audit.key");
+  const auditKey = (() => {
+    if (process.env.AUDIT_HMAC_KEY && process.env.AUDIT_HMAC_KEY.length >= 16) return Buffer.from(process.env.AUDIT_HMAC_KEY, "utf8");
+    try {
+      if (fs.existsSync(keyFile)) return Buffer.from(fs.readFileSync(keyFile, "utf8").trim(), "hex");
+      fs.writeFileSync(keyFile, crypto.randomBytes(32).toString("hex"), { mode: 0o600 });
+      console.warn(`[audit] 접속기록 무결성 키를 새로 만들었습니다: ${keyFile} — 접속기록 파일과 분리해 별도로 보관하세요(분실하면 이후 기록 검증이 불가능)`);
+      return Buffer.from(fs.readFileSync(keyFile, "utf8").trim(), "hex");
+    } catch (e) {
+      console.error("[audit] 무결성 키를 준비하지 못해 기존 방식(SHA-256)으로 기록합니다:", e.message);
+      return null;
+    }
+  })();
+  const headFile = path.join(path.dirname(file), "audit.head");
   console.log(`[audit] 접속기록 저장소: ${file} (보관 ${RETENTION_DAYS}일)`);
 
   const localTs = () => {
@@ -70,11 +88,25 @@ function createAudit({ slackClient, notifyChannel } = {}) {
   };
   const last = adb.prepare("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1").get();
   let lastHash = last ? last.hash : "GENESIS";
-  const insert = adb.prepare(`INSERT INTO audit_log (ts, user, role, ip, action, method, route, target, status, count, detail, prev_hash, hash)
-    VALUES (@ts, @user, @role, @ip, @action, @method, @route, @target, @status, @count, @detail, @prev_hash, @hash)`);
-  const hashOf = (r) => crypto.createHash("sha256")
-    .update([r.prev_hash, r.ts, r.user, r.role, r.ip, r.action, r.method, r.route, r.target, r.status, r.count, r.detail].map(v => v ?? "").join("|"))
-    .digest("hex");
+  const insert = adb.prepare(`INSERT INTO audit_log (ts, user, role, ip, action, method, route, target, status, count, detail, prev_hash, hash, hv)
+    VALUES (@ts, @user, @role, @ip, @action, @method, @route, @target, @status, @count, @detail, @prev_hash, @hash, @hv)`);
+  const hashOf = (r) => {
+    const fields = [r.prev_hash, r.ts, r.user, r.role, r.ip, r.action, r.method, r.route, r.target, r.status, r.count, r.detail];
+    if (r.hv === 2 && auditKey) return crypto.createHmac("sha256", auditKey).update(JSON.stringify(fields.map(v => v ?? ""))).digest("hex");
+    return crypto.createHash("sha256").update(fields.map(v => v ?? "").join("|")).digest("hex");
+  };
+  // 마지막 행의 (id, 해시)를 서명해 별도 파일에 둔다 — 최신 행들을 통째로 지우는 "꼬리 삭제"를 검증에서 알아채기 위함.
+  // 요청마다 쓰지 않도록 최대 3초에 한 번 기록한다.
+  let lastHeadWrite = 0, headDirty = null;
+  const headSig = (id, hash) => (auditKey ? crypto.createHmac("sha256", auditKey).update(`head|${id}|${hash}`).digest("hex") : "");
+  function writeHead(id, hash, force) {
+    if (!auditKey) return;
+    headDirty = { id, hash };
+    if (!force && Date.now() - lastHeadWrite < 3000) return;
+    try { fs.writeFileSync(headFile, JSON.stringify({ id, hash, sig: headSig(id, hash) })); lastHeadWrite = Date.now(); headDirty = null; } catch {}
+  }
+  process.on("exit", () => { if (headDirty) writeHead(headDirty.id, headDirty.hash, true); });
+  setInterval(() => { if (headDirty) writeHead(headDirty.id, headDirty.hash, true); }, 5000).unref();
 
   // 1시간 단위 이상 행위 알림 (같은 사용자·종류는 시간당 1회만 알린다)
   const alerted = new Set();
@@ -112,10 +144,12 @@ function createAudit({ slackClient, notifyChannel } = {}) {
         target: evt.target ?? null, status: evt.status ?? null, count: evt.count ?? null,
         detail: evt.detail ? String(evt.detail).slice(0, 300) : null,
         prev_hash: lastHash,
+        hv: auditKey ? 2 : 1,
       };
       row.hash = hashOf(row);
-      insert.run(row);
+      const info = insert.run(row);
       lastHash = row.hash;
+      writeHead(Number(info.lastInsertRowid), row.hash, false);
       if (row.action === "pii_reveal") maybeAlert(row.user, "reveal", revealHourCount(row.user), ALERT_REVEALS_PER_HOUR, "개인정보 원문 열람");
       else if (row.action === "다운로드") maybeAlert(row.user, "download", hourCount(row.user, "action = '다운로드'"), ALERT_DOWNLOADS_PER_HOUR, "다운로드");
     } catch (e) { console.error("[audit] 기록 실패:", e.message); }
@@ -158,7 +192,18 @@ function createAudit({ slackClient, notifyChannel } = {}) {
       if (r.prev_hash !== prev || hashOf(r) !== r.hash) return { ok: false, brokenAtId: r.id, total: all.length };
       prev = r.hash;
     }
-    return { ok: true, total: all.length };
+    // 꼬리 삭제 검사: 서명된 마지막 행 정보가 DB에 그대로 있어야 한다
+    try {
+      if (auditKey && fs.existsSync(headFile)) {
+        const h = JSON.parse(fs.readFileSync(headFile, "utf8"));
+        if (h.sig !== headSig(h.id, h.hash)) return { ok: false, reason: "head_signature_invalid", total: all.length };
+        const row = all.find(r => r.id === h.id);
+        const maxId = all.length ? all[all.length - 1].id : 0;
+        if (!row && h.id > maxId) return { ok: false, reason: "tail_truncated", brokenAtId: maxId + 1, total: all.length };
+        if (row && row.hash !== h.hash) return { ok: false, reason: "head_mismatch", brokenAtId: row.id, total: all.length };
+      }
+    } catch (e) { return { ok: false, reason: "head_unreadable", total: all.length }; }
+    return { ok: true, total: all.length, keyed: !!auditKey };
   }
 
   // 보관기간 지난 기록 정리 (하루 1회)
