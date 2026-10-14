@@ -238,6 +238,9 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
       return res.status(401).json({ error: "아이디 또는 비밀번호가 올바르지 않습니다." });
     }
     if (!acc.approved) return res.status(403).json({ error: "승인 대기 중이거나 비활성화된 계정입니다." });
+    // 비밀번호를 아는 쪽이 로그인을 반복해 챌린지를 새로 받아 가며 6자리 코드를 무한히 시도하지 못하게,
+    // 계정 단위로 인증코드 실패를 누적해 잠그고(챌린지가 바뀌어도 유지) 이전 챌린지는 폐기한다.
+    if (isLocked(`otp|${acc.id}`)) return res.status(429).json({ error: "인증코드 입력 실패가 많아 잠시 잠겼습니다. 10분 뒤에 다시 시도하세요." });
     failMap.delete(key);
 
     if (!TWO_FACTOR_ON) {
@@ -255,6 +258,7 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
       console.warn("[auth] OTP 발송 실패:", e.message);
       return res.status(503).json({ error: `인증코드를 Slack으로 보내지 못했습니다 (${e.message}). 관리자에게 문의하세요.` });
     }
+    db.prepare("DELETE FROM auth_challenges WHERE user_id = ? OR expires_at < ?").run(acc.id, Date.now());
     db.prepare("INSERT INTO auth_challenges (id, user_id, code_hash, expires_at) VALUES (?, ?, ?, ?)")
       .run(challengeId, acc.id, sha256(`${challengeId}:${code}`), Date.now() + OTP_TTL_MS);
     res.json({ step: "otp", challengeId });
@@ -264,6 +268,7 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
     const { challengeId, code } = req.body || {};
     const ch = db.prepare("SELECT * FROM auth_challenges WHERE id = ?").get(String(challengeId || ""));
     if (!ch || ch.expires_at < Date.now()) return res.status(401).json({ error: "인증 시간이 만료되었습니다. 처음부터 다시 로그인하세요.", expired: true });
+    if (isLocked(`otp|${ch.user_id}`)) return res.status(429).json({ error: "인증코드 입력 실패가 많아 잠시 잠겼습니다. 10분 뒤에 다시 시도하세요.", expired: true });
     if (ch.attempts >= OTP_MAX_ATTEMPTS) {
       db.prepare("DELETE FROM auth_challenges WHERE id = ?").run(ch.id);
       return res.status(429).json({ error: "인증코드 입력 횟수를 초과했습니다. 처음부터 다시 로그인하세요.", expired: true });
@@ -271,11 +276,13 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
     const given = sha256(`${ch.id}:${String(code || "").trim()}`);
     if (given.length !== ch.code_hash.length || !crypto.timingSafeEqual(Buffer.from(given), Buffer.from(ch.code_hash))) {
       db.prepare("UPDATE auth_challenges SET attempts = attempts + 1 WHERE id = ?").run(ch.id);
+      addFail(`otp|${ch.user_id}`);
       const acc0 = getAccountById(ch.user_id);
       log({ event: "otp_fail", user: acc0 ? acc0.name : ch.user_id, ip: req.ip });
       return res.status(401).json({ error: "인증코드가 올바르지 않습니다." });
     }
     db.prepare("DELETE FROM auth_challenges WHERE id = ?").run(ch.id);
+    failMap.delete(`otp|${ch.user_id}`);
     const acc = getAccountById(ch.user_id);
     if (!acc || !acc.approved) return res.status(403).json({ error: "사용할 수 없는 계정입니다." });
     createSession(res, req, acc.id);
@@ -359,6 +366,10 @@ function setupAuth(app, db, { slackClient, ROLE_CHANGE_PASSCODE, audit, auditAtt
     if (!name || !String(name).trim()) return res.status(400).json({ error: "이름은 필수입니다" });
     const bad = validatePassword(password);
     if (bad) return res.status(400).json({ error: `초기 ${bad}` });
+    // 이름이 감사로그·반출 한도·통계의 식별 키라 같은 이름의 계정을 두 개 만들 수 없게 한다
+    if (db.prepare("SELECT 1 FROM auth_accounts WHERE lower(name) = lower(?)").get(String(name).trim())) {
+      return res.status(409).json({ error: "같은 이름의 계정이 이미 있습니다. 이름 뒤에 구분 문자를 붙여 주세요." });
+    }
     const r = ROLE_KEYS.includes(role) ? role : "member";
     if (r === "superadmin" && req.user.role !== "superadmin") return res.status(403).json({ error: "마스터 계정은 마스터만 만들 수 있습니다" });
     const id = "U" + crypto.randomBytes(4).toString("hex");

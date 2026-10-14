@@ -2372,6 +2372,9 @@ function runInstallmentAutoSync(opts = {}) {
   // 중단/완료된 플랜은 재판정하지 않는다(안 그러면 종료된 플랜 일정이 계속 미납으로 찍히고 이력이 쌓임)
   const plans = db.prepare("SELECT id, debtor_id FROM installment_plans WHERE status = '진행중'").all();
   let updated = 0;
+  // 한 채무자에 진행중 플랜이 둘 이상이면 같은 달 입금을 플랜마다 따로 소진해 같은 입금이 이중으로 완납 처리됐다 —
+  // (채무자, 월)별로 이미 배분된 금액을 누적해 뒤 플랜은 남은 입금만 쓰게 한다.
+  const poolUsed = new Map();
 
   db.transaction(() => {
     for (const plan of plans) {
@@ -2414,7 +2417,9 @@ function runInstallmentAutoSync(opts = {}) {
         `).all(plan.debtor_id, monthPrefix);
 
         // 같은 달에 일정이 여러 개면(예: 일괄 등록) 그 달 안에서만 오래된 순서대로 배분
-        let pool = monthPaid || 0;
+        const poolKey = `${plan.debtor_id}|${month}`;
+        let pool = Math.max(0, (monthPaid || 0) - (poolUsed.get(poolKey) || 0));
+        const startPool = pool;
         const changes = [];
 
         // 이 달(예정월) 자체가 아직 안 왔으면 처리 안 함 — 날짜 단위(due_date <= today)로
@@ -2473,6 +2478,8 @@ function runInstallmentAutoSync(opts = {}) {
             }
           }
         }
+
+        poolUsed.set(poolKey, (poolUsed.get(poolKey) || 0) + (startPool - pool));
 
         // 입금 관련 변경(완납/일부납)만 자동 메모 생성
         const payChanges = changes.filter(c => c.newStatus === "완납" || c.newStatus === "일부납");

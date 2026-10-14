@@ -380,6 +380,13 @@ if (typeof window !== "undefined" && !window.__fetchWrappedForUserName) {
       const url = typeof input === "string" ? input : (input && input.url) || "";
       if (url.startsWith("/api/") && !url.startsWith("/api/auth/") && window.__onUnauthorized) window.__onUnauthorized();
     }
+    // 저장/삭제 같은 쓰기 요청이 서버에서 거절·실패했는데 화면은 "완료" 토스트를 띄우는 곳이 많아서,
+    // 개별 호출부를 고치는 대신 여기서 공통으로 알린다. 400/409/422는 호출부가 직접 처리하는 검증 응답이라 제외.
+    if (res.status >= 400 && ![400, 401, 409, 422].includes(res.status) && window.__onApiError) {
+      const method = String(init.method || (input && input.method) || "GET").toUpperCase();
+      const url = typeof input === "string" ? input : (input && input.url) || "";
+      if (method !== "GET" && method !== "HEAD" && url.startsWith("/api/") && !url.startsWith("/api/auth/")) window.__onApiError(res.status);
+    }
     return res;
   };
 }
@@ -3476,6 +3483,8 @@ function MainApp({ authUser, onLogout }) {
     kvPut("app_config", config);
   }, [config]);
   const [data, setData] = useState(() => loadExcelData(DEFAULT_CONFIG));
+  const dataRef = useRef(data); // 비동기 함수 안에서 "지금 최신" state를 읽기 위한 참조
+  dataRef.current = data;
   const [tab, setTab] = useState("dashboard");
   const [sel, setSel] = useState(null);
   // 모바일 반응형 — 폭이 좁으면 사이드바를 슬라이드형 드로어로 전환
@@ -3509,6 +3518,22 @@ function MainApp({ authUser, onLogout }) {
   };
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState(null);
+  const [apiError, setApiError] = useState(null); // 서버가 거절한 쓰기 요청 — 일반 토스트가 "완료"로 덮어쓰지 못하게 따로 둔다
+  const apiErrorTimerRef = useRef(null);
+  useEffect(() => {
+    window.__onApiError = (status) => {
+      const msg = status === 403 ? "권한이 없어 처리되지 않았습니다"
+        : status === 404 ? "대상을 찾을 수 없어 처리되지 않았습니다"
+        : status === 413 ? "한 번에 처리할 수 있는 크기를 넘었습니다"
+        : status === 429 ? "요청이 너무 많습니다. 잠시 후 다시 시도하세요"
+        : status === 503 ? "서버가 준비되지 않아 처리되지 않았습니다"
+        : "서버 오류로 방금 작업이 저장되지 않았을 수 있습니다";
+      setApiError(`${msg} (${status})`);
+      clearTimeout(apiErrorTimerRef.current);
+      apiErrorTimerRef.current = setTimeout(() => setApiError(null), 7000);
+    };
+    return () => { window.__onApiError = null; };
+  }, []);
   const [detailTab, setDetailTab] = useState("히스토리");
   const [histHighlight, setHistHighlight] = useState(null); // { text, date } — 통계 상세에서 이동 시 강조할 히스토리 행
   const [adminMainTab, setAdminMainTab] = useState("settings");
@@ -4025,11 +4050,17 @@ function MainApp({ authUser, onLogout }) {
   // (예: AI 종합분석처럼 응답을 기다리는 동안 사용자가 다른 필드를 먼저 저장해도
   // 그 최신 값 위에 이어붙이도록 — 오래 걸리는 호출 시작 시점의 낡은 값을 덮어쓰지 않게)
   const updateDebtor = async (id, changesOrFn) => {
+    // 함수형 인자는 setData 업데이터 안에서 실행하면 React가 업데이터를 미루는 경우 changes가 채워지기 전에
+    // 아래 저장 단계로 넘어가 저장이 통째로 생략된다 — 최신 state(dataRef)에서 먼저 계산한다.
     let changes = changesOrFn;
+    if (typeof changesOrFn === "function") {
+      const latest = dataRef.current.debtors.find(d => d.id === id);
+      if (!latest) return;
+      changes = changesOrFn(latest) || {};
+    }
     setData(prev => {
       const old = prev.debtors.find(d => d.id === id);
       if (!old) return prev;
-      if (typeof changesOrFn === "function") changes = changesOrFn(old) || {};
       const nameChanged = changes.name && changes.name !== old.name;
       const brandChanged = changes.brand && changes.brand !== old.brand;
       const cascadeRelated = (arr) => {
@@ -4059,7 +4090,7 @@ function MainApp({ authUser, onLogout }) {
         complaints: cascadeRelated(prev.complaints),
       };
     });
-    if (typeof changes === "function") return; // 로컬에 해당 채무자가 없어 계산이 안 됨 — 저장할 값이 없으므로 중단
+    if (!changes || Object.keys(changes).length === 0) return; // 바꿀 값이 없으면 저장하지 않는다(함수가 null을 돌려준 경우 포함)
     if (sel && sel.id === id) setSel(prev => ({ ...prev, ...changes }));
     // DB에 영구 저장 (에러 시 토스트로 즉시 알림)
     try {
@@ -4232,18 +4263,17 @@ function MainApp({ authUser, onLogout }) {
   // 영구 저장해야 loadData/reloadFromBackend의 applyCaseFieldOv가 다시 읽어들인다.
   const applyRehabRoundIncrement = (debtorId, payerName) => {
     if (!debtorId || !isRehabPayerName(payerName)) return;
-    let savedCaseId = null, newRound = null;
-    setData(prev => {
-      const target = prev.rehabilitations.find(r => r.debtorId === debtorId);
-      if (!target) return prev;
-      newRound = incrementRehabRound(target.currentRound);
-      savedCaseId = target.id;
-      const updated = prev.rehabilitations.map(r =>
-        r.debtorId === debtorId ? { ...r, currentRound: newRound } : r
-      );
-      return { ...prev, rehabilitations: updated };
-    });
-    if (savedCaseId) saveCaseFieldOv(savedCaseId, { currentRound: newRound });
+    // setData 업데이터 안에서 값을 채워 바로 아래에서 읽는 방식은, React가 업데이터를 즉시 실행하지 않으면
+    // (직전에 await reloadFromBackend()가 setData를 큐에 넣어 둔 경우 등) 변수가 비어 저장이 통째로 생략됐다.
+    // 현재 state에서 먼저 값을 계산하고 저장한 뒤 화면 state를 갱신한다.
+    const target = data.rehabilitations.find(r => r.debtorId === debtorId);
+    if (!target) return;
+    const newRound = incrementRehabRound(target.currentRound);
+    saveCaseFieldOv(target.id, { currentRound: newRound });
+    setData(prev => ({
+      ...prev,
+      rehabilitations: prev.rehabilitations.map(r => (r.debtorId === debtorId ? { ...r, currentRound: newRound } : r)),
+    }));
   };
 
   // 입금 추가 — 백엔드 API 호출 (잔액·분할상환·추심상태 자동 처리)
@@ -13908,6 +13938,7 @@ function MainApp({ authUser, onLogout }) {
       )}
 
       {/* Toast */}
+      {apiError && <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, background: "#dc2626", color: "#fff", fontSize: 13, fontWeight: 700, zIndex: 2001, boxShadow: "0 4px 20px rgba(220,38,38,.35)" }}>{apiError}</div>}
       {toast && <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, zIndex: 2e3, animation: "toastIn .3s ease-out", boxShadow: "0 4px 20px rgba(16,185,129,.3)" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><I name="check" size={16} />{toast}</div></div>}
     </div>
   );
