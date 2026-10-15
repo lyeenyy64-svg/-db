@@ -2610,7 +2610,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
   );
 };
 
-const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
+const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete, canEdit, revealedIds = [], revealPii, hidePii }) => {
   const cols = ["대상자", "주민등록번호", "연락처", "브랜드", "요청자", "요청일", "담당자", "신용조회일", "신용조회 결과", "처리결과", "삭제"];
   const sortFields = ["target", "residentId", "phone", "brand", "requester", "requestDate", "assignee", "checkDate", "checkResult", null, null];
   // 대상자/요청자가 폭 제한 없이 남는 공간을 다 가져가 유독 넓어 보이던 문제 수정
@@ -2626,8 +2626,14 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
   const filtered = rows.filter(r => viewMode === "trash" ? r.deleted : viewMode === "completed" ? (r.completed && !r.deleted) : (!r.completed && !r.deleted));
   const shown = sortField ? [...filtered].sort((a, b) => compareSortVal(a[sortField], b[sortField]) * (sortDir === "asc" ? 1 : -1)) : filtered;
   const emptyMsg = viewMode === "trash" ? "삭제된 항목이 없습니다" : viewMode === "completed" ? "완료된 항목이 없습니다" : "등록된 대상자가 없습니다 — [등록]으로 추가하세요";
+  // 대상자는 채무자가 아니라 행 자체 ID(CRA-…)로 원문 열람을 허용한다 (서버는 ID 문자열 기준; 한 번에 최대 50건)
+  const shownIds = shown.map(r => String(r.id)).slice(0, 50);
+  const anyRevealed = shownIds.some(id => revealedIds.includes(id));
   return (
     <IssueTableCard title="신용분석 대상자" count={shown.length} viewMode={viewMode} setViewMode={setViewMode}
+      extraActions={canEdit && revealPii && (anyRevealed
+        ? <button onClick={hidePii} title="원문 열람을 끝내고 다시 가립니다" style={{ padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: "#f59e0b18", color: "#b45309", border: "1px solid #f59e0b40", cursor: "pointer" }}>🔓 원문 열람 중 · 가리기</button>
+        : <button onClick={() => revealPii(shownIds)} disabled={!shownIds.length} title="주민번호·연락처 원문을 사유를 남기고 확인합니다" style={{ padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: "var(--bg2)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: shownIds.length ? "pointer" : "default" }}>🔒 개인정보 원문 보기</button>)}
       onAdd={() => addKeyIssue("creditAnalyses", { id: uid("CRA"), target: "", residentId: "", phone: "", brand: "", requester: "", requestDate: today(), assignee: "", checkDate: "", checkResult: "", completed: false, deleted: false })}>
       <thead><tr>{cols.map((h, i) => <th key={i} onClick={sortFields[i] ? () => handleSort(sortFields[i]) : undefined} style={{ ...issueTh, width: colWidths[i], cursor: sortFields[i] ? "pointer" : "default", userSelect: "none" }}>{h}{sortField === sortFields[i] ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</th>)}</tr></thead>
       <tbody>
@@ -5753,7 +5759,7 @@ function MainApp({ authUser, onLogout }) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <ForcedExecutionTable rows={data.forcedExecutions} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
-        <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} />
+        <CreditAnalysisTable rows={data.creditAnalyses} users={users} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} canEdit={canEdit} revealedIds={revealedIds} revealPii={revealPii} hidePii={hidePii} />
         <NegotiationTable rows={data.negotiations} debtors={data.debtors} brands={config.brands} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} currentUserName={currentUser?.name} />
         <TodoListTable rows={data.todoList || []} users={users} addKeyIssue={addKeyIssue} updateKeyIssue={updateKeyIssue} deleteKeyIssue={deleteKeyIssue} canDelete={canDelete} reloadFromBackend={reloadFromBackend} showToast={showToast} />
         <MonthlyScheduleCalendar
