@@ -119,6 +119,17 @@ function restoreMasked(next, prev, key) {
   return next;
 }
 
+// 연락처 문자열 안의 가려진 번호(010-****-6400)를 DB 원문 번호(앞자리·끝 4자리가 같은 것)로 되돌린다.
+// 이름/설명만 고치고 번호는 그대로 둔 저장이 "가려진 값"으로 취급돼 통째로 버려지는 것을 막는다.
+function restorePhoneText(next, prev) {
+  if (typeof next !== "string" || typeof prev !== "string" || !next.includes("*")) return next;
+  const pool = prev.match(PHONE_RE) || [];
+  return next.replace(/(0\d{1,2})-\*{4}-(\d{4})/g, (m, head, tail) => {
+    const i = pool.findIndex(o => maskPhoneText(o) === m);
+    return i >= 0 ? pool.splice(i, 1)[0] : m;
+  });
+}
+
 // 채무자 쓰기 요청에서 값이 이미 가려진 개인정보 필드를 제거 (원본을 모르는 경로용)
 function dropMaskedWrites(body) {
   if (!body || typeof body !== "object") return body;
@@ -171,6 +182,17 @@ function createPrivacy(db, { audit } = {}) {
     // 쓰기 요청 정리
     if (req.method !== "GET" && req.method !== "HEAD" && req.body && typeof req.body === "object") {
       if (/^\/debtors(\/|$)|^\/debtor\//.test(p)) {
+        const dm = req.method === "PATCH" && p.match(/^\/debtors\/([^/]+)$/);
+        if (dm && dm[1] !== "bulk") {
+          try {
+            const row = db.prepare("SELECT phone, credit_phone FROM debtors WHERE id = ?").get(decodeURIComponent(dm[1]));
+            if (row) {
+              req.body = { ...req.body };
+              if (typeof req.body.phone === "string") req.body.phone = restorePhoneText(req.body.phone, row.phone);
+              if (typeof req.body.creditPhone === "string") req.body.creditPhone = restorePhoneText(req.body.creditPhone, row.credit_phone);
+            }
+          } catch {}
+        }
         req.body = dropMaskedWrites(req.body);
       } else if (req.method === "PUT" && /^\/kv\/[^/]+$/.test(p)) {
         const key = decodeURIComponent(p.slice(4));
