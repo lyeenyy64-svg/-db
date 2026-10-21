@@ -2276,6 +2276,13 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
   // 이중 카운트 버그가 있었다. 이미 돈이 들어온 일정은 그대로 두고, 부족분만 새 일정
   // 으로 추가 생성해서 "원본 완납 1건 + 이월 1건" 2건이 남게 한다.
   const alreadyPaid = sched.status === "완납" || sched.status === "일부납";
+  // 이미 입금이 반영된 일정에서 금액을 비우면 "전체 예정금액"이 아니라 "남은 금액(예정−입금)"만
+  // 새 일정으로 만든다 — 예전엔 139만 중 일부가 들어온 건을 이월하면 원본(일부납)은 그 달에 남고
+  // 새 일정이 139만 전액으로 생겨 같은 돈이 두 번 잡혔다.
+  const remaining = Math.max(0, (sched.scheduled_amount || 0) - (sched.paid_amount || 0));
+  if (alreadyPaid && remaining <= 0 && items.some(i => !(i.amount > 0))) {
+    return res.status(400).json({ ok: false, error: "이미 전액 입금된 일정입니다. 이월할 금액을 직접 입력하세요" });
+  }
 
   try {
     const newIds = db.transaction(() => {
@@ -2284,7 +2291,7 @@ app.post("/api/installments/schedules/:id/rollover", (req, res) => {
         // Date.now()만 쓰면 같은 요청에서 여러 건을 만들 때 밀리초가 겹쳐 id가 충돌할 수 있어 인덱스를 더한다.
         const newId = "ISS" + (Date.now() + i) + Math.random().toString(36).slice(2, 6).toUpperCase();
         const newMonth = item.date.slice(0, 7);
-        const amt = item.amount > 0 ? item.amount : sched.scheduled_amount;
+        const amt = item.amount > 0 ? item.amount : (alreadyPaid ? remaining : sched.scheduled_amount);
         // 이월로 새로 만드는 일정은 아직 다가올 예정 납부일이지 이미 밀린 미납이 아니므로 '예정'으로
         // 시작해야 한다 — 예전엔 '미납'으로 박아서 새 날짜가 오기도 전에 연체로 표시되는 버그가 있었다.
         db.prepare("INSERT INTO installment_schedules (id, plan_id, debt_source, institution, loan_amount, interest_rate, due_date, due_month, scheduled_amount, status, memo, rolled_over_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '예정', ?, ?)").run(
