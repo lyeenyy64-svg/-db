@@ -1820,9 +1820,10 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
   // '이월'로 덮어쓰지 않고 그대로 둔 채 새 일정만 추가로 만든다(백엔드 /rollover 참고).
   // 이때는 "기존 금액 그대로 미루기"가 아니라 "부족분만큼 새로 추가"가 목적이라
   // 금액 기본값을 전체 예정 금액으로 채우지 않는다.
-  const alreadyPaid = sched?.status === "완납" || sched?.status === "일부납";
+  const alreadyPaid = sched?.status === "완납";
+  const partiallyPaid = sched?.status === "일부납";
   const remainingAmt = Math.max(0, (sched?.scheduledAmount || 0) - (sched?.paidAmount || 0));
-  const [splits, setSplits] = useState([{ date: "", amount: alreadyPaid ? (remainingAmt > 0 ? String(remainingAmt) : "") : (sched?.scheduledAmount ? String(sched.scheduledAmount) : "") }]);
+  const [splits, setSplits] = useState([{ date: "", amount: (alreadyPaid || partiallyPaid) ? (remainingAmt > 0 ? String(remainingAmt) : "") : (sched?.scheduledAmount ? String(sched.scheduledAmount) : "") }]);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -1881,7 +1882,7 @@ const RolloverModal = ({ sched, onClose, onReload, showToast }) => {
                 <input type="date" value={s.date} onChange={e => updateSplit(i, { date: e.target.value })}
                   style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
                 <MoneyInput value={s.amount} onChange={v => updateSplit(i, { amount: v })}
-                  placeholder={splits.length === 1 ? (alreadyPaid ? "비우면 남은 금액" : "비우면 전체 금액") : "이 날짜 금액"}
+                  placeholder={splits.length === 1 ? ((alreadyPaid || partiallyPaid) ? "비우면 남은 금액" : "비우면 전체 금액") : "이 날짜 금액"}
                   style={{ ...inp, flex: 1, border: "1px solid var(--brd)", borderRadius: 6, background: "var(--bg)", color: "var(--tp)" }} />
                 {splits.length > 1 && (
                   <button onClick={() => removeSplit(i)} title="이 날짜 삭제"
