@@ -5451,7 +5451,25 @@ function MainApp({ authUser, onLogout }) {
           );
         })()}
         {/* ── 월별 회수실적 차트 ── */}
-        <SectionHeader sectionId="collection">회수현황</SectionHeader>
+        {(() => {
+          const nowY = new Date().getFullYear();
+          let cumulative = 0;
+          for (let y = 2024; y <= nowY; y++) {
+            for (let m = 1; m <= 12; m++) {
+              if (y === nowY) { const cc = stats.monthlyByChannel?.[m]; cumulative += (cc?.companyAccount || 0) + (cc?.cashCharge || 0) + (cc?.welcomeDirect || 0); }
+              else cumulative += collectionChannels[`${y}_${m}_all_total`] || 0;
+            }
+          }
+          return (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <SectionHeader sectionId="collection">회수현황</SectionHeader>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "var(--tm)" }}>누적 회수금액 (2024~{nowY}년)</div>
+                <div className="mono" style={{ fontSize: 20, fontWeight: 700, color: "#0ea5e9" }}>{fmt(cumulative)}</div>
+              </div>
+            </div>
+          );
+        })()}
         {!collapsedSections.has("collection") && (() => {
           const fmtBar = (v) => { if (!v) return ""; if (v >= 100000000) return `${(v/100000000).toFixed(1)}억`; return `${Math.round(v/10000)}만`; };
           const CHART_H = 180;
