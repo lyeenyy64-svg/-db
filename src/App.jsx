@@ -10406,7 +10406,7 @@ function MainApp({ authUser, onLogout }) {
       const saveDocUrl = () => { saveCaseUrl(r.id, docUrl); showToast("문서 링크 저장됨"); };
       const [isEditingCase, setIsEditingCase] = useState(false);
       const buildCaseDraft = () => ({
-        court: r.court || "", caseNumber: r.caseNumber || "", creditorNumber: r.creditorNumber || "",
+        brand: r.brand || "", court: r.court || "", caseNumber: r.caseNumber || "", creditorNumber: r.creditorNumber || "",
         debtAmount: r.debtAmount || 0, approvedAmount: r.approvedAmount || 0, monthlyPayment: r.monthlyPayment || 0, priorDeposit: r.priorDeposit || 0,
         currentRound: r.currentRound || "", repaymentNote: r.repaymentNote || "",
         overdueStatus: r.overdueStatus || "", planApproved: !!r.planApproved, dismissed: !!r.dismissed,
@@ -10462,6 +10462,12 @@ function MainApp({ authUser, onLogout }) {
               <>
                 <EF label="법원"><KoreanInput value={caseDraft.court} onChange={e => setCF("court", e.target.value)} style={inp} /></EF>
                 <EF label="사건번호"><KoreanInput value={caseDraft.caseNumber} onChange={e => setCF("caseNumber", e.target.value)} style={inp} /></EF>
+                <EF label="브랜드">
+                  <select value={caseDraft.brand} onChange={e => setCF("brand", e.target.value)} style={inp}>
+                    {!caseDraft.brand && <option value="">-</option>}
+                    {config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                  </select>
+                </EF>
                 <EF label="채권번호"><KoreanInput value={caseDraft.creditorNumber} onChange={e => setCF("creditorNumber", e.target.value)} style={inp} /></EF>
                 <EF label="채무액"><MoneyInput value={caseDraft.debtAmount} onChange={v => setCF("debtAmount", v)} style={inp} /></EF>
                 <EF label="승인액"><MoneyInput value={caseDraft.approvedAmount} onChange={v => setCF("approvedAmount", v)} style={inp} /></EF>
