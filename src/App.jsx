@@ -793,7 +793,7 @@ const CASE_FIELD_OV_KEY = "legal_case_field_overrides";
 function getCaseFieldOv() { try { return JSON.parse(localStorage.getItem(CASE_FIELD_OV_KEY) || "{}"); } catch { return {}; } }
 function saveCaseFieldOv(caseId, fields) {
   const ov = getCaseFieldOv();
-  ov[caseId] = { ...ov[caseId], ...fields };
+  ov[caseId] = { ...ov[caseId], ...fields, editedAt: Date.now() }; // editedAt: 회생 목록 기본 정렬(최근 수정순)용
   localStorage.setItem(CASE_FIELD_OV_KEY, JSON.stringify(ov));
   kvPut(CASE_FIELD_OV_KEY, ov);
 }
@@ -10296,6 +10296,15 @@ function MainApp({ authUser, onLogout }) {
       }
       return m;
     }, [data.payments]);
+    // 채무자별 최근 입금일 — 회생 목록 기본 정렬(최신 입금순)용
+    const rehabLastPayDate = useMemo(() => {
+      const m = new Map();
+      for (const p of data.payments) {
+        if (!p.debtorId || !p.paymentDate) continue;
+        if (!m.has(p.debtorId) || p.paymentDate > m.get(p.debtorId)) m.set(p.debtorId, p.paymentDate);
+      }
+      return m;
+    }, [data.payments]);
     // 인가된 건만 계산: 대상자명 입금 합계 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
     // (미인가/진행중 건은 승인액이 확정되지 않아 계산 의미가 없으므로 null)
     const getRehabDeposited = (r) => r.planApproved ? (rehabPaidByDebtor.get(r.debtorId) || 0) : null;
@@ -10356,6 +10365,19 @@ function MainApp({ authUser, onLogout }) {
       if (rq) { const q = rq.toLowerCase(); l = l.filter(r => r.debtorName.toLowerCase().includes(q) || r.caseNumber.includes(q) || (r.repaymentNote || "").includes(q)); }
       if (rStatusFilter === "미납") l = l.filter(r => r.overdueStatus === "미납");
       if (rStatusFilter === "폐지") l = l.filter(r => r.dismissed);
+      if (!(rSortField && rSortDir)) {
+        // 기본 정렬: 최신 입금 → 최근 수정 → 납부여부(정상 먼저) → 결과(진행중 → 인가 → 폐지)
+        const resultRank = r => r.dismissed ? 2 : r.planApproved ? 1 : 0;
+        l = [...l].sort((a, b) => {
+          const pa = rehabLastPayDate.get(a.debtorId) || "", pb = rehabLastPayDate.get(b.debtorId) || "";
+          if (pa !== pb) return pa < pb ? 1 : -1;
+          const ea = a.editedAt || 0, eb = b.editedAt || 0;
+          if (ea !== eb) return eb - ea;
+          const oa = a.overdueStatus === "미납" ? 1 : 0, ob = b.overdueStatus === "미납" ? 1 : 0;
+          if (oa !== ob) return oa - ob;
+          return resultRank(a) - resultRank(b);
+        });
+      }
       if (rSortField && rSortDir) {
         const get = REHAB_SORT_GETTERS[rSortField];
         l = [...l].sort((a, b) => {
@@ -10366,7 +10388,7 @@ function MainApp({ authUser, onLogout }) {
         });
       }
       return l;
-    }, [data.rehabilitations, rehabTab, rBrand, rq, rStatusFilter, rSortField, rSortDir]);
+    }, [data.rehabilitations, rehabTab, rBrand, rq, rStatusFilter, rSortField, rSortDir, rehabLastPayDate]);
     const RehabDetailModal = useStableComponent(() => {
       if (!selRehab) return null;
       const r = selRehab;
