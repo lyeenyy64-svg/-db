@@ -10313,9 +10313,10 @@ function MainApp({ authUser, onLogout }) {
     // (미인가/진행중 건은 승인액이 확정되지 않아 계산 의미가 없으므로 null)
     // 입금자명이 성명과 정확히 같은 입금만 합산(캐쉬충전 제외)할 사건 성명 — 그 외 사건은 채무자에 매칭된 입금 전체
     const REHAB_EXACT_PAYER_NAMES = new Set(["김영준00"]);
+    // priorDeposit: 시스템 입금내역에 없는 이전 입금분(수동 입력) — 입금내역 합계에 더한다
     const getRehabDeposited = (r) => !r.planApproved ? null
-      : REHAB_EXACT_PAYER_NAMES.has((r.debtorName || "").trim()) ? (rehabPaidByDebtor.get(`${r.debtorId}|${(r.debtorName || "").trim()}`) || 0)
-      : (rehabPaidByDebtor.get(r.debtorId) || 0);
+      : (r.priorDeposit || 0) + (REHAB_EXACT_PAYER_NAMES.has((r.debtorName || "").trim()) ? (rehabPaidByDebtor.get(`${r.debtorId}|${(r.debtorName || "").trim()}`) || 0)
+      : (rehabPaidByDebtor.get(r.debtorId) || 0));
     const getRehabRemaining = (r) => {
       const dep = getRehabDeposited(r);
       return dep == null ? null : (r.approvedAmount || 0) - dep;
@@ -10406,7 +10407,7 @@ function MainApp({ authUser, onLogout }) {
       const [isEditingCase, setIsEditingCase] = useState(false);
       const buildCaseDraft = () => ({
         court: r.court || "", caseNumber: r.caseNumber || "", creditorNumber: r.creditorNumber || "",
-        debtAmount: r.debtAmount || 0, approvedAmount: r.approvedAmount || 0, monthlyPayment: r.monthlyPayment || 0,
+        debtAmount: r.debtAmount || 0, approvedAmount: r.approvedAmount || 0, monthlyPayment: r.monthlyPayment || 0, priorDeposit: r.priorDeposit || 0,
         currentRound: r.currentRound || "", repaymentNote: r.repaymentNote || "",
         overdueStatus: r.overdueStatus || "", planApproved: !!r.planApproved, dismissed: !!r.dismissed,
       });
@@ -10414,7 +10415,7 @@ function MainApp({ authUser, onLogout }) {
       const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
       const startEditCase = () => { setCaseDraft(buildCaseDraft()); setIsEditingCase(true); };
       const saveEditCase = () => {
-        const fields = { ...caseDraft, debtAmount: Number(caseDraft.debtAmount) || 0, approvedAmount: Number(caseDraft.approvedAmount) || 0, monthlyPayment: Number(caseDraft.monthlyPayment) || 0 };
+        const fields = { ...caseDraft, debtAmount: Number(caseDraft.debtAmount) || 0, approvedAmount: Number(caseDraft.approvedAmount) || 0, monthlyPayment: Number(caseDraft.monthlyPayment) || 0, priorDeposit: Number(caseDraft.priorDeposit) || 0 };
         saveCaseFieldOv(r.id, fields);
         setSelRehab(prev => ({ ...prev, ...fields }));
         setData(prev => ({ ...prev, rehabilitations: prev.rehabilitations.map(x => x.id === r.id ? { ...x, ...fields } : x) }));
@@ -10465,6 +10466,7 @@ function MainApp({ authUser, onLogout }) {
                 <EF label="채무액"><MoneyInput value={caseDraft.debtAmount} onChange={v => setCF("debtAmount", v)} style={inp} /></EF>
                 <EF label="승인액"><MoneyInput value={caseDraft.approvedAmount} onChange={v => setCF("approvedAmount", v)} style={inp} /></EF>
                 <EF label="월상환액"><MoneyInput value={caseDraft.monthlyPayment} onChange={v => setCF("monthlyPayment", v)} style={inp} /></EF>
+                <EF label="기존 입금액"><MoneyInput value={caseDraft.priorDeposit} onChange={v => setCF("priorDeposit", v)} style={inp} /></EF>
                 <EF label="총회차"><KoreanInput value={caseDraft.currentRound} onChange={e => setCF("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></EF>
                 <EF label="변제 계획 인가">
                   <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "인가" }, { v: false, l: "미인가" }].map(o => <button key={o.l} onClick={() => setCF("planApproved", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.planApproved === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.planApproved === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
@@ -10488,6 +10490,7 @@ function MainApp({ authUser, onLogout }) {
                 <DL label="채무액" val={r.debtAmount > 0 ? fmt(r.debtAmount) : null} />
                 <DL label="승인액" val={r.approvedAmount > 0 ? fmt(r.approvedAmount) : null} />
                 <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
+                <DL label="기존 입금액" val={r.priorDeposit > 0 ? fmt(r.priorDeposit) : null} />
                 <DL label="총회차" val={r.currentRound} />
                 <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
                 <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
