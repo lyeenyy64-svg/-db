@@ -4496,6 +4496,9 @@ function MainApp({ authUser, onLogout }) {
     const totalDebtors = d.length, totalPrincipal = d.reduce((s, x) => s + x.principalBalance, 0);
     const totalCollected = d.reduce((s, x) => s + x.collectedAmount, 0), totalRemaining = d.reduce((s, x) => s + x.finalBalanceLegal, 0);
     const totalFinanceRemaining = d.reduce((s, x) => s + x.finalBalanceFinance, 0);
+    const activeGroups = DASHBOARD_GROUPS.filter(g => ["추심진행중", "협의소송", "추심의뢰", "분할상환", "캐쉬상환"].includes(g.label));
+    const activeGroupRemaining = activeGroups.map(g => ({ label: g.label, remaining: d.filter(x => g.cats.includes(x.category)).reduce((s, x) => s + x.finalBalanceLegal, 0) }));
+    const totalActiveRemaining = activeGroupRemaining.reduce((s, g) => s + g.remaining, 0);
     const collectionRate = totalPrincipal > 0 ? (totalCollected / totalPrincipal * 100) : 0;
     const byBrand = {};
     config.brands.forEach(b => { const bd = d.filter(x => x.brand === b.code); byBrand[b.code] = { count: bd.length, principal: bd.reduce((s, x) => s + x.principalBalance, 0), collected: bd.reduce((s, x) => s + x.collectedAmount, 0), remaining: bd.reduce((s, x) => s + x.finalBalanceLegal, 0) }; });
@@ -4536,7 +4539,7 @@ function MainApp({ authUser, onLogout }) {
     };
     const totalLegal = lc.length + ad.length + cmp.length + data.rehabilitations.length;
     const totalSeizures = lc.filter(c => c.type === "압류").length;
-    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, byAssigneePersons, unassignedCount, unassignedPersons, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
+    return { totalDebtors, totalPrincipal, totalCollected, totalRemaining, totalFinanceRemaining, totalActiveRemaining, activeGroupRemaining, collectionRate, byBrand, byCat, byGroup, byStatus, byAssignee, byAssigneePersons, unassignedCount, unassignedPersons, monthlyPayments, monthlyByChannel, byLegalType, totalLegal, totalPayments: data.payments.length, totalSeizures, totalRehabs: data.rehabilitations.length, totalInstallments: data.installmentPlans.length };
   }, [data, config]);
 
   // ─── 연체 에이징 분석 ──────────────────────────────────────
@@ -5049,9 +5052,10 @@ function MainApp({ authUser, onLogout }) {
           </a>
         </div>
         {!collapsedSections.has("bonds") && (<>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
           <KPI label="총 관리 채권" value={`${stats.totalDebtors}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
           <KPI label="총 채권금액" value={fmt(stats.totalRemaining)} sub={`재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
+          <KPI label="총 추심금액" value={fmt(stats.totalActiveRemaining)} sub={stats.activeGroupRemaining.map(g => `${g.label} ${fmt(g.remaining)}`).join(" / ")} color="#0ea5e9" />
           <KPI label="소송현황" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 재산명시·재산조회 ${stats.byLegalType["재산명시"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0} / 회생/파산 ${stats.totalRehabs || 0}`} color="#ef4444" />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
