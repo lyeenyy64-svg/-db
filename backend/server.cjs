@@ -1384,6 +1384,7 @@ function ingestPayment(b) {
 
   let resolvedId = b.debtorId;
   let matchedBy = "수동지정";
+  let rehabHold = false; // 회생 채무자인데 입금자명 끝에 숫자가 붙은 입금 — 자동 귀속하지 않고 미매칭 관리로 보낸다
   if (!resolvedId) {
     // 1순위: 학습된 매핑 확인 — 브랜드가 주어졌으면 그 debtor의 실제 브랜드와 일치할 때만 신뢰
     // (동일 입금자명이 과거엔 다른 브랜드 채무자로 학습됐을 수 있으므로, 안 맞으면 2순위 매처로 넘김)
@@ -1405,7 +1406,10 @@ function ingestPayment(b) {
       brand: b.brand, hubCode: b.hubCode,
       debtorName: b.debtorName, payerName: b.payerName,
     });
-    if (m) { resolvedId = m.debtorId; matchedBy = m.matchedBy; }
+    if (m) {
+      if (/숫자제거/.test(m.matchedBy) && db.prepare("SELECT 1 FROM rehabilitations WHERE debtor_id = ?").get(m.debtorId)) rehabHold = true;
+      else { resolvedId = m.debtorId; matchedBy = m.matchedBy; }
+    }
   }
 
   if (!resolvedId) {
@@ -1418,9 +1422,9 @@ function ingestPayment(b) {
     `).run({
       payment_date: date, brand: b.brand, hub_code: b.hubCode, debtor_name: b.debtorName,
       payer_name: b.payerName, total, c, ch, w, note: b.note || null,
-      source: b.source || "slack", source_ref: b.sourceRef || null, reason: "채무자 미발견",
+      source: b.source || "slack", source_ref: b.sourceRef || null, reason: rehabHold ? "회생금 의심(입금자명에 숫자)" : "채무자 미발견",
     });
-    return { ok: false, pendingId: r.lastInsertRowid, reason: "채무자 미발견", payerName: b.payerName, total };
+    return { ok: false, pendingId: r.lastInsertRowid, reason: rehabHold ? "회생금 의심(입금자명에 숫자)" : "채무자 미발견", payerName: b.payerName, total };
   }
 
   const debtor = db.prepare("SELECT * FROM debtors WHERE id = ?").get(resolvedId);

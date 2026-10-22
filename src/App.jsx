@@ -10293,7 +10293,9 @@ function MainApp({ authUser, onLogout }) {
       for (const p of data.payments) {
         if (!p.debtorId) continue;
         const d = data.debtors.find(x => x.id === p.debtorId);
-        if (!d || (p.payerName || "").trim() !== (d.name || "").trim()) continue;
+        // 대상자명 그대로, 또는 "홍길동12"처럼 숫자가 붙은 입금자명(미매칭 관리에서 수동 매칭한 회생금)
+        const payer = (p.payerName || "").trim();
+        if (!d || (payer !== (d.name || "").trim() && !(payer.startsWith((d.name || "").trim()) && isRehabPayerName(payer)))) continue;
         m.set(p.debtorId, (m.get(p.debtorId) || 0) + (Number(p.totalAmount) || 0));
       }
       return m;
