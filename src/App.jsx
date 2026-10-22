@@ -10287,19 +10287,15 @@ function MainApp({ authUser, onLogout }) {
       </span>
     );
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
-    // 입금내역 중 입금자명이 대상자명과 같은 입금을 채무자별로 합산 — 입금액(회생)
+    // 입금내역에서 해당 채무자로 매칭된 입금을 전부 합산 — 입금액(회생). 입금이 추가되면 자동으로 더해진다
     const rehabPaidByDebtor = useMemo(() => {
       const m = new Map();
       for (const p of data.payments) {
         if (!p.debtorId) continue;
-        const d = data.debtors.find(x => x.id === p.debtorId);
-        // 대상자명 그대로, 또는 "홍길동12"처럼 숫자가 붙은 입금자명(미매칭 관리에서 수동 매칭한 회생금)
-        const payer = (p.payerName || "").trim();
-        if (!d || (payer !== (d.name || "").trim() && !(payer.startsWith((d.name || "").trim()) && isRehabPayerName(payer)))) continue;
         m.set(p.debtorId, (m.get(p.debtorId) || 0) + (Number(p.totalAmount) || 0));
       }
       return m;
-    }, [data.payments, data.debtors]);
+    }, [data.payments]);
     // 인가된 건만 계산: 대상자명 입금 합계 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
     // (미인가/진행중 건은 승인액이 확정되지 않아 계산 의미가 없으므로 null)
     const getRehabDeposited = (r) => r.planApproved ? (rehabPaidByDebtor.get(r.debtorId) || 0) : null;
