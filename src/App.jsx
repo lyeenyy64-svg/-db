@@ -10287,12 +10287,14 @@ function MainApp({ authUser, onLogout }) {
       </span>
     );
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
-    // 입금액(회생): 입금내역 중 같은 채무자로 매칭되고 입금자명이 사건의 성명과 정확히 같은 입금을 합산한다
-    // (같은 채무자에 붙은 "김영준" 같은 다른 입금자명은 제외, 캐쉬충전 입금분도 제외). 입금이 추가되면 자동으로 더해진다
+    // 입금액(회생): 기본은 입금내역 중 해당 채무자로 매칭된 입금 전체 합계. 입금이 추가되면 자동으로 더해진다
+    // (REHAB_EXACT_PAYER_NAMES 사건만 입금자명 정확 일치 + 캐쉬충전 제외로 따로 합산)
     const rehabPaidByDebtor = useMemo(() => {
       const m = new Map();
       for (const p of data.payments) {
         if (!p.debtorId) continue;
+        m.set(p.debtorId, (m.get(p.debtorId) || 0) + (Number(p.totalAmount) || 0));
+        // 입금자명이 사건 성명과 같은 입금만 따로 합산 — 동명 허브(봉화허브 김영준 등) 입금이 섞이는 사건용, 캐쉬충전분 제외
         const key = `${p.debtorId}|${(p.payerName || "").trim()}`;
         m.set(key, (m.get(key) || 0) + (Number(p.totalAmount) || 0) - (Number(p.cashCharge) || 0));
       }
@@ -10309,7 +10311,11 @@ function MainApp({ authUser, onLogout }) {
     }, [data.payments]);
     // 인가된 건만 계산: 대상자명 입금 합계 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
     // (미인가/진행중 건은 승인액이 확정되지 않아 계산 의미가 없으므로 null)
-    const getRehabDeposited = (r) => r.planApproved ? (rehabPaidByDebtor.get(`${r.debtorId}|${(r.debtorName || "").trim()}`) || 0) : null;
+    // 입금자명이 성명과 정확히 같은 입금만 합산(캐쉬충전 제외)할 사건 성명 — 그 외 사건은 채무자에 매칭된 입금 전체
+    const REHAB_EXACT_PAYER_NAMES = new Set(["김영준00"]);
+    const getRehabDeposited = (r) => !r.planApproved ? null
+      : REHAB_EXACT_PAYER_NAMES.has((r.debtorName || "").trim()) ? (rehabPaidByDebtor.get(`${r.debtorId}|${(r.debtorName || "").trim()}`) || 0)
+      : (rehabPaidByDebtor.get(r.debtorId) || 0);
     const getRehabRemaining = (r) => {
       const dep = getRehabDeposited(r);
       return dep == null ? null : (r.approvedAmount || 0) - dep;
