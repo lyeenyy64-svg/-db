@@ -10287,15 +10287,20 @@ function MainApp({ authUser, onLogout }) {
       </span>
     );
     const getDebtor = (id) => data.debtors.find(d => d.id === id);
-    // 현재회차 문자열에서 회차 숫자를 뽑는다 — "33회차" → 33, "1~36회차"처럼 범위로 적힌 경우는
-    // 마지막(오른쪽) 숫자를 현재 도달한 회차로 본다.
-    const parseRehabRound = (currentRound) => {
-      const matches = [...String(currentRound || "").matchAll(/(\d+)\s*회차/g)];
-      return matches.length ? Number(matches[matches.length - 1][1]) || 0 : 0;
-    };
-    // 인가된 건만 계산: 월상환액 × 현재회차 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
-    // (미인가/진행중 건은 회차·승인액이 확정되지 않아 계산 의미가 없으므로 null)
-    const getRehabDeposited = (r) => r.planApproved ? (r.monthlyPayment || 0) * parseRehabRound(r.currentRound) : null;
+    // 입금내역 중 입금자명이 대상자명과 같은 입금을 채무자별로 합산 — 입금액(회생)
+    const rehabPaidByDebtor = useMemo(() => {
+      const m = new Map();
+      for (const p of data.payments) {
+        if (!p.debtorId) continue;
+        const d = data.debtors.find(x => x.id === p.debtorId);
+        if (!d || (p.payerName || "").trim() !== (d.name || "").trim()) continue;
+        m.set(p.debtorId, (m.get(p.debtorId) || 0) + (Number(p.totalAmount) || 0));
+      }
+      return m;
+    }, [data.payments, data.debtors]);
+    // 인가된 건만 계산: 대상자명 입금 합계 = 입금액(회생), 승인액 - 입금액(회생) = 잔액(회생)
+    // (미인가/진행중 건은 승인액이 확정되지 않아 계산 의미가 없으므로 null)
+    const getRehabDeposited = (r) => r.planApproved ? (rehabPaidByDebtor.get(r.debtorId) || 0) : null;
     const getRehabRemaining = (r) => {
       const dep = getRehabDeposited(r);
       return dep == null ? null : (r.approvedAmount || 0) - dep;
@@ -10306,7 +10311,6 @@ function MainApp({ authUser, onLogout }) {
       creditorNumber: r => r.creditorNumber || "",
       court:     r => r.court || "",
       caseNumber: r => r.caseNumber || "",
-      debtAmount:     r => r.debtAmount || 0,
       approvedAmount: r => r.approvedAmount || 0,
       monthlyPayment: r => r.monthlyPayment || 0,
       currentRound:   r => r.currentRound || "",
@@ -10326,7 +10330,7 @@ function MainApp({ authUser, onLogout }) {
     // 컬럼은 실측 한도까지 더 줄이고, 성명/법원/사건번호의 최소폭·fr 비중도 낮춰 최소 필요
     // 가로폭 자체를 줄인다(넓은 창에서 남는 공간이 있으면 fr 비중대로 계속 늘어나는 건 정상).
     const rehabGridCols = isRehabTab
-      ? "48px minmax(56px,0.6fr) 42px minmax(60px,0.6fr) minmax(92px,0.8fr) minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 48px 46px 46px minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 76px"
+      ? "48px minmax(56px,0.6fr) 42px minmax(60px,0.6fr) minmax(92px,0.8fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 48px 46px 46px minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 76px"
       : "48px minmax(60px,0.6fr) 42px minmax(64px,0.6fr) minmax(96px,0.8fr) 46px 46px minmax(88px,0.5fr) 76px";
 
     const matchCandidates = useMemo(() => {
@@ -10433,7 +10437,7 @@ function MainApp({ authUser, onLogout }) {
                 <EF label="채무액"><MoneyInput value={caseDraft.debtAmount} onChange={v => setCF("debtAmount", v)} style={inp} /></EF>
                 <EF label="승인액"><MoneyInput value={caseDraft.approvedAmount} onChange={v => setCF("approvedAmount", v)} style={inp} /></EF>
                 <EF label="월상환액"><MoneyInput value={caseDraft.monthlyPayment} onChange={v => setCF("monthlyPayment", v)} style={inp} /></EF>
-                <EF label="현재 회차"><KoreanInput value={caseDraft.currentRound} onChange={e => setCF("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></EF>
+                <EF label="총회차"><KoreanInput value={caseDraft.currentRound} onChange={e => setCF("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></EF>
                 <EF label="변제 계획 인가">
                   <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "인가" }, { v: false, l: "미인가" }].map(o => <button key={o.l} onClick={() => setCF("planApproved", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.planApproved === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.planApproved === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
                 </EF>
@@ -10456,7 +10460,7 @@ function MainApp({ authUser, onLogout }) {
                 <DL label="채무액" val={r.debtAmount > 0 ? fmt(r.debtAmount) : null} />
                 <DL label="승인액" val={r.approvedAmount > 0 ? fmt(r.approvedAmount) : null} />
                 <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
-                <DL label="현재 회차" val={r.currentRound} />
+                <DL label="총회차" val={r.currentRound} />
                 <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
                 <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
                 <DL label="미납 현황" val={r.overdueStatus} />
@@ -10595,10 +10599,9 @@ function MainApp({ authUser, onLogout }) {
           <RehabSortTh field="creditorNumber" label="채권번호" />
           <RehabSortTh field="court" label="법원" />
           <RehabSortTh field="caseNumber" label="사건번호" />
-          {isRehabTab && <RehabSortTh field="debtAmount" label="채무액" align="right" />}
           {isRehabTab && <RehabSortTh field="approvedAmount" label="승인액" align="right" />}
           {isRehabTab && <RehabSortTh field="monthlyPayment" label="월상환액" align="right" />}
-          {isRehabTab && <RehabSortTh field="currentRound" label="현재회차" />}
+          {isRehabTab && <RehabSortTh field="currentRound" label="총회차" />}
           <RehabSortTh field="overdue" label="납부여부" />
           <RehabSortTh field="result" label="결과" />
           <RehabSortTh field="balance" label="잔액(재무)" align="right" />
@@ -10624,7 +10627,6 @@ function MainApp({ authUser, onLogout }) {
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.creditorNumber || "-"}</span>
                     <span style={{ fontSize: 13, color: "var(--ts)" }}>{r.court || "-"}</span>
                     <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap" }}>{r.caseNumber}</span>
-                    {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap", textAlign: "right" }}>{r.debtAmount > 0 ? fmt(r.debtAmount) : "-"}</span>}
                     {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--ok)", whiteSpace: "nowrap", textAlign: "right" }}>{r.approvedAmount > 0 ? fmt(r.approvedAmount) : "-"}</span>}
                     {isRehabTab && <span className="mono" style={{ fontSize: 13, color: "var(--tm)", whiteSpace: "nowrap", textAlign: "right" }}>{r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : "-"}</span>}
                     {isRehabTab && <span style={{ fontSize: 13, color: "var(--ts)", whiteSpace: "nowrap" }}>{r.currentRound || "-"}</span>}
