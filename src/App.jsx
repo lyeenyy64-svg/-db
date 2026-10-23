@@ -10942,6 +10942,14 @@ function MainApp({ authUser, onLogout }) {
             <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·업체명 검색" style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
           </div>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
+          <button onClick={() => downloadCSV(`추심의뢰_${today()}.csv`,
+            ["브랜드","채무자","추심업체","요청일","요청금액","회수금액","최근현황월","최근현황","연동"],
+            sortedOrders.map(o => {
+              const d = getDebtor(o.debtorId);
+              const lu = o.monthlyUpdates?.slice(-1)[0];
+              return [o.brandRaw || o.brand, o.debtorName, o.agencyName, o.requestDate, o.requestAmount, d?.collectedAmount || o.recoveredAmount || 0, lu?.month || "", lu?.content?.split("\n")[0] || "", d ? "연동됨" : "미연동"];
+            })
+          )} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140", flexShrink: 0 }}><I name="arrowDown" size={14} />엑셀</button>
           {canEdit && (
             <button onClick={() => setShowAddForm(true)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", flexShrink: 0 }}>
               <I name="plus" size={14} /> 데이터 추가
