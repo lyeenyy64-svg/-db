@@ -9897,6 +9897,21 @@ function MainApp({ authUser, onLogout }) {
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
     };
+    // 메모의 이벤트 아이콘을 다시 누르면 이벤트 해제 — 이 메모가 만든 날짜가 사건의 현재 이벤트 날짜면 그것도 같이 지운다.
+    const handleClearNoteEvent = (noteId) => {
+      if (!selCase) return;
+      const note = caseNotes.find(n => n.id === noteId);
+      if (!note?.eventDate) return;
+      const arr = caseNotes.map(n => n.id === noteId ? { ...n, eventDate: null } : n);
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+      if (getCaseEventDate(selCase.id) === note.eventDate) {
+        saveCaseEventDate(selCase.id, null);
+        setEventDateDraft(""); setEventDateSaved("");
+        setCaseEventVersion(v => v + 1);
+      }
+      showToast("이벤트 해제됨");
+    };
 
     // 상세 모달 내용
     const DetailModal = useStableComponent(() => {
@@ -10091,7 +10106,7 @@ function MainApp({ authUser, onLogout }) {
                       </div>
                       {n.eventDate && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <button onClick={() => handleClearNoteEvent(n.id)} title={`이벤트 등록: ${n.eventDate} (클릭하면 이벤트 해제)`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></button>
                           <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
                         </div>
                       )}
@@ -10273,6 +10288,21 @@ function MainApp({ authUser, onLogout }) {
       const arr = caseNotes.filter(n => n.id !== noteId);
       saveCaseNotes(selRehab.id, arr);
       setCaseNotes(arr);
+    };
+    // 메모의 이벤트 아이콘을 다시 누르면 이벤트 해제 — 이 메모가 만든 날짜가 사건의 현재 이벤트 날짜면 그것도 같이 지운다.
+    const handleClearNoteEvent = (noteId) => {
+      if (!selRehab) return;
+      const note = caseNotes.find(n => n.id === noteId);
+      if (!note?.eventDate) return;
+      const arr = caseNotes.map(n => n.id === noteId ? { ...n, eventDate: null } : n);
+      saveCaseNotes(selRehab.id, arr);
+      setCaseNotes(arr);
+      if (getCaseEventDate(selRehab.id) === note.eventDate) {
+        saveCaseEventDate(selRehab.id, null);
+        setEventDateDraft(""); setEventDateSaved("");
+        setCaseEventVersion(v => v + 1);
+      }
+      showToast("이벤트 해제됨");
     };
     const [rSortField, setRSortField] = useState(null); // null | 컬럼 필드명
     const [rSortDir,   setRSortDir]   = useState(null); // null | "asc" | "desc"
@@ -10547,7 +10577,7 @@ function MainApp({ authUser, onLogout }) {
                       </div>
                       {n.eventDate && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <button onClick={() => handleClearNoteEvent(n.id)} title={`이벤트 등록: ${n.eventDate} (클릭하면 이벤트 해제)`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></button>
                           <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
                         </div>
                       )}
@@ -12540,6 +12570,21 @@ function MainApp({ authUser, onLogout }) {
       saveCaseNotes(selCase.id, arr);
       setCaseNotes(arr);
     };
+    // 메모의 이벤트 아이콘을 다시 누르면 이벤트 해제 — 이 메모가 만든 날짜가 사건의 현재 이벤트 날짜면 그것도 같이 지운다.
+    const handleClearNoteEvent = (noteId) => {
+      if (!selCase) return;
+      const note = caseNotes.find(n => n.id === noteId);
+      if (!note?.eventDate) return;
+      const arr = caseNotes.map(n => n.id === noteId ? { ...n, eventDate: null } : n);
+      saveCaseNotes(selCase.id, arr);
+      setCaseNotes(arr);
+      if (getCaseEventDate(selCase.id) === note.eventDate) {
+        saveCaseEventDate(selCase.id, null);
+        setEventDateDraft(""); setEventDateSaved("");
+        setCaseEventVersion(v => v + 1);
+      }
+      showToast("이벤트 해제됨");
+    };
 
     const DetailModal = useStableComponent(() => {
       if (!selCase) return null;
@@ -12664,7 +12709,7 @@ function MainApp({ authUser, onLogout }) {
                       </div>
                       {n.eventDate && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                          <span title={`이벤트 등록: ${n.eventDate}`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></span>
+                          <button onClick={() => handleClearNoteEvent(n.id)} title={`이벤트 등록: ${n.eventDate} (클릭하면 이벤트 해제)`} style={{ width: 22, height: 22, flexShrink: 0, borderRadius: 6, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><I name="calendar" size={11} /></button>
                           <span className="mono" style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, whiteSpace: "nowrap" }}>{n.eventDate}</span>
                         </div>
                       )}
