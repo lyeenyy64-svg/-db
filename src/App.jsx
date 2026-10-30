@@ -10676,25 +10676,10 @@ function MainApp({ authUser, onLogout }) {
             </div>
           );
         })()}
-        {/* 브랜드 필터 */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {["전체", ...config.brands.map(b => b.code)].map(code => {
-            const brand = config.brands.find(b => b.code === code);
-            const cnt = code === "전체" ? data.rehabilitations.length : data.rehabilitations.filter(r => r.brand === code).length;
-            const isActive = rBrand === code;
-            return (
-              <button key={code} onClick={() => setRBrand(code)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: isActive ? 700 : 500, background: isActive ? (brand ? brand.color + "22" : "var(--bg)") : "var(--card)", color: isActive ? (brand ? brand.color : "var(--tp)") : "var(--ts)", border: `1px solid ${isActive ? (brand ? brand.color + "60" : "var(--brd)") : "var(--brd)"}`, cursor: "pointer" }}>
-                {code === "전체" ? "전체" : brand?.name || code}
-                <span className="mono" style={{ fontSize: 11 }}>{cnt}</span>
-              </button>
-            );
-          })}
-        </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
           <div style={{ position: "relative", flex: 1 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={rq} onChange={e => setRq(e.target.value)} placeholder="채무자명, 사건번호, 비고 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
           <button onClick={() => setModal({ type: "addRehab" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer", whiteSpace: "nowrap" }}><I name="plus" size={14} />데이터 추가</button>
           <button onClick={() => exportLegal([], filtered, [])} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
-          <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
         </div>
         {/* 창이 정말 좁아 minmax() 최소폭도 다 안 들어오면(사이드바 확장 등) 잘려 숨는 대신
             가로 스크롤로 볼 수 있게 감싼다 — 안쪽에 minWidth:max-content를 두면 컬럼이 아예
