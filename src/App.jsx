@@ -10351,6 +10351,15 @@ function MainApp({ authUser, onLogout }) {
       const dep = getRehabDeposited(r);
       return dep == null ? null : (r.approvedAmount || 0) - dep;
     };
+    // 결과 4종 — 종결은 인가 후 변제를 마친 건이라 planApproved도 true로 유지(입금액/잔액 계산 유지)
+    const REHAB_RESULTS = ["신청 인가", "신청 진행중", "신청 폐지", "회생 종결"];
+    const getRehabResult = (r) => r.closed ? "회생 종결" : r.dismissed ? "신청 폐지" : r.planApproved ? "신청 인가" : "신청 진행중";
+    const REHAB_RESULT_FIELDS = {
+      "신청 인가":   { planApproved: true,  dismissed: false, closed: false },
+      "신청 진행중": { planApproved: false, dismissed: false, closed: false },
+      "신청 폐지":   { planApproved: false, dismissed: true,  closed: false },
+      "회생 종결":   { planApproved: true,  dismissed: false, closed: true },
+    };
     const REHAB_SORT_GETTERS = {
       brand:     r => r.brand || "",
       name:      r => r.debtorName || "",
@@ -10361,7 +10370,7 @@ function MainApp({ authUser, onLogout }) {
       monthlyPayment: r => r.monthlyPayment || 0,
       currentRound:   r => r.currentRound || "",
       overdue:   r => r.overdueStatus === "미납" ? 1 : 0,
-      result:    r => r.dismissed ? "폐지" : r.planApproved ? "인가" : "진행중",
+      result:    r => getRehabResult(r),
       balance:   r => { const d = getDebtor(r.debtorId); return d ? (d.finalBalanceFinance || 0) : -Infinity; },
       depositedRehab: r => getRehabDeposited(r) ?? -Infinity,
       remainingRehab: r => getRehabRemaining(r) ?? -Infinity,
@@ -10406,7 +10415,7 @@ function MainApp({ authUser, onLogout }) {
       if (rStatusFilter === "폐지") l = l.filter(r => r.dismissed);
       if (!(rSortField && rSortDir)) {
         // 기본 정렬: 최신 입금 → 최근 수정 → 납부여부(정상 먼저) → 결과(진행중 → 인가 → 폐지)
-        const resultRank = r => r.dismissed ? 2 : r.planApproved ? 1 : 0;
+        const resultRank = r => r.closed ? 3 : r.dismissed ? 2 : r.planApproved ? 1 : 0;
         l = [...l].sort((a, b) => {
           const pa = rehabLastPayDate.get(a.debtorId) || "", pb = rehabLastPayDate.get(b.debtorId) || "";
           if (pa !== pb) return pa < pb ? 1 : -1;
@@ -10439,7 +10448,7 @@ function MainApp({ authUser, onLogout }) {
         brand: r.brand || "", court: r.court || "", caseNumber: r.caseNumber || "", creditorNumber: r.creditorNumber || "",
         debtAmount: r.debtAmount || 0, approvedAmount: r.approvedAmount || 0, monthlyPayment: r.monthlyPayment || 0, priorDeposit: r.priorDeposit || 0,
         currentRound: r.currentRound || "", repaymentNote: r.repaymentNote || "",
-        overdueStatus: r.overdueStatus || "", planApproved: !!r.planApproved, dismissed: !!r.dismissed,
+        overdueStatus: r.overdueStatus || "", planApproved: !!r.planApproved, dismissed: !!r.dismissed, closed: !!r.closed,
       });
       const [caseDraft, setCaseDraft] = useState(buildCaseDraft);
       const setCF = (k, v) => setCaseDraft(p => ({ ...p, [k]: v }));
@@ -10468,8 +10477,9 @@ function MainApp({ authUser, onLogout }) {
               <span style={{ fontSize: 17, fontWeight: 700 }}>{r.debtorName}</span>
               <Badge status={r.type} />
               {r.overdueStatus === "미납" && <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>}
-              {r.dismissed && <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>폐지</span>}
-              {r.planApproved && <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>}
+              {r.dismissed && <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>신청 폐지</span>}
+              {r.planApproved && !r.closed && <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>신청 인가</span>}
+              {r.closed && <span style={{ fontSize: 11, fontWeight: 600, color: "#475569", padding: "2px 10px", background: "#64748b18", borderRadius: 20, border: "1px solid #64748b30" }}>회생 종결</span>}
             </div>
             <button onClick={() => setSelRehab(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--tm)", padding: 4 }}><I name="close" size={18} /></button>
           </div>
@@ -10504,11 +10514,8 @@ function MainApp({ authUser, onLogout }) {
                 <EF label="월상환액"><MoneyInput value={caseDraft.monthlyPayment} onChange={v => setCF("monthlyPayment", v)} style={inp} /></EF>
                 <EF label="기존 입금액"><MoneyInput value={caseDraft.priorDeposit} onChange={v => setCF("priorDeposit", v)} style={inp} /></EF>
                 <EF label="총회차"><KoreanInput value={caseDraft.currentRound} onChange={e => setCF("currentRound", e.target.value)} style={inp} placeholder="예: 12회차" /></EF>
-                <EF label="변제 계획 인가">
-                  <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "인가" }, { v: false, l: "미인가" }].map(o => <button key={o.l} onClick={() => setCF("planApproved", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.planApproved === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.planApproved === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
-                </EF>
-                <EF label="폐지 여부">
-                  <div style={{ display: "flex", gap: 6 }}>{[{ v: true, l: "폐지" }, { v: false, l: "정상" }].map(o => <button key={o.l} onClick={() => setCF("dismissed", o.v)} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: caseDraft.dismissed === o.v ? "var(--acc)" : "var(--bg2)", color: caseDraft.dismissed === o.v ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{o.l}</button>)}</div>
+                <EF label="결과">
+                  <div style={{ display: "flex", gap: 6 }}>{REHAB_RESULTS.map(l => { const on = getRehabResult(caseDraft) === l; return <button key={l} onClick={() => setCaseDraft(p => ({ ...p, ...REHAB_RESULT_FIELDS[l] }))} style={{ flex: 1, padding: "6px 0", borderRadius: 7, fontSize: 12, fontWeight: 600, background: on ? "var(--acc)" : "var(--bg2)", color: on ? "#fff" : "var(--tp)", border: "1px solid var(--brd)", cursor: "pointer" }}>{l}</button>; })}</div>
                 </EF>
                 <EF label="미납 현황">
                   <select value={caseDraft.overdueStatus} onChange={e => setCF("overdueStatus", e.target.value)} style={inp}>
@@ -10528,8 +10535,7 @@ function MainApp({ authUser, onLogout }) {
                 <DL label="월상환액" val={r.monthlyPayment > 0 ? fmt(r.monthlyPayment) : null} />
                 <DL label="기존 입금액" val={r.priorDeposit > 0 ? fmt(r.priorDeposit) : null} />
                 <DL label="총회차" val={r.currentRound} />
-                <DL label="변제 계획 인가" val={r.planApproved ? "인가" : null} />
-                <DL label="폐지 여부" val={r.dismissed ? "폐지" : null} />
+                <DL label="결과" val={getRehabResult(r)} />
                 <DL label="미납 현황" val={r.overdueStatus} />
                 <DL label="비고" val={r.repaymentNote} />
                 {debtor && <DL label="담당자" val={debtor.assignee} />}
@@ -10680,7 +10686,7 @@ function MainApp({ authUser, onLogout }) {
           {filtered.length === 0
             ? <div style={{ padding: 32, textAlign: "center", color: "var(--tm)", background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)" }}>조건에 맞는 회생/파산 사건이 없습니다.</div>
             : filtered.map(r => {
-                const result = r.dismissed ? "폐지" : r.planApproved ? "인가" : "진행중";
+                const result = getRehabResult(r);
                 const debtor = getDebtor(r.debtorId);
                 return (
                   <div key={r.id}
@@ -10700,11 +10706,13 @@ function MainApp({ authUser, onLogout }) {
                     <span style={{ whiteSpace: "nowrap" }}>{r.overdueStatus === "미납"
                       ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", padding: "2px 10px", background: "#ef444420", borderRadius: 20, border: "1px solid #ef444440" }}>미납</span>
                       : <span style={{ fontSize: 12, color: "var(--ts)" }}>정상</span>}</span>
-                    <span style={{ whiteSpace: "nowrap" }}>{result === "폐지"
-                      ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>폐지</span>
-                      : result === "인가"
-                        ? <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>인가</span>
-                        : <span style={{ fontSize: 12, color: "var(--ts)" }}>진행중</span>}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>{result === "신청 폐지"
+                      ? <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", padding: "2px 10px", background: "#f59e0b20", borderRadius: 20, border: "1px solid #f59e0b40" }}>{result}</span>
+                      : result === "신청 인가"
+                        ? <span style={{ fontSize: 11, fontWeight: 600, color: "#047857", padding: "2px 10px", background: "#10b98118", borderRadius: 20, border: "1px solid #10b98130" }}>{result}</span>
+                        : result === "회생 종결"
+                          ? <span style={{ fontSize: 11, fontWeight: 600, color: "#475569", padding: "2px 10px", background: "#64748b18", borderRadius: 20, border: "1px solid #64748b30" }}>{result}</span>
+                          : <span style={{ fontSize: 12, color: "var(--ts)" }}>{result}</span>}</span>
                     <span className="mono" style={{ fontSize: 13, color: debtor ? "var(--ok)" : "var(--tm)", fontWeight: 600, whiteSpace: "nowrap", textAlign: "right" }}>{debtor ? fmt(debtor.finalBalanceFinance) : "-"}</span>
                     {isRehabTab && (() => {
                       const dep = getRehabDeposited(r);
