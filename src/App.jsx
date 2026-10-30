@@ -10389,8 +10389,8 @@ function MainApp({ authUser, onLogout }) {
     // 컬럼은 실측 한도까지 더 줄이고, 성명/법원/사건번호의 최소폭·fr 비중도 낮춰 최소 필요
     // 가로폭 자체를 줄인다(넓은 창에서 남는 공간이 있으면 fr 비중대로 계속 늘어나는 건 정상).
     const rehabGridCols = isRehabTab
-      ? "48px minmax(56px,0.6fr) 42px minmax(60px,0.6fr) minmax(92px,0.8fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 48px 46px 46px minmax(88px,0.5fr) minmax(88px,0.5fr) minmax(88px,0.5fr) 76px"
-      : "48px minmax(60px,0.6fr) 42px minmax(64px,0.6fr) minmax(96px,0.8fr) 46px 46px minmax(88px,0.5fr) 76px";
+      ? "40px minmax(48px,0.4fr) 36px minmax(52px,0.5fr) minmax(84px,0.7fr) minmax(84px,0.5fr) minmax(76px,0.5fr) 48px 46px 84px minmax(104px,0.6fr) minmax(96px,0.6fr) minmax(96px,0.6fr) 70px"
+      : "40px minmax(52px,0.4fr) 36px minmax(56px,0.5fr) minmax(88px,0.7fr) 46px 84px minmax(104px,0.6fr) 70px";
 
     const matchCandidates = useMemo(() => {
       if (!matchingRehab) return [];
