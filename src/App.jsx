@@ -10635,11 +10635,47 @@ function MainApp({ authUser, onLogout }) {
       <>
       {selRehab && <RehabDetailModal />}
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-          <KPI label="회생/파산 전체" value={`${data.rehabilitations.length}건`} sub={`회생 ${data.rehabilitations.filter(r => r.type === "회생").length} / 파산 ${data.rehabilitations.filter(r => r.type === "파산/면책").length}`} color="#8b5cf6" active={!rStatusFilter} onClick={() => setRStatusFilter(null)} />
-          <KPI label="미납" value={`${data.rehabilitations.filter(r => r.overdueStatus === "미납").length}건`} sub="변제 연체 중" color="#ef4444" active={rStatusFilter === "미납"} onClick={() => setRStatusFilter(rStatusFilter === "미납" ? null : "미납")} />
-          <KPI label="폐지" value={`${data.rehabilitations.filter(r => r.dismissed).length}건`} sub="인가 취소/기각" color="#f59e0b" active={rStatusFilter === "폐지"} onClick={() => setRStatusFilter(rStatusFilter === "폐지" ? null : "폐지")} />
-        </div>
+        {(() => {
+          // 요약 카드 — 회생/파산/폐지 건수(브랜드별) + 회생 인가 건 승인액·입금액·잔액 합계
+          const all = data.rehabilitations;
+          const cntCard = (label, color, list, onClick, active, sub) => (
+            <div onClick={onClick} style={{ background: "var(--card)", borderRadius: 12, padding: "18px 20px", border: `1px solid ${active ? color : "var(--brd)"}`, boxShadow: active ? `0 0 0 1px ${color}40` : "none", position: "relative", overflow: "hidden", cursor: onClick ? "pointer" : "default" }}>
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${color},${color}00)` }} />
+              <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginBottom: 6 }}>{label}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color, marginBottom: 10 }}><span className="mono">{list.length}</span><span style={{ fontSize: 16, fontWeight: 500 }}>건</span></div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, borderTop: "1px solid var(--brd)", paddingTop: 8 }}>
+                {config.brands.map(b => (
+                  <div key={b.code} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--ts)" }}>
+                    <span>{b.name}</span><span className="mono">{list.filter(r => r.brand === b.code).length}건</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+          const approved = all.filter(r => r.type === "회생" && r.planApproved);
+          const sumApproved = approved.reduce((s, r) => s + (r.approvedAmount || 0), 0);
+          const sumDeposited = approved.reduce((s, r) => s + (getRehabDeposited(r) || 0), 0);
+          const amtRow = (label, v, color) => (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+              <span style={{ fontSize: 13, color: "var(--ts)", fontWeight: 600 }}>{label}</span>
+              <span className="mono" style={{ fontSize: 17, fontWeight: 700, color }}>{fmt(v)}</span>
+            </div>
+          );
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+              {cntCard("회생 건수", "#8b5cf6", all.filter(r => r.type === "회생"), () => setRStatusFilter(null), !rStatusFilter)}
+              {cntCard("파산 건수", "#3b82f6", all.filter(r => r.type !== "회생"), () => setRStatusFilter(null), false)}
+              {cntCard("폐지 건수", "#f59e0b", all.filter(r => r.dismissed), () => setRStatusFilter(rStatusFilter === "폐지" ? null : "폐지"), rStatusFilter === "폐지")}
+              <div style={{ background: "var(--card)", borderRadius: 12, padding: "18px 20px", border: "1px solid var(--brd)", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 14 }}>
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
+                {amtRow("회생 승인액", sumApproved, "var(--ok)")}
+                {amtRow("회생 입금액", sumDeposited, "var(--tp)")}
+                {amtRow("회생 잔액", sumApproved - sumDeposited, sumApproved - sumDeposited < 0 ? "#ef4444" : "var(--ok)")}
+                <div style={{ fontSize: 10, color: "var(--tm)" }}>인가·종결 건 기준</div>
+              </div>
+            </div>
+          );
+        })()}
         {/* 브랜드 필터 */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {["전체", ...config.brands.map(b => b.code)].map(code => {
