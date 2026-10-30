@@ -10642,20 +10642,39 @@ function MainApp({ authUser, onLogout }) {
         {(() => {
           // 요약 카드 — 회생/파산/폐지 건수(브랜드별) + 회생 인가 건 승인액·입금액·잔액 합계
           const all = data.rehabilitations;
-          const cntCard = (label, color, list, onClick, active, sub) => (
-            <div onClick={onClick} style={{ background: "var(--card)", borderRadius: 12, padding: "18px 20px", border: `1px solid ${active ? color : "var(--brd)"}`, boxShadow: active ? `0 0 0 1px ${color}40` : "none", position: "relative", overflow: "hidden", cursor: onClick ? "pointer" : "default" }}>
+          // 숫자(전체/브랜드별)를 누르면 해당 탭·브랜드·상태로 아래 목록을 필터하고 목록 위치로 스크롤한다
+          const pick = (tabKey, status, brand) => {
+            // 폐지는 회생/파산 양쪽에 걸쳐 있어, 해당 건이 있는 탭(회생 우선)으로 이동
+            let t = tabKey;
+            if (!t) {
+              const hit = all.filter(r => r.dismissed && (!brand || r.brand === brand));
+              t = hit.some(r => r.type === "회생") || !hit.length ? "회생" : "파산/면책";
+            }
+            if (t !== rehabTab) setRehabSubTab(t);
+            setRBrand(brand || "전체");
+            setRStatusFilter(status);
+            setTimeout(() => document.getElementById("rehab-list-top")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+          };
+          const cntCard = (label, color, list, tabKey, status) => {
+            const active = status ? rStatusFilter === status : (rehabTab === tabKey && !rStatusFilter);
+            const num = (cnt, brand, style) => (
+              <span className="mono" onClick={() => pick(tabKey, status, brand)} title="클릭하면 아래 목록에 표시" style={{ cursor: "pointer", textDecoration: (active && rBrand === (brand || "전체")) ? "underline" : "none", ...style }}>{cnt}</span>
+            );
+            return (
+            <div style={{ background: "var(--card)", borderRadius: 12, padding: "18px 20px", border: `1px solid ${active ? color : "var(--brd)"}`, boxShadow: active ? `0 0 0 1px ${color}40` : "none", position: "relative", overflow: "hidden" }}>
               <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${color},${color}00)` }} />
               <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginBottom: 6 }}>{label}</div>
-              <div style={{ fontSize: 26, fontWeight: 700, color, marginBottom: 10 }}><span className="mono">{list.length}</span><span style={{ fontSize: 16, fontWeight: 500 }}>건</span></div>
+              <div style={{ fontSize: 26, fontWeight: 700, color, marginBottom: 10 }}>{num(list.length, null)}<span style={{ fontSize: 16, fontWeight: 500 }}>건</span></div>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, borderTop: "1px solid var(--brd)", paddingTop: 8 }}>
                 {config.brands.map(b => (
                   <div key={b.code} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--ts)" }}>
-                    <span>{b.name}</span><span className="mono">{list.filter(r => r.brand === b.code).length}건</span>
+                    <span>{b.name}</span><span>{num(list.filter(r => r.brand === b.code).length, b.code)}건</span>
                   </div>
                 ))}
               </div>
             </div>
-          );
+            );
+          };
           const approved = all.filter(r => r.type === "회생" && r.planApproved);
           const sumApproved = approved.reduce((s, r) => s + (r.approvedAmount || 0), 0);
           const sumDeposited = approved.reduce((s, r) => s + (getRehabDeposited(r) || 0), 0);
@@ -10667,9 +10686,9 @@ function MainApp({ authUser, onLogout }) {
           );
           return (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-              {cntCard("회생 건수", "#8b5cf6", all.filter(r => r.type === "회생"), () => setRStatusFilter(null), !rStatusFilter)}
-              {cntCard("파산 건수", "#3b82f6", all.filter(r => r.type !== "회생"), () => setRStatusFilter(null), false)}
-              {cntCard("폐지 건수", "#f59e0b", all.filter(r => r.dismissed), () => setRStatusFilter(rStatusFilter === "폐지" ? null : "폐지"), rStatusFilter === "폐지")}
+              {cntCard("회생 건수", "#8b5cf6", all.filter(r => r.type === "회생"), "회생", null)}
+              {cntCard("파산 건수", "#3b82f6", all.filter(r => r.type !== "회생"), "파산/면책", null)}
+              {cntCard("폐지 건수", "#f59e0b", all.filter(r => r.dismissed), null, "폐지")}
               <div style={{ background: "var(--card)", borderRadius: 12, padding: "18px 20px", border: "1px solid var(--brd)", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column", justifyContent: "center", gap: 14 }}>
                 <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
                 {amtRow("회생 승인액", sumApproved, "var(--ok)")}
@@ -10688,7 +10707,7 @@ function MainApp({ authUser, onLogout }) {
         {/* 창이 정말 좁아 minmax() 최소폭도 다 안 들어오면(사이드바 확장 등) 잘려 숨는 대신
             가로 스크롤로 볼 수 있게 감싼다 — 안쪽에 minWidth:max-content를 두면 컬럼이 아예
             줄어들지 않고 항상 스크롤만 뜨게 되어 민사소송 목록처럼 반응하지 않으니 두지 않는다 */}
-        <div style={{ overflowX: "auto" }}>
+        <div id="rehab-list-top" style={{ overflowX: "auto" }}>
         {/* 리스트 헤더 — 같은 탭 안에서는 유형이 동일해 "회생/파산" 구분 컬럼은 생략, 대신
             회생 탭은 채무액/승인액/월상환액/현재회차까지, 파산/면책 탭은 잔액(재무)만 보여준다 */}
         <div style={{ display: "grid", gridTemplateColumns: rehabGridCols, alignItems: "center", gap: 10, padding: "6px 16px", fontSize: 12, color: "var(--ts)", fontWeight: 700, textAlign: "center" }}>
