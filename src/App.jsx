@@ -6239,19 +6239,40 @@ function MainApp({ authUser, onLogout }) {
       {(() => {
         const CC = { "전체":"#6366f1","장기채권":"#f59e0b","추심의뢰":"#3b82f6","회생/파산":"#8b5cf6","협의/소송":"#ef4444","분할상환":"#06b6d4","캐쉬상환":"#10b981","완료":"#6b7280","대손채권":"#ec4899" };
         const cats = ["전체", ...config.categories];
+        const sumRows = catFilter === "전체" ? data.debtors : data.debtors.filter(d => d.category === catFilter);
+        const sumOf = key => sumRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
+        const sumColor = CC[catFilter] || "#6b7280";
+        const sumItems = [
+          ["총 채무자수", `${sumRows.length.toLocaleString()}건`],
+          ["원채무액", fmt(sumOf("principalBalance"))],
+          ["회수액", fmt(sumOf("collectedAmount"))],
+          ["재무기준 잔액", fmt(sumOf("finalBalanceFinance"))],
+          ["법무기준 잔액", fmt(sumOf("finalBalanceLegal"))],
+        ];
         return (
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2 }}>
-            {cats.map(k => {
-              const color = CC[k] || "#6b7280";
-              const cnt = k === "전체" ? data.debtors.length : data.debtors.filter(d => d.category === k).length;
-              const active = catFilter === k;
-              return (
-                <div key={k} onClick={() => setCatFilter(active && k !== "전체" ? "전체" : k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 95, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: active ? color : "var(--tm)", whiteSpace: "nowrap", marginBottom: 5 }}>{k}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+            <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, flex: "0 1 auto", minWidth: 0 }}>
+              {cats.map(k => {
+                const color = CC[k] || "#6b7280";
+                const cnt = k === "전체" ? data.debtors.length : data.debtors.filter(d => d.category === k).length;
+                const active = catFilter === k;
+                return (
+                  <div key={k} onClick={() => setCatFilter(active && k !== "전체" ? "전체" : k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 64, padding: "7px 10px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: active ? color : "var(--tm)", whiteSpace: "nowrap", marginBottom: 4 }}>{k}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginLeft: "auto", flex: "0 0 auto", display: "flex", alignItems: "center", gap: 14, padding: "7px 14px", borderRadius: 10, border: `1.5px solid ${sumColor}`, background: sumColor + "10", marginBottom: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: sumColor, whiteSpace: "nowrap" }}>{catFilter} 계</div>
+              {sumItems.map(([l, v]) => (
+                <div key={l} style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 10, color: "var(--tm)", whiteSpace: "nowrap", marginBottom: 3 }}>{l}</div>
+                  <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--tx)", whiteSpace: "nowrap" }}>{v}</div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
         );
       })()}
