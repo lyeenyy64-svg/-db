@@ -5054,7 +5054,7 @@ function MainApp({ authUser, onLogout }) {
         </div>
         {!collapsedSections.has("bonds") && (<>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 16 }}>
-          <KPI label="총 관리 채권" value={`${stats.totalDebtors}건 / 남은 ${stats.totalDebtors - ["대손채권", "완료", "회생/파산"].reduce((s, c) => s + (stats.byCat[c] || 0), 0)}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
+          <KPI label={<span>총 관리 채권 <span style={{ margin: "0 6px" }}>/</span> 총 남은 채권</span>} value={`${stats.totalDebtors}건 / ${stats.totalDebtors - ["대손채권", "완료", "회생/파산"].reduce((s, c) => s + (stats.byCat[c] || 0), 0)}건`} sub={config.categories.map(c => `${c} ${stats.byCat[c] || 0}`).join(" / ")} color="#3b82f6" />
           <KPI label="총 채권금액" value={fmt(stats.totalRemaining)} sub={`재무 ${fmt(stats.totalFinanceRemaining)}`} color="#8b5cf6" />
           <KPI label="총 추심잔액" value={fmt(stats.totalActiveRemaining)} sub={stats.activeGroupRemaining.map(g => `${g.label} ${fmt(g.remaining)}`).join(" / ")} color="#0ea5e9" />
           <KPI label="소송현황" value={`${(stats.totalLegal || 0).toLocaleString()}건`} sub={`지급명령 ${stats.byLegalType["지급명령"] || 0} / 압류 ${stats.byLegalType["압류"] || 0} / 재산명시·재산조회 ${stats.byLegalType["재산명시"] || 0} / 형사고소 ${stats.byLegalType["형사고소"] || 0} / 회생/파산 ${stats.totalRehabs || 0}`} color="#ef4444" />
