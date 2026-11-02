@@ -6240,14 +6240,15 @@ function MainApp({ authUser, onLogout }) {
         const CC = { "전체":"#6366f1","장기채권":"#f59e0b","추심의뢰":"#3b82f6","회생/파산":"#8b5cf6","협의/소송":"#ef4444","분할상환":"#06b6d4","캐쉬상환":"#10b981","완료":"#6b7280","대손채권":"#ec4899" };
         const cats = ["전체", ...config.categories];
         const sumRows = catFilter === "전체" ? data.debtors : data.debtors.filter(d => d.category === catFilter);
+        const fmtM = n => `${Math.round((n || 0) / 1000000).toLocaleString("ko-KR")}백만원`;
         const sumOf = key => sumRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
         const sumColor = CC[catFilter] || "#6b7280";
         const sumItems = [
           ["총 채무자수", `${sumRows.length.toLocaleString()}건`],
-          ["원채무액", fmt(sumOf("principalBalance"))],
-          ["회수액", fmt(sumOf("collectedAmount"))],
-          ["재무기준 잔액", fmt(sumOf("finalBalanceFinance"))],
-          ["법무기준 잔액", fmt(sumOf("finalBalanceLegal"))],
+          ["원채무액", fmtM(sumOf("principalBalance"))],
+          ["회수액", fmtM(sumOf("collectedAmount"))],
+          ["재무기준 잔액", fmtM(sumOf("finalBalanceFinance"))],
+          ["법무기준 잔액", fmtM(sumOf("finalBalanceLegal"))],
         ];
         return (
           <div style={{ display: "flex", gap: 8, alignItems: "stretch", flexWrap: "wrap" }}>
