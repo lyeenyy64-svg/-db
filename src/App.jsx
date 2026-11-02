@@ -6250,7 +6250,7 @@ function MainApp({ authUser, onLogout }) {
           ["법무기준 잔액", fmt(sumOf("finalBalanceLegal"))],
         ];
         return (
-          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch", flexWrap: "wrap" }}>
             <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, flex: "0 1 auto", minWidth: 0 }}>
               {cats.map(k => {
                 const color = CC[k] || "#6b7280";
@@ -6265,7 +6265,6 @@ function MainApp({ authUser, onLogout }) {
               })}
             </div>
             <div style={{ marginLeft: "auto", flex: "0 0 auto", display: "flex", alignItems: "center", gap: 14, padding: "7px 14px", borderRadius: 10, border: `1.5px solid ${sumColor}`, background: sumColor + "10", marginBottom: 2 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: sumColor, whiteSpace: "nowrap" }}>{catFilter} 계</div>
               {sumItems.map(([l, v]) => (
                 <div key={l} style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 10, color: "var(--tm)", whiteSpace: "nowrap", marginBottom: 3 }}>{l}</div>
