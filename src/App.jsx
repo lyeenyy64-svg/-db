@@ -10860,10 +10860,6 @@ function MainApp({ authUser, onLogout }) {
     const [collSort,      setCollSort]      = useState({ f: "requestDate", d: "desc" });
     const [showAddForm,   setShowAddForm]   = useState(false);
     const [addFields,     setAddFields]     = useState({ agencyName:"", brandRaw:"B", debtorName:"", requestAmount:"", amountDetail:"", requestDate:"", condition:"", agencyPerson:"", agencyPhone:"", cost:"", activities:"", monthlyUpdates:[], recoveredAmount:"" });
-    const [recMode,       setRecMode]       = useState(() => localStorage.getItem("coll_rec_mode") || "auto");
-    const [manualRecTotal, setManualRecTotal] = useState(() => Number(localStorage.getItem("coll_rec_manual") || "0"));
-    const [editingRec,    setEditingRec]    = useState(false);
-    const [editRecInput,  setEditRecInput]  = useState("");
 
     const agencies = useMemo(() => [...new Set(orders.map(o => o.agencyName).filter(Boolean))], [orders]);
 
@@ -10959,16 +10955,26 @@ function MainApp({ authUser, onLogout }) {
       showToast("삭제 완료");
     };
 
-    // collectedAmount는 채무자 단위 누적값이라, 같은 채무자에 매칭된 추심의뢰가 2건 이상이면
-    // 채무자별로 한 번만 합산해야 한다 (그러지 않으면 중복 매칭될수록 회수금액이 배로 커진다).
+    // 회수금액: 연동된 채무자의 입금현황(payments) 중 추심요청일 이후(요청일 미입력 시 전체) 입금 합계
+    const payRec = useMemo(() => {
+      const m = new Map();
+      orders.forEach(o => {
+        if (!o.debtorId) return;
+        const rd = String(o.requestDate || "").replace(/./g, "-");
+        const sum = (data.payments || []).reduce((t, p) => p.debtorId === o.debtorId && (!rd || String(p.paymentDate || "") >= rd) ? t + (Number(p.totalAmount) || 0) : t, 0);
+        if (sum > 0) m.set(o.id, sum);
+      });
+      return m;
+    }, [orders, data.payments]);
+    const recOf = (o) => payRec.get(o.id) || o.recoveredAmount || 0;
+
+    // 카드 합계(필터 적용). 같은 채무자에 추심의뢰가 2건 이상 매칭돼도 입금은 한 번만 합산
     const seenRecDebtorIds = new Set();
-    const autoTotalRec = orders.reduce((s, o) => {
-      if (!o.debtorId || seenRecDebtorIds.has(o.debtorId)) return s;
-      seenRecDebtorIds.add(o.debtorId);
-      const d = getDebtor(o.debtorId);
-      return s + (d?.collectedAmount || 0);
+    const sumClaim = filtered.reduce((t, o) => t + (o.requestAmount || 0), 0);
+    const sumRec = filtered.reduce((t, o) => {
+      if (o.debtorId) { if (seenRecDebtorIds.has(o.debtorId)) return t; seenRecDebtorIds.add(o.debtorId); }
+      return t + recOf(o);
     }, 0);
-    const kpiTotalRec = recMode === "manual" ? manualRecTotal : autoTotalRec;
 
     // 팝업에서 현재 값 (편집 중이면 editFields 우선)
     const cur = (key) => editMode ? (editFields[key] !== undefined ? editFields[key] : selOrder?.[key]) : selOrder?.[key];
@@ -11002,43 +11008,23 @@ function MainApp({ authUser, onLogout }) {
               })}
             </div>
           </div>
-          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-              <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500 }}>
-                회수금액
-                <span style={{ marginLeft: 6, fontSize: 10, padding: "1px 6px", borderRadius: 8, background: recMode === "auto" ? "#eff6ff" : "#fefce8", color: recMode === "auto" ? "#1d4ed8" : "#92400e", border: `1px solid ${recMode === "auto" ? "#bfdbfe" : "#fde68a"}` }}>
-                  {recMode === "auto" ? "자동(슬랙)" : "수동"}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 4 }}>
-                {editingRec ? (
-                  <>
-                    <button onClick={() => {
-                      const v = Number(String(editRecInput).replace(/,/g, "")) || 0;
-                      setManualRecTotal(v); setRecMode("manual");
-                      localStorage.setItem("coll_rec_mode", "manual");
-                      localStorage.setItem("coll_rec_manual", String(v));
-                      setEditingRec(false);
-                    }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "#10b981", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600 }}>저장</button>
-                    <button onClick={() => setEditingRec(false)} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>취소</button>
-                  </>
-                ) : (
-                  <>
-                    <button onClick={() => { setEditRecInput(String(kpiTotalRec)); setEditingRec(true); }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--tm)", border: "1px solid var(--brd)", cursor: "pointer" }}>수정</button>
-                    {recMode === "manual" && (
-                      <button onClick={() => { setRecMode("auto"); localStorage.setItem("coll_rec_mode", "auto"); }} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe", cursor: "pointer" }}>자동</button>
-                    )}
-                  </>
-                )}
-              </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#3b82f6", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(sumClaim)}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>총 채권액</div>
+                </div>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#10b981", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(sumRec)}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>회수금액</div>
+                </div>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#f97316", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(Math.max(sumClaim - sumRec, 0))}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>잔액</div>
+                </div>
             </div>
-            {editingRec ? (
-              <MoneyInput value={editRecInput} onChange={v => setEditRecInput(v)} style={{ padding: "5px 8px", fontSize: 16, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%", marginBottom: 4 }} />
-            ) : (
-              <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>{fmt(kpiTotalRec)}</div>
-            )}
-            <div style={{ fontSize: 11, color: "var(--ts)" }}>{recMode === "auto" ? "연동 채무자 입금 자동 집계" : "수동 입력값"}</div>
+            <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 8, textAlign: "center" }}>회수금액은 연동 채무자의 입금현황 중 추심요청일 이후 입금 기준</div>
           </div>
         </div>
 
@@ -11110,7 +11096,7 @@ function MainApp({ authUser, onLogout }) {
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", width: 110, flexShrink: 0, textAlign: "right" }}>{fmt(o.requestAmount)}</span>
                 <span style={{ fontSize: 11, color: "var(--ts)", width: 70, flexShrink: 0, textAlign: "center" }}>{o.delayRate || "-"}</span>
                 <span style={{ fontSize: 11, color: "var(--ts)", width: 50, flexShrink: 0, textAlign: "center" }}>{o.feeRate || "-"}</span>
-                {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 100, flexShrink: 0, textAlign: "right" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
+                {(() => { const ra = recOf(o); return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 100, flexShrink: 0, textAlign: "right" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
                 <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, textAlign: "left" }}>
                   {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
                 </div>
@@ -11227,14 +11213,14 @@ function MainApp({ authUser, onLogout }) {
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>회수현황</div>
-              {getDebtor(selOrder.debtorId)?.collectedAmount > 0 && (
+              {payRec.get(selOrder.id) > 0 && (
                 <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>입금내역 자동</span>
               )}
             </div>
             {editMode
               ? <MoneyInput value={String(cur("recoveredAmount") ?? selOrder.recoveredAmount ?? 0)} onChange={v => setF("recoveredAmount", Number(v) || 0)} style={{ ...inpS, maxWidth: 200 }} />
               : (() => {
-                  const autoRec = getDebtor(selOrder.debtorId)?.collectedAmount || 0;
+                  const autoRec = payRec.get(selOrder.id) || 0;
                   const manualRec = selOrder.recoveredAmount || 0;
                   const displayRec = autoRec || manualRec;
                   return (
