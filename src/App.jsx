@@ -11046,7 +11046,7 @@ function MainApp({ authUser, onLogout }) {
           </div>
           <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
           <button onClick={() => downloadCSV(`추심의뢰_${today()}.csv`,
-            ["브랜드","채무자","추심업체","요청일","요청금액","회수금액","최근현황월","최근현황","연동"],
+            ["브랜드","채무자","추심업체","요청일","채권액","회수금액","최근현황월","최근현황","연동"],
             sortedOrders.map(o => {
               const d = getDebtor(o.debtorId);
               const lu = o.monthlyUpdates?.slice(-1)[0];
@@ -11066,7 +11066,9 @@ function MainApp({ authUser, onLogout }) {
           <span style={{ minWidth: 100 }}><SortBtn field="debtorName" label="채무자" /></span>
           <span style={{ minWidth: 90 }}><SortBtn field="agencyName" label="추심업체" /></span>
           <span style={{ minWidth: 90 }}><SortBtn field="requestDate" label="요청일" /></span>
-          <span style={{ minWidth: 110 }}><SortBtn field="requestAmount" label="요청금액" /></span>
+          <span style={{ minWidth: 110 }}><SortBtn field="requestAmount" label="채권액" /></span>
+          <span style={{ minWidth: 70 }}>지연손해금</span>
+          <span style={{ minWidth: 50 }}>수수료</span>
           <span style={{ minWidth: 100 }}>회수금액</span>
           <span style={{ flex: 1 }}>최근 현황</span>
           <span style={{ minWidth: 50 }}>연동</span>
@@ -11092,6 +11094,8 @@ function MainApp({ authUser, onLogout }) {
                 <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
                 <div style={{ fontSize: 11, color: "var(--ts)", minWidth: 90 }}>{o.requestDate}</div>
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", minWidth: 110 }}>{fmt(o.requestAmount)}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", minWidth: 70 }}>{o.delayRate || "-"}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", minWidth: 50 }}>{o.feeRate || "-"}</span>
                 {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", minWidth: 100 }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
                 <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                   {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
@@ -11138,10 +11142,11 @@ function MainApp({ authUser, onLogout }) {
             <DL label="채권내용"   val={selOrder.claimType} />
             <DL label="채권 발생일" val={selOrder.claimDate} />
             <DL label="집행권원"   val={selOrder.execTitle} />
-            <DL label="추심요청 금액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>
-            {selOrder.amountDetail && <DL label="금액 상세" val={selOrder.amountDetail} />}
+            <DL label="채권액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>
+            {selOrder.amountDetail && !selOrder.delayRate && <DL label="금액 상세" val={selOrder.amountDetail} />}
+            <DL label="지연손해금" val={selOrder.delayRate} />
             <DL label="추심요청일" val={selOrder.requestDate} />
-            <DL label="조건"       val={selOrder.condition} />
+            <DL label="수수료"     val={selOrder.feeRate || selOrder.condition} />
             <DL label="특이사항"   val={selOrder.note} />
             <DL label="담당자"     val={selOrder.agencyPerson} />
             <DL label="연락처"     val={selOrder.agencyPhone} />
@@ -11355,7 +11360,7 @@ function MainApp({ authUser, onLogout }) {
                     </LI>
                     <LI label="채무자명 *"><KoreanInput value={AF.debtorName} onChange={e => setAF("debtorName", e.target.value)} placeholder="채무자 이름" style={fS} /></LI>
                     <LI label="추심요청일"><input type="text" value={AF.requestDate} onChange={e => setAF("requestDate", e.target.value)} placeholder="YYYY.MM.DD" style={fS} /></LI>
-                    <LI label="추심요청금액 (원)"><MoneyInput value={AF.requestAmount} onChange={v => setAF("requestAmount", v)} placeholder="0" style={fS} /></LI>
+                    <LI label="채권액 (원)"><MoneyInput value={AF.requestAmount} onChange={v => setAF("requestAmount", v)} placeholder="0" style={fS} /></LI>
                     <LI label="회수금액 (원)"><MoneyInput value={AF.recoveredAmount} onChange={v => setAF("recoveredAmount", v)} placeholder="0" style={fS} /></LI>
                     <LI label="담당자"><KoreanInput value={AF.agencyPerson} onChange={e => setAF("agencyPerson", e.target.value)} placeholder="담당자명" style={fS} /></LI>
                     <LI label="연락처"><KoreanInput value={AF.agencyPhone} onChange={e => setAF("agencyPhone", e.target.value)} placeholder="전화번호" style={fS} /></LI>
