@@ -3,8 +3,7 @@
 //
 // - 세부현황 시트의 행이 곧 추심의뢰 1건 (기준 데이터)
 // - 주민번호·주소·연락처는 번들(src)에 들어가므로 읽지 않는다 (채무자 DB에 이미 있음)
-// - 세부현황에 없는 값(요청일·월별현황·활동사항·회수액·소요비용)은
-//   같은 시트의 총계/CMS 추심의뢰 + 기존 src/collectionData.js 에서 브랜드+채무자명으로 이어받는다
+// - 세부현황에 없는 값(요청일·최근현황·회수액)은 같은 파일의 총계/CMS 추심의뢰 시트에서 브랜드+채무자명으로 가져온다 (기존 앱 데이터는 사용하지 않음)
 
 const XLSX = require('xlsx');
 const fs   = require('fs');
@@ -59,40 +58,17 @@ sheetRows('총계', 1).forEach(r => { if (str(r[3]) && str(r[4])) dateByKey.set(
 const cmsByKey = new Map();
 sheetRows('CMS 추심의뢰', 1).forEach(r => { if (str(r[2])) cmsByKey.set(keyOf(r[1], r[2]), r); });
 
-// 기존 데이터 (이어받기용) — 같은 키가 여럿이면 금액이 같은 것을 우선, 한 번 쓴 항목은 재사용하지 않는다
 const outPath = path.join(__dirname, '../src/collectionData.js');
-let prevOrders = [];
-if (fs.existsSync(outPath)) {
-  const src = fs.readFileSync(outPath, 'utf8').replace(/export const COLLECTION_ORDERS =/, 'module.exports =');
-  const m = { exports: [] };
-  new Function('module', src)(m);
-  prevOrders = m.exports;
-}
-const prevByKey = new Map();
-prevOrders.forEach(o => {
-  const k = keyOf(o.brandRaw, o.debtorName);
-  if (!prevByKey.has(k)) prevByKey.set(k, []);
-  prevByKey.get(k).push(o);
-});
-const takePrev = (k, amount) => {
-  const list = prevByKey.get(k);
-  if (!list || !list.length) return null;
-  const i = Math.max(0, list.findIndex(o => o.requestAmount === amount));
-  return list.splice(i, 1)[0];
-};
 
 const orders = [];
 let idNum = 1;
-let carried = 0;
 
 detailRows.forEach((r) => {
   const brandRaw   = brandRawOf(r[3]);
   const debtorName = str(r[4]);
   const k          = keyOf(brandRaw, debtorName);
   const amount     = toNum(r[12]);
-  const prev       = takePrev(k, amount);
   const cms        = cmsByKey.get(k);
-  if (prev) carried++;
 
   // 분류: "주채무자" / "OOO의 연대보증인" / "OOO 연대보증인"
   const roleRaw  = str(r[5]);
@@ -103,7 +79,7 @@ detailRows.forEach((r) => {
   const feeRate   = typeof r[14] === 'number' ? `${Math.round(r[14] * 100)}%`   : str(r[14]);
 
   // 월별 현황: 기존 이력 + CMS 시트의 최근현황이 새 월이면 추가
-  const monthlyUpdates = [...(prev?.monthlyUpdates || [])];
+  const monthlyUpdates = [];
   if (cms && str(cms[7]) && str(cms[8]) && !monthlyUpdates.some(mu => mu.month === str(cms[7]))) {
     monthlyUpdates.push({ month: str(cms[7]), content: str(cms[8]).replace(/\r\n|\r/g, '\n') });
   }
@@ -123,16 +99,16 @@ detailRows.forEach((r) => {
     requestAmount:   amount,
     delayRate,
     amountDetail:    `채권액(잔액) : ${amount.toLocaleString('ko-KR')}원${delayRate ? `\n지연손해금 : ${delayRate}` : ''}`,
-    requestDate:     dateByKey.get(k) || (cms && str(cms[4])) || prev?.requestDate || '',
+    requestDate:     dateByKey.get(k) || (cms && str(cms[4])) || '',
     condition:       feeRate ? `추심금액의 ${feeRate}` : '',
     feeRate,
     note:            oneLine(r[15]),
     agencyPerson:    '',
     agencyPhone:     '',
-    cost:            prev?.cost || '',
-    activities:      prev?.activities || '',
+    cost:            '',
+    activities:      '',
     monthlyUpdates,
-    recoveredAmount: prev?.recoveredAmount || (cms ? toNum(cms[6]) : 0),
+    recoveredAmount: cms ? toNum(cms[6]) : 0,
     debtorId:        null,
   });
 });
@@ -148,6 +124,4 @@ const agencies = [...new Set(orders.map(o => o.agencyName))];
 console.log('✓ src/collectionData.js 생성 완료');
 console.log(`  총 추심의뢰:   ${orders.length}건 (연대보증인 ${orders.filter(o => o.debtorRole === '연대보증인').length}건)`);
 console.log(`  추심업체:      ${agencies.join(', ')}`);
-console.log(`  기존값 이어받음: ${carried}건`);
 console.log(`  요청일 없음:   ${orders.filter(o => !o.requestDate).length}건`);
-console.log(`  기존에만 있던(제외됨): ${[...prevByKey.values()].reduce((s, l) => s + l.length, 0)}건`);

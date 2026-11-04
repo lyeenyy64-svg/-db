@@ -28,10 +28,6 @@ export const COLLECTION_ORDERS = [
     "activities": "",
     "monthlyUpdates": [
       {
-        "month": "2026.02",
-        "content": "주소변동, 타인소유, 문자 발송"
-      },
-      {
         "month": "2026.03",
         "content": "주채무자, 문자발송"
       }
@@ -63,10 +59,6 @@ export const COLLECTION_ORDERS = [
     "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "상동"
-      },
       {
         "month": "2026.03",
         "content": "김일회의 연대보증인, 문자 발송"
@@ -575,13 +567,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "다중채무, 문자발송, 전화결번"
-      },
       {
         "month": "2026.02",
         "content": "가압류 예정 문자 발송"
@@ -800,19 +788,15 @@ export const COLLECTION_ORDERS = [
     "note": "잠수 연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "김대현- 채무불이행 10건 약 343백만원 등재중(국세,금융기관 등)/ 케이뱅크 체크카드 2022. 11"
-      },
       {
         "month": "2025.1",
         "content": "김대현- 채무불이행 10건 약 343백만원 등재중(국세,금융기관 등)/ 케이뱅크 체크카드 2022. 11"
       }
     ],
-    "recoveredAmount": 2026.01,
+    "recoveredAmount": 0,
     "debtorId": null
   },
   {
@@ -836,19 +820,15 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "채무자 명의 발견 부동산 없으며, 기존 채권압류 실효, 타채권자 채무불이행 다수 발생으로 강제집행 실익 없슴 사료됨. \n   ● 현 시점 채무자 명의 집행대상 실익있는 재산 파악 안되고 있는바, 재산 확인시 까지 지속조사, 관리 요망됨."
-      },
       {
         "month": "2025.1",
         "content": "채무자 명의 발견 부동산 없으며, 기존 채권압류 실효, 타채권자 채무불이행 다수 발생으로 강제집행 실익 없슴 사료됨."
       }
     ],
-    "recoveredAmount": 2026.01,
+    "recoveredAmount": 0,
     "debtorId": null
   },
   {
@@ -872,8 +852,8 @@ export const COLLECTION_ORDERS = [
     "note": "구속상태?",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "45283",
-    "activities": "2023.12.23~2026.03.30 총 828일 지연손해금 1,529,871원 / 합계 7,148,871원\n바다코리아 원금 10,094,090원",
+    "cost": "",
+    "activities": "",
     "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
@@ -1520,21 +1500,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "2025.08.20 의뢰비 50,000원",
-    "activities": "2025.08.27\n채무불이행 2.5억\n부동산, 재산없음.\n통화했으나 파산준비중이다라고 함",
+    "cost": "",
+    "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "파산 신청할 것이다라고 답변 후 연락안됨"
-      },
-      {
-        "month": "2025.11",
-        "content": "전화받을수 없다는 멘트, 신한 신보 채불 65백만원 기간경과 삭제됨"
-      },
-      {
-        "month": "2025.12",
-        "content": "신한체크카드 25년 6월 발급, 우편물 발송"
-      },
       {
         "month": "2026.02",
         "content": "미활동"
@@ -1564,17 +1532,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락은 되나 상환능력이 없음",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "2026.01.21 의뢰비 50,000원",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "채무자 명의 실익있는 재산 확인 안되고 있으며, 타채권자 다수 채무불이행 등재 상태,   재산명시 결과 - 기초생활수급자 등으로 강제집행 실익 없슴 추정됨."
-      },
-      {
-        "month": "2026.02",
-        "content": "안산중앙새마을 체크카드, 상록신협 체크카드 사용, 정신과 치료중이다. 변제여력이 없다. 병원 치료 후 일을 시작해야 변제가 가능하다 ."
-      },
       {
         "month": "2025.1",
         "content": "채무자 명의 실익있는 재산 확인 안되고 있으며, 타채권자 다수 채무불이행 등재 상태,   재산명시 결과 - 기초생활수급자 등으로 강제집행 실익 없슴 추정됨."
@@ -2090,21 +2050,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "2025.08.20 의뢰비 50,000원",
-    "activities": "2025.09.04\n팀장님 안녕하세요? 고려신용정보 추심담당자 김태훈입니다.주성훈은 연락불가이며 사업자 및 부동산은 없는것으로 확인되며 신용도 불량한 상태로 최근 2025년 토스뱅크, 망우동새마을금고 체크카드 발급외에는 특이사항이 없는것으로 확인되며(초본추가발급후 현장조사예정).\n김도진도 연락불가상태 (6296번은 다른 채권자 전화번호임)이며 사업자(생각대로 동탄지사 2023.08.01폐업) 및 부동산등 재산은 없으며 2023년 통장압류이후 2024년 병점신협 체크카드 발급외 특이사항은 없으며 마찬가지로 초본 재발급후 주소지로 현장조사 실시후 다시 보고드리도록 하겠습니다. 감사합니다.",
+    "cost": "",
+    "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "2025.10.20 방문, 폐문주배, 우편물 확인하였으나 미거주로 판단됨"
-      },
-      {
-        "month": "2025.11",
-        "content": "2025.06 망우동 새마을금고 체크카드 개설"
-      },
-      {
-        "month": "2025.12",
-        "content": "휴대폰 소액결제 내역 정보 구매신청"
-      },
       {
         "month": "2026.02",
         "content": "우편물 발송"
@@ -2134,21 +2082,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "2025.08.20 의뢰비 50,000원",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "채불정보 과다, 개설정보 특이사항 없음"
-      },
-      {
-        "month": "2025.11",
-        "content": "2024.07 병점신협 체크카드 발급,전화 off상태"
-      },
-      {
-        "month": "2025.12",
-        "content": "휴대폰 소액결제 내역 정보 구매신청\n체크카드 사용확인 : 농협, 카카오, 토스, 병점신협, 하나 0원"
-      },
       {
         "month": "2026.02",
         "content": "우편물 발송"
@@ -2178,17 +2114,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "추심착수 통지, 재산조회, 모든 전화 차단, 문자 수회 발송\n초본 직권말소 상태"
-      },
-      {
-        "month": "2026.02",
-        "content": "문자발송"
-      },
       {
         "month": "2026.03",
         "content": "문자 발송"
@@ -2218,17 +2146,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "추심착수 통지, 재산조회, 우리카드 체크 거래중, 문자 수회 발송\n급여 가압류 예고 통지서 접수\n장장욱은 운영자, 박상욱은 관리자, 매일 100,000원씩 상환도중 입금코드막아 못했다고 황당해, 채권자 직접 전화달라고, 내용 알고 있다고"
-      },
-      {
-        "month": "2026.02",
-        "content": "문자발송"
-      },
       {
         "month": "2026.03",
         "content": "주채무자, 문자발송"
@@ -2258,17 +2178,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.10",
-        "content": "수회 문자, DM 발송\n전산차단했다. 이후 전화해도 받지 않고 법조치하는동안 연락도 없이, 지금와서 변제 의사가 없다고. 채권자 확인 함"
-      },
-      {
-        "month": "2025.11",
-        "content": "문자발송"
-      },
       {
         "month": "2026.03",
         "content": "박상욱의 연대보증인, 문자발송"
@@ -2298,17 +2210,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "다중채무, 전화 안받음, 문자발송"
-      },
-      {
-        "month": "2026.02",
-        "content": "채권(급여) 가압류 예고 통지서 발송, 문자 발송"
-      },
       {
         "month": "2026.03",
         "content": "우편 및 문자발송"
@@ -2338,17 +2242,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "문자발송, 다중채무, 전화 결번"
-      },
-      {
-        "month": "2026.02",
-        "content": "문자발송"
-      },
       {
         "month": "2026.03",
         "content": "문자 발송"
@@ -2382,10 +2278,6 @@ export const COLLECTION_ORDERS = [
     "activities": "",
     "monthlyUpdates": [
       {
-        "month": "2026.02",
-        "content": "김성진, 김성일 주소변동, 타인 소유"
-      },
-      {
         "month": "2026.03",
         "content": "김성일의 연대보증인, 문자 발송"
       }
@@ -2418,10 +2310,6 @@ export const COLLECTION_ORDERS = [
     "activities": "",
     "monthlyUpdates": [
       {
-        "month": "2026.02",
-        "content": "상동"
-      },
-      {
         "month": "2026.03",
         "content": "주채무자, 문자발송"
       }
@@ -2450,7 +2338,7 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
       {
@@ -2482,7 +2370,7 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
       {
@@ -2514,17 +2402,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "전화기 꺼짐(담당자 류정수)"
-      },
-      {
-        "month": "2025.12",
-        "content": "전화기 꺼둠"
-      },
       {
         "month": "2026.02",
         "content": "자택 연락불능 - 전화 안받음. 장기적으로."
@@ -2554,17 +2434,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "친구라고 함(담당자 류정수)"
-      },
-      {
-        "month": "2025.12",
-        "content": "전화통화 = 친구라고 함"
-      },
       {
         "month": "2026.02",
         "content": "자택 연락불능 - 전화 안받음. 장기적으로."
@@ -2594,13 +2466,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "핸드폰 변경확인 010-9437-8920"
-      },
       {
         "month": "2025.12",
         "content": "없는번호로 나옴"
@@ -2630,13 +2498,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "독촉장 발송(담당자 류정수) 회생 및 파산으로 가면된다는 무책임한 경향으로 \n민사적 한계로 형사적으로 사전차단하면 효율적이라 사료됨"
-      },
       {
         "month": "2025.12",
         "content": "문자발송, 전화 안받음"
@@ -2666,10 +2530,10 @@ export const COLLECTION_ORDERS = [
     "note": "연락두절",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [],
-    "recoveredAmount": 2026.01,
+    "recoveredAmount": 0,
     "debtorId": null
   },
   {
@@ -2801,17 +2665,9 @@ export const COLLECTION_ORDERS = [
     "note": "연락은 되나 변제의사, 능력 없음",
     "agencyPerson": "",
     "agencyPhone": "",
-    "cost": "0",
+    "cost": "",
     "activities": "",
     "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "문자발송"
-      },
-      {
-        "month": "2026.02",
-        "content": "문자발송"
-      },
       {
         "month": "2026.03",
         "content": "주채무자, 문자발송"
