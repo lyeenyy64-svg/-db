@@ -10989,7 +10989,6 @@ function MainApp({ authUser, onLogout }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#3b82f6,#3b82f600)" }} />
-            <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginBottom: 8 }}>업체별 현황 <span style={{ color: "var(--ts)" }}>(클릭 시 해당 업체만 표시)</span></div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {[{ name: "전체", count: orders.length, color: "#6366f1" }, ...agencies.map((a, i) => ({ name: a, count: orders.filter(o => o.agencyName === a).length, color: ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#ef4444"][i % 5] }))].map(t => {
                 const on = (t.name === "전체" ? agencyF === "전체" : agencyF === t.name);
