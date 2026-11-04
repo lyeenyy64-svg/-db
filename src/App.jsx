@@ -11028,6 +11028,30 @@ function MainApp({ authUser, onLogout }) {
           </div>
         </div>
 
+        {/* 브랜드별 현황 */}
+        {(() => {
+          const brandTiles = [...new Map(orders.filter(o => o.brand).map(o => [o.brand, o.brandRaw || o.brand])).entries()]
+            .map(([code, name], idx) => ({ code, name, count: orders.filter(o => o.brand === code).length, color: ["#f97316", "#8b5cf6", "#10b981", "#ef4444", "#3b82f6"][idx % 5] }));
+          const tiles = [{ code: "전체", name: "총 추심의뢰", count: orders.length, color: "#6366f1" }, ...brandTiles];
+          return (
+            <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#8b5cf6,#8b5cf600)" }} />
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${tiles.length}, 1fr)`, gap: 8 }}>
+                {tiles.map(t => {
+                  const on = brandF === t.code;
+                  return (
+                    <div key={t.code} onClick={() => setBrandF(t.code === "전체" || brandF === t.code ? "전체" : t.code)}
+                      style={{ cursor: "pointer", textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)", border: `1.5px solid ${on ? t.color : "transparent"}`, transition: "border-color 0.1s" }}>
+                      <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: t.color, lineHeight: 1.2 }}>{t.count}</div>
+                      <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>{t.name}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* 필터 */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <select value={brandF} onChange={e => setBrandF(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }}>
