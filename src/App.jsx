@@ -11063,7 +11063,7 @@ function MainApp({ authUser, onLogout }) {
         {/* 정렬 헤더 */}
         <div style={{ display: "flex", gap: 12, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
           <span style={{ width: 22, flexShrink: 0 }}></span>
-          <span style={{ width: 200, flexShrink: 0, textAlign: "center" }}><SortBtn field="debtorName" label="채무자" /></span>
+          <span style={{ width: 200, flexShrink: 0, textAlign: "left" }}><SortBtn field="debtorName" label="채무자" /></span>
           <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}><SortBtn field="agencyName" label="추심업체" /></span>
           <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestDate" label="요청일" /></span>
           <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}><SortBtn field="requestAmount" label="채권액" /></span>
@@ -11088,7 +11088,7 @@ function MainApp({ authUser, onLogout }) {
                 onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
               >
                 <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
-                <div style={{ width: 200, flexShrink: 0, textAlign: "center" }}>
+                <div style={{ width: 200, flexShrink: 0, textAlign: "left" }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ display: "inline-block", marginLeft: 6, verticalAlign: "middle", textAlign: "center", fontSize: 10, fontWeight: 600, lineHeight: 1.3, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{o.mainDebtorName && <>{o.mainDebtorName}<br /></>}연대보증</span>}</div>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--tm)", width: 100, flexShrink: 0, textAlign: "center" }}>{o.agencyName}</div>
