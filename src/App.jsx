@@ -11025,7 +11025,6 @@ function MainApp({ authUser, onLogout }) {
                   <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>잔액</div>
                 </div>
             </div>
-            <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 8, textAlign: "center" }}>회수금액은 연동 채무자의 입금현황 중 추심요청일 이후 입금 기준</div>
           </div>
         </div>
 
