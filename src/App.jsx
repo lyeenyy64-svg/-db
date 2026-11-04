@@ -11079,17 +11079,17 @@ function MainApp({ authUser, onLogout }) {
         </div>
 
         {/* 정렬 헤더 */}
-        <div style={{ display: "flex", gap: 12, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
+        <div style={{ display: "flex", gap: 8, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
           <span style={{ width: 22, flexShrink: 0 }}></span>
-          <span style={{ width: 200, flexShrink: 0, textAlign: "center" }}><SortBtn field="debtorName" label="채무자" /></span>
-          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}><SortBtn field="agencyName" label="추심업체" /></span>
-          <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestDate" label="요청일" /></span>
-          <span style={{ width: 110, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestAmount" label="채권액" /></span>
-          <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>지연손해금</span>
-          <span style={{ width: 50, flexShrink: 0, textAlign: "center" }}>수수료</span>
-          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}>회수금액</span>
+          <span style={{ width: 160, flexShrink: 0, textAlign: "center" }}><SortBtn field="debtorName" label="채무자" /></span>
+          <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}><SortBtn field="agencyName" label="추심업체" /></span>
+          <span style={{ width: 80, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestDate" label="요청일" /></span>
+          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestAmount" label="채권액" /></span>
+          <span style={{ width: 62, flexShrink: 0, textAlign: "center" }}>지연손해금</span>
+          <span style={{ width: 46, flexShrink: 0, textAlign: "center" }}>수수료</span>
+          <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}>회수금액</span>
           <span style={{ flex: 1, minWidth: 0, textAlign: "center" }}>최근 현황</span>
-          <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>연동</span>
+          <span style={{ width: 56, flexShrink: 0, textAlign: "center" }}>연동</span>
         </div>
 
         {/* 리스트 */}
@@ -11101,24 +11101,24 @@ function MainApp({ authUser, onLogout }) {
             return (
               <div key={o.id}
                 onClick={() => { setSelOrder(o); setEditMode(false); setEditFields({}); }}
-                style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: "12px 16px", cursor: "pointer", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}
+                style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", padding: "12px 16px", cursor: "pointer", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
                 onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                 onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
               >
                 <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
-                <div style={{ width: 200, flexShrink: 0, textAlign: "left" }}>
+                <div style={{ width: 160, flexShrink: 0, textAlign: "left" }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ display: "inline-block", marginLeft: 6, verticalAlign: "middle", textAlign: "center", fontSize: 10, fontWeight: 600, lineHeight: 1.3, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{o.mainDebtorName && <>{o.mainDebtorName}<br /></>}연대보증</span>}</div>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--tm)", width: 100, flexShrink: 0, textAlign: "center" }}>{o.agencyName}</div>
-                <div style={{ fontSize: 11, color: "var(--ts)", width: 90, flexShrink: 0, textAlign: "center" }}>{o.requestDate}</div>
-                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", width: 110, flexShrink: 0, textAlign: "right" }}>{fmt(o.requestAmount)}</span>
-                <span style={{ fontSize: 11, color: "var(--ts)", width: 70, flexShrink: 0, textAlign: "center" }}>{o.delayRate || "-"}</span>
-                <span style={{ fontSize: 11, color: "var(--ts)", width: 50, flexShrink: 0, textAlign: "center" }}>{o.feeRate || "-"}</span>
-                {(() => { const ra = recOf(o); return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 100, flexShrink: 0, textAlign: "right" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
-                <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, textAlign: "left" }}>
-                  {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
+                <div style={{ fontSize: 12, color: "var(--tm)", width: 90, flexShrink: 0, textAlign: "center" }}>{o.agencyName}</div>
+                <div style={{ fontSize: 11, color: "var(--ts)", width: 80, flexShrink: 0, textAlign: "center" }}>{o.requestDate}</div>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", width: 100, flexShrink: 0, textAlign: "right" }}>{fmt(o.requestAmount)}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", width: 62, flexShrink: 0, textAlign: "center" }}>{o.delayRate || "-"}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", width: 46, flexShrink: 0, textAlign: "center" }}>{o.feeRate || "-"}</span>
+                {(() => { const ra = recOf(o); return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 90, flexShrink: 0, textAlign: "right" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
+                <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, minWidth: 0, textAlign: "left" }}>
+                  {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
                 </div>
-                <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>
+                <span style={{ width: 56, flexShrink: 0, textAlign: "center" }}>
                   {debtor
                     ? <span title="클릭하여 재연결/해제" onClick={e => { e.stopPropagation(); setMatchingOrder(o); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", cursor: "pointer" }}>연동됨</span>
                     : <span title="클릭하여 채무자 연결" onClick={e => { e.stopPropagation(); setMatchingOrder(o); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", cursor: "pointer" }}>미연동</span>}
