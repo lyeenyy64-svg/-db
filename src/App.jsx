@@ -10987,7 +10987,26 @@ function MainApp({ authUser, onLogout }) {
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* KPI */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <KPI label="총 추심의뢰" value={`${orders.length}건`} sub={`추심업체 ${agencies.length}곳`} color="#3b82f6" />
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden", textAlign: "center" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#3b82f6,#3b82f600)" }} />
+            <div onClick={() => setAgencyF("전체")} title="전체 보기" style={{ cursor: "pointer", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginRight: 8 }}>총 추심의뢰</span>
+              <span style={{ fontSize: 26, fontWeight: 700, color: "#3b82f6" }}>{orders.length}<span style={{ fontSize: 18, fontWeight: 400 }}>건</span></span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              {agencies.map(a => {
+                const on = agencyF === a;
+                return (
+                  <span key={a} onClick={() => setAgencyF(on ? "전체" : a)} title={on ? "전체 보기" : `${a}만 보기`}
+                    style={{ fontSize: 12, cursor: "pointer", padding: "2px 10px", borderRadius: 8, color: on ? "#1d4ed8" : "var(--tp)", fontWeight: on ? 700 : 500, background: on ? "#eff6ff" : "transparent", border: `1px solid ${on ? "#bfdbfe" : "transparent"}` }}
+                    onMouseEnter={e => { if (!on) e.currentTarget.style.background = "var(--hover)"; }}
+                    onMouseLeave={e => { if (!on) e.currentTarget.style.background = "transparent"; }}>
+                    {a} {orders.filter(o => o.agencyName === a).length}건
+                  </span>
+                );
+              })}
+            </div>
+          </div>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
