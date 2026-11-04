@@ -11087,7 +11087,7 @@ function MainApp({ authUser, onLogout }) {
               >
                 <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
                 <div style={{ minWidth: 100 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0" }}>연대보증</span>}</div>
                   <div style={{ fontSize: 11, color: "var(--ts)" }}>{o.brandRaw}</div>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
@@ -11095,7 +11095,7 @@ function MainApp({ authUser, onLogout }) {
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", minWidth: 110 }}>{fmt(o.requestAmount)}</span>
                 {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", minWidth: 100 }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
                 <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                  {lastUpdate && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</>}
+                  {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
                 </div>
                 <span style={{ minWidth: 50, flexShrink: 0, textAlign: "right" }}>
                   {debtor
@@ -11135,10 +11135,15 @@ function MainApp({ authUser, onLogout }) {
             <DL label="추심업체"   val={selOrder.agencyName} />
             <DL label="브랜드"     val={selOrder.brandRaw} />
             <DL label="채무자"     val={selOrder.debtorName} />
+            <DL label="분류"       val={selOrder.debtorRole ? (selOrder.debtorRole === "연대보증인" && selOrder.mainDebtorName ? `${selOrder.mainDebtorName}의 연대보증인` : selOrder.debtorRole) : ""} />
+            <DL label="채권내용"   val={selOrder.claimType} />
+            <DL label="채권 발생일" val={selOrder.claimDate} />
+            <DL label="집행권원"   val={selOrder.execTitle} />
             <DL label="추심요청 금액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>
             {selOrder.amountDetail && <DL label="금액 상세" val={selOrder.amountDetail} />}
             <DL label="추심요청일" val={selOrder.requestDate} />
             <DL label="조건"       val={selOrder.condition} />
+            <DL label="특이사항"   val={selOrder.note} />
             <DL label="담당자"     val={selOrder.agencyPerson} />
             <DL label="연락처"     val={selOrder.agencyPhone} />
             {editMode
