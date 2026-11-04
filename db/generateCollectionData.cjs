@@ -99,7 +99,7 @@ detailRows.forEach((r) => {
     requestAmount:   amount,
     delayRate,
     amountDetail:    `채권액(잔액) : ${amount.toLocaleString('ko-KR')}원${delayRate ? `\n지연손해금 : ${delayRate}` : ''}`,
-    requestDate:     dateByKey.get(k) || (cms && str(cms[4])) || '',
+    requestDate:     str(r[2]) === 'SM신용정보' ? '2026.11.04' : (dateByKey.get(k) || (cms && str(cms[4])) || ''),  // SM신용정보는 재의뢰일로 일괄 지정
     condition:       feeRate ? `추심금액의 ${feeRate}` : '',
     feeRate,
     note:            oneLine(r[15]),
