@@ -11232,30 +11232,6 @@ function MainApp({ authUser, onLogout }) {
             </div>
           ) : null}
 
-          {/* 채무자 연동 */}
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>채무자 연동</div>
-              <button onClick={() => { setMatchingOrder(selOrder); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 5, background: "var(--bg2)", color: "var(--ts)", border: "1px solid var(--brd)", cursor: "pointer" }}>
-                {selOrder.debtorId ? "재매칭" : "연결"}
-              </button>
-            </div>
-            {(() => {
-              const debtor = getDebtor(selOrder.debtorId);
-              return debtor ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <DL label="이름"     val={debtor.name} />
-                  <DL label="브랜드"   val={debtor.brandName || debtor.brand} />
-                  <DL label="분류"     val={debtor.category} />
-                  <DL label="담당자"   val={debtor.assignee} />
-                  <DL label="잔액(법무)" val={fmt(debtor.finalBalanceLegal)} />
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--tm)", padding: "4px 0" }}>채무자 관리와 연결되지 않음</div>
-              );
-            })()}
-          </div>
-
           <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" }}>
             <div>
               {canDeleteRecord(selOrder) && (
