@@ -11062,16 +11062,16 @@ function MainApp({ authUser, onLogout }) {
 
         {/* 정렬 헤더 */}
         <div style={{ display: "flex", gap: 12, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
-          <span style={{ minWidth: 22 }}></span>
-          <span style={{ minWidth: 100 }}><SortBtn field="debtorName" label="채무자" /></span>
-          <span style={{ minWidth: 90 }}><SortBtn field="agencyName" label="추심업체" /></span>
-          <span style={{ minWidth: 90 }}><SortBtn field="requestDate" label="요청일" /></span>
-          <span style={{ minWidth: 110 }}><SortBtn field="requestAmount" label="채권액" /></span>
-          <span style={{ minWidth: 70 }}>지연손해금</span>
-          <span style={{ minWidth: 50 }}>수수료</span>
-          <span style={{ minWidth: 100 }}>회수금액</span>
-          <span style={{ flex: 1 }}>최근 현황</span>
-          <span style={{ minWidth: 50 }}>연동</span>
+          <span style={{ width: 22, flexShrink: 0 }}></span>
+          <span style={{ width: 200, flexShrink: 0, textAlign: "center" }}><SortBtn field="debtorName" label="채무자" /></span>
+          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}><SortBtn field="agencyName" label="추심업체" /></span>
+          <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestDate" label="요청일" /></span>
+          <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}><SortBtn field="requestAmount" label="채권액" /></span>
+          <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>지연손해금</span>
+          <span style={{ width: 50, flexShrink: 0, textAlign: "center" }}>수수료</span>
+          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}>회수금액</span>
+          <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>최근 현황</span>
+          <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>연동</span>
         </div>
 
         {/* 리스트 */}
@@ -11088,19 +11088,19 @@ function MainApp({ authUser, onLogout }) {
                 onMouseLeave={e => e.currentTarget.style.background = "var(--card)"}
               >
                 <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
-                <div style={{ minWidth: 100 }}>
+                <div style={{ width: 200, flexShrink: 0, textAlign: "center" }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ display: "inline-block", marginLeft: 8, verticalAlign: "middle", textAlign: "center", fontSize: 10, fontWeight: 600, lineHeight: 1.3, padding: "2px 8px", borderRadius: 8, background: "var(--card)", color: "var(--tp)", border: "1.5px solid var(--tp)", whiteSpace: "nowrap" }}>{o.mainDebtorName && <>{o.mainDebtorName}<br /></>}연대보증</span>}</div>
                 </div>
-                <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
-                <div style={{ fontSize: 11, color: "var(--ts)", minWidth: 90 }}>{o.requestDate}</div>
-                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", minWidth: 110 }}>{fmt(o.requestAmount)}</span>
-                <span style={{ fontSize: 11, color: "var(--ts)", minWidth: 70 }}>{o.delayRate || "-"}</span>
-                <span style={{ fontSize: 11, color: "var(--ts)", minWidth: 50 }}>{o.feeRate || "-"}</span>
-                {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", minWidth: 100 }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
-                <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: "var(--tm)", width: 100, flexShrink: 0, textAlign: "center" }}>{o.agencyName}</div>
+                <div style={{ fontSize: 11, color: "var(--ts)", width: 90, flexShrink: 0, textAlign: "center" }}>{o.requestDate}</div>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "var(--ok)", width: 110, flexShrink: 0, textAlign: "right" }}>{fmt(o.requestAmount)}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", width: 70, flexShrink: 0, textAlign: "center" }}>{o.delayRate || "-"}</span>
+                <span style={{ fontSize: 11, color: "var(--ts)", width: 50, flexShrink: 0, textAlign: "center" }}>{o.feeRate || "-"}</span>
+                {(() => { const d = getDebtor(o.debtorId); const ra = d?.collectedAmount || o.recoveredAmount || 0; return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 100, flexShrink: 0, textAlign: "center" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
+                <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, textAlign: "left" }}>
                   {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content.split('\n')[0]}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
                 </div>
-                <span style={{ minWidth: 50, flexShrink: 0, textAlign: "right" }}>
+                <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>
                   {debtor
                     ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#10b98118", color: "#047857", border: "1px solid #10b98130" }}>연동됨</span>
                     : <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>미연동</span>}
