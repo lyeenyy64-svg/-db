@@ -11068,7 +11068,6 @@ function MainApp({ authUser, onLogout }) {
             <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div>
             <KoreanInput value={searchQ} onChange={e => setSearchQ(e.target.value)} placeholder="채무자명·업체명 검색" style={{ width: "100%", padding: "7px 10px 7px 30px", borderRadius: 8, fontSize: 12, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)" }} />
           </div>
-          <span className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</span>
           <button onClick={() => downloadCSV(`추심의뢰_${today()}.csv`,
             ["브랜드","채무자","추심업체","요청일","채권액","회수금액","최근현황월","최근현황","연동"],
             sortedOrders.map(o => {
