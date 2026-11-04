@@ -11087,7 +11087,7 @@ function MainApp({ authUser, onLogout }) {
               >
                 <BrandBadge code={o.brand || o.brandRaw?.slice(0,2)} brands={config.brands} />
                 <div style={{ minWidth: 100 }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0" }}>연대보증</span>}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{o.debtorName}{o.debtorRole === "연대보증인" && <span title={o.mainDebtorName ? `${o.mainDebtorName}의 연대보증인` : "연대보증인"} style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 8, background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", whiteSpace: "nowrap" }}>{o.mainDebtorName ? `${o.mainDebtorName} 연대보증` : "연대보증"}</span>}</div>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--tm)", minWidth: 90 }}>{o.agencyName}</div>
                 <div style={{ fontSize: 11, color: "var(--ts)", minWidth: 90 }}>{o.requestDate}</div>
