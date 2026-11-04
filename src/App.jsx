@@ -11063,14 +11063,14 @@ function MainApp({ authUser, onLogout }) {
         {/* 정렬 헤더 */}
         <div style={{ display: "flex", gap: 12, padding: "6px 16px", background: "var(--bg2)", borderRadius: 8, fontSize: 11, color: "var(--tm)", fontWeight: 600, border: "1px solid var(--brd)" }}>
           <span style={{ width: 22, flexShrink: 0 }}></span>
-          <span style={{ width: 200, flexShrink: 0, textAlign: "left" }}><SortBtn field="debtorName" label="채무자" /></span>
+          <span style={{ width: 200, flexShrink: 0, textAlign: "center" }}><SortBtn field="debtorName" label="채무자" /></span>
           <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}><SortBtn field="agencyName" label="추심업체" /></span>
           <span style={{ width: 90, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestDate" label="요청일" /></span>
-          <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}><SortBtn field="requestAmount" label="채권액" /></span>
+          <span style={{ width: 110, flexShrink: 0, textAlign: "center" }}><SortBtn field="requestAmount" label="채권액" /></span>
           <span style={{ width: 70, flexShrink: 0, textAlign: "center" }}>지연손해금</span>
           <span style={{ width: 50, flexShrink: 0, textAlign: "center" }}>수수료</span>
-          <span style={{ width: 100, flexShrink: 0, textAlign: "right" }}>회수금액</span>
-          <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>최근 현황</span>
+          <span style={{ width: 100, flexShrink: 0, textAlign: "center" }}>회수금액</span>
+          <span style={{ flex: 1, minWidth: 0, textAlign: "center" }}>최근 현황</span>
           <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>연동</span>
         </div>
 
