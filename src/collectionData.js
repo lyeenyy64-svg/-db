@@ -624,7 +624,7 @@ export const COLLECTION_ORDERS = [
     "cost": "",
     "activities": "",
     "monthlyUpdates": [],
-    "recoveredAmount": 1500000,
+    "recoveredAmount": 0,
     "debtorId": null
   },
   {

@@ -10955,13 +10955,14 @@ function MainApp({ authUser, onLogout }) {
       showToast("삭제 완료");
     };
 
-    // 회수금액: 연동된 채무자의 입금현황(payments) 중 추심요청일 이후(요청일 미입력 시 전체) 입금 합계
+    // 회수금액: 연동된 채무자의 입금현황(payments) 중 추심요청일 이후 입금 합계 (요청일 미입력 시 집계 안 함)
     const payRec = useMemo(() => {
       const m = new Map();
       orders.forEach(o => {
         if (!o.debtorId) return;
         const rd = String(o.requestDate || "").replace(/./g, "-");
-        const sum = (data.payments || []).reduce((t, p) => p.debtorId === o.debtorId && (!rd || String(p.paymentDate || "") >= rd) ? t + (Number(p.totalAmount) || 0) : t, 0);
+        if (!rd) return;
+        const sum = (data.payments || []).reduce((t, p) => p.debtorId === o.debtorId && String(p.paymentDate || "") >= rd ? t + (Number(p.totalAmount) || 0) : t, 0);
         if (sum > 0) m.set(o.id, sum);
       });
       return m;

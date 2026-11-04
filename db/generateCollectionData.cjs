@@ -109,7 +109,7 @@ detailRows.forEach((r) => {
     cost:            '',
     activities:      '',
     monthlyUpdates,
-    recoveredAmount: cms ? toNum(cms[6]) : 0,
+    recoveredAmount: 0,  // 회수금액은 입금현황(요청일 이후 입금)으로만 집계
     debtorId:        null,
   });
 });
