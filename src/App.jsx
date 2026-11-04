@@ -11232,34 +11232,6 @@ function MainApp({ authUser, onLogout }) {
             </div>
           ) : null}
 
-          {/* 회수현황 */}
-          <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tm)" }}>회수현황</div>
-              {payRec.get(selOrder.id) > 0 && (
-                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>입금내역 자동</span>
-              )}
-            </div>
-            {editMode
-              ? <MoneyInput value={String(cur("recoveredAmount") ?? selOrder.recoveredAmount ?? 0)} onChange={v => setF("recoveredAmount", Number(v) || 0)} style={{ ...inpS, maxWidth: 200 }} />
-              : (() => {
-                  const autoRec = payRec.get(selOrder.id) || 0;
-                  const manualRec = selOrder.recoveredAmount || 0;
-                  const displayRec = autoRec || manualRec;
-                  return (
-                    <div>
-                      <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: displayRec > 0 ? "#3b82f6" : "var(--tm)" }}>
-                        {displayRec > 0 ? fmt(displayRec) : "미회수"}
-                      </span>
-                      {autoRec > 0 && manualRec > 0 && autoRec !== manualRec && (
-                        <div style={{ fontSize: 11, color: "var(--ts)", marginTop: 4 }}>수동입력: {fmt(manualRec)}</div>
-                      )}
-                    </div>
-                  );
-                })()
-            }
-          </div>
-
           {/* 채무자 연동 */}
           <div style={{ background: "var(--bg)", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>

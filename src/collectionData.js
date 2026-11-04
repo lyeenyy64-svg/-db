@@ -26,12 +26,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "주채무자, 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -58,12 +53,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "김일회의 연대보증인, 문자 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -117,12 +107,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "변제계획있다고 함.  채무자와 연락해보기로함.  세금채무만 있고 2026.01.에 하나은행개설함.  채권압류 검토."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -149,12 +134,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "채무자와 연락안된다고, 채무자는 결혼해서 분가했음."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -208,12 +188,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "채무자와 연락해보고 연락주기로 함"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -267,12 +242,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "신용조회상 새출발기금으로 채무 정리한듯, 2022년채권압류 이후 개설정보 많음. 추가압류 검토필요"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -758,12 +728,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.1",
-        "content": "김대현- 채무불이행 10건 약 343백만원 등재중(국세,금융기관 등)/ 케이뱅크 체크카드 2022. 11"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -790,12 +755,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.1",
-        "content": "채무자 명의 발견 부동산 없으며, 기존 채권압류 실효, 타채권자 채무불이행 다수 발생으로 강제집행 실익 없슴 사료됨."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -1470,12 +1430,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "미활동"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -1502,12 +1457,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.1",
-        "content": "채무자 명의 실익있는 재산 확인 안되고 있으며, 타채권자 다수 채무불이행 등재 상태,   재산명시 결과 - 기초생활수급자 등으로 강제집행 실익 없슴 추정됨."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2020,12 +1970,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "우편물 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2052,12 +1997,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "우편물 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2084,12 +2024,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "문자 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2116,12 +2051,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "주채무자, 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2148,12 +2078,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "박상욱의 연대보증인, 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2180,12 +2105,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "우편 및 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2212,12 +2132,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "문자 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2244,12 +2159,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "김성일의 연대보증인, 문자 발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2276,12 +2186,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "주채무자, 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2308,12 +2213,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "통화 : 변제에 대해 나 몰라라"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2340,12 +2240,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.11",
-        "content": "핸드폰 외국인이 사용중"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2372,12 +2267,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "자택 연락불능 - 전화 안받음. 장기적으로."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2404,12 +2294,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.02",
-        "content": "자택 연락불능 - 전화 안받음. 장기적으로."
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2436,12 +2321,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.12",
-        "content": "없는번호로 나옴"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2468,12 +2348,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2025.12",
-        "content": "문자발송, 전화 안받음"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   },
@@ -2635,12 +2510,7 @@ export const COLLECTION_ORDERS = [
     "agencyPhone": "",
     "cost": "",
     "activities": "",
-    "monthlyUpdates": [
-      {
-        "month": "2026.03",
-        "content": "주채무자, 문자발송"
-      }
-    ],
+    "monthlyUpdates": [],
     "recoveredAmount": 0,
     "debtorId": null
   }

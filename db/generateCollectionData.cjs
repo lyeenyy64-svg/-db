@@ -85,6 +85,9 @@ detailRows.forEach((r) => {
     monthlyUpdates.push({ month: str(cms[7]), content: str(cms[8]).replace(/\r\n|\r/g, '\n') });
   }
 
+  // SM신용정보만 일괄 지정, 나머지 업체는 추후 화면에서 입력
+  const requestDate = str(r[2]) === 'SM신용정보' ? '2026.11.04' : '';
+
   orders.push({
     id:              `CD_${String(idNum).padStart(4, '0')}`,
     no:              idNum++,
@@ -100,7 +103,7 @@ detailRows.forEach((r) => {
     requestAmount:   amount,
     delayRate,
     amountDetail:    `채권액(잔액) : ${amount.toLocaleString('ko-KR')}원${delayRate ? `\n지연손해금 : ${delayRate}` : ''}`,
-    requestDate:     str(r[2]) === 'SM신용정보' ? '2026.11.04' : '',  // SM신용정보만 일괄 지정, 나머지 업체는 추후 화면에서 입력
+    requestDate,
     condition:       feeRate ? `추심금액의 ${feeRate}` : '',
     feeRate,
     note:            oneLine(r[15]),
@@ -108,7 +111,7 @@ detailRows.forEach((r) => {
     agencyPhone:     '',
     cost:            '',
     activities:      '',
-    monthlyUpdates,
+    monthlyUpdates: monthlyUpdates.filter(mu => requestDate && mu.month >= requestDate.slice(0, 7)),  // 추심요청일 이후 월만 (요청일 없으면 없음)
     recoveredAmount: 0,  // 회수금액은 입금현황(요청일 이후 입금)으로만 집계
     debtorId:        null,
   });
