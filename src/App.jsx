@@ -10987,22 +10987,18 @@ function MainApp({ authUser, onLogout }) {
       <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {/* KPI */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)", position: "relative", overflow: "hidden", textAlign: "center" }}>
+          <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#3b82f6,#3b82f600)" }} />
-            <div onClick={() => setAgencyF("전체")} title="전체 보기" style={{ cursor: "pointer", marginBottom: 8 }}>
-              <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginRight: 8 }}>총 추심의뢰</span>
-              <span style={{ fontSize: 26, fontWeight: 700, color: "#3b82f6" }}>{orders.length}<span style={{ fontSize: 18, fontWeight: 400 }}>건</span></span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              {agencies.map(a => {
-                const on = agencyF === a;
+            <div style={{ fontSize: 12, color: "var(--tm)", fontWeight: 500, marginBottom: 8 }}>업체별 현황 <span style={{ color: "var(--ts)" }}>(클릭 시 해당 업체만 표시)</span></div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {[{ name: "전체", count: orders.length, color: "#6366f1" }, ...agencies.map((a, i) => ({ name: a, count: orders.filter(o => o.agencyName === a).length, color: ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#ef4444"][i % 5] }))].map(t => {
+                const on = (t.name === "전체" ? agencyF === "전체" : agencyF === t.name);
                 return (
-                  <span key={a} onClick={() => setAgencyF(on ? "전체" : a)} title={on ? "전체 보기" : `${a}만 보기`}
-                    style={{ fontSize: 12, cursor: "pointer", padding: "2px 10px", borderRadius: 8, color: on ? "#1d4ed8" : "var(--tp)", fontWeight: on ? 700 : 500, background: on ? "#eff6ff" : "transparent", border: `1px solid ${on ? "#bfdbfe" : "transparent"}` }}
-                    onMouseEnter={e => { if (!on) e.currentTarget.style.background = "var(--hover)"; }}
-                    onMouseLeave={e => { if (!on) e.currentTarget.style.background = "transparent"; }}>
-                    {a} {orders.filter(o => o.agencyName === a).length}건
-                  </span>
+                  <div key={t.name} onClick={() => setAgencyF(t.name === "전체" || agencyF === t.name ? "전체" : t.name)}
+                    style={{ cursor: "pointer", textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)", border: `1.5px solid ${on ? t.color : "transparent"}`, transition: "border-color 0.1s" }}>
+                    <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: t.color, lineHeight: 1.2 }}>{t.count}</div>
+                    <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>{t.name === "전체" ? "총 추심의뢰" : t.name}</div>
+                  </div>
                 );
               })}
             </div>
