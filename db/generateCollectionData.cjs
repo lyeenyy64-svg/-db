@@ -41,7 +41,8 @@ const sheetRows = (name, skip) => {
 
 // 세부현황: B열부터 [0]no [1]업체내no [2]추심업체 [3]회사 [4]채무자 [5]분류 [6]주민번호 [7]주소 [8]연락처
 //          [9]채권내용 [10]채권발생일 [11]집행권원 [12]채권액(잔액) [13]지연손해금 [14]수수료 [15]특이사항
-const detailRows = sheetRows('세부현황', 2).filter(r => str(r[4]));
+// 의뢰 제외 대상: SM신용정보 우상범
+const detailRows = sheetRows('세부현황', 2).filter(r => str(r[4]) && !(str(r[2]) === 'SM신용정보' && str(r[4]) === '우상범'));
 if (!detailRows.length) {
   console.error('❌ 세부현황 시트에서 데이터를 찾지 못했습니다');
   process.exit(1);
@@ -99,7 +100,7 @@ detailRows.forEach((r) => {
     requestAmount:   amount,
     delayRate,
     amountDetail:    `채권액(잔액) : ${amount.toLocaleString('ko-KR')}원${delayRate ? `\n지연손해금 : ${delayRate}` : ''}`,
-    requestDate:     str(r[2]) === 'SM신용정보' ? '2026.11.04' : (dateByKey.get(k) || (cms && str(cms[4])) || ''),  // SM신용정보는 재의뢰일로 일괄 지정
+    requestDate:     str(r[2]) === 'SM신용정보' ? '2026.11.04' : '',  // SM신용정보만 일괄 지정, 나머지 업체는 추후 화면에서 입력
     condition:       feeRate ? `추심금액의 ${feeRate}` : '',
     feeRate,
     note:            oneLine(r[15]),
