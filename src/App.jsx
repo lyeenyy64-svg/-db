@@ -11120,8 +11120,8 @@ function MainApp({ authUser, onLogout }) {
                 </div>
                 <span style={{ width: 60, flexShrink: 0, textAlign: "center" }}>
                   {debtor
-                    ? <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#10b98118", color: "#047857", border: "1px solid #10b98130" }}>연동됨</span>
-                    : <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>미연동</span>}
+                    ? <span title="클릭하여 재연결/해제" onClick={e => { e.stopPropagation(); setMatchingOrder(o); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#10b98118", color: "#047857", border: "1px solid #10b98130", cursor: "pointer" }}>연동됨</span>
+                    : <span title="클릭하여 채무자 연결" onClick={e => { e.stopPropagation(); setMatchingOrder(o); setMatchQ(""); }} style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", cursor: "pointer" }}>미연동</span>}
                 </span>
               </div>
             );
