@@ -10,7 +10,8 @@ call npm install
 
 echo.
 echo [DEBTFLOW] 데이터 일회성 작업 확인 중...
-node backend\run_migrations.cjs
+node backend\run_migrations.cjs > migrate_last.log 2>&1
+type migrate_last.log
 
 echo.
 echo [DEBTFLOW] 서버 재시작 중...
