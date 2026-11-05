@@ -13,7 +13,11 @@ const Database = require("better-sqlite3");
 const APPLY = process.argv.includes("--apply");
 const DB_PATH = process.env.DEBTFLOW_DB_PATH || path.join(__dirname, "..", "db", "debtflow.db");
 
-const NAMES = ["윤은택", "홍정용"];
+// main: 연대보증인이면 주채무자 이름 (채무자 DB에 없으면 미연동으로 추가, 브랜드·채권액은 주채무자와 동일)
+const TARGETS = [
+  { name: "윤은택" },
+  { name: "홍정용", main: "윤은택" },
+];
 const AGENCY = "고려신용정보";
 const REQUEST_DATE = "2026.01.21";
 
@@ -28,14 +32,18 @@ const kv = (key, fallback) => {
 const manual = kv("collection_manual", []);
 const ov = kv("collection_manual_overrides", {});
 
+const findDebtor = (name) => db.prepare("SELECT id, name, brand_code AS brand, category, principal_balance AS bal FROM debtors WHERE name = ?").all(name);
+
 const add = [];
-for (const name of NAMES) {
-  const cands = db.prepare("SELECT id, name, brand_code AS brand, category, principal_balance AS bal FROM debtors WHERE name = ?").all(name);
-  if (cands.length !== 1) {
-    console.log(`! ${name}: 채무자 ${cands.length}명 — 1명이어야 합니다. 건너뜀`, cands.map(c => c.id));
+for (const { name, main } of TARGETS) {
+  const own = findDebtor(name);
+  const mainCands = main ? findDebtor(main) : [];
+  if (own.length > 1 || (main && mainCands.length !== 1)) {
+    console.log(`! ${name}: 채무자 ${own.length}명${main ? `, 주채무자 ${main} ${mainCands.length}명` : ""} — 모호해서 건너뜀`);
     continue;
   }
-  const d = cands[0];
+  const d = own[0] || mainCands[0];   // 보증인이 채무자 DB에 없으면 주채무자의 브랜드·채권액을 따른다
+  if (!d) { console.log(`! ${name}: 채무자를 찾지 못해 건너뜀`); continue; }
   if (manual.some(o => o.debtorName === name && o.agencyName === AGENCY)) {
     console.log(`- ${name}: 이미 ${AGENCY} 추심의뢰가 있어 건너뜀`);
     continue;
@@ -46,8 +54,8 @@ for (const name of NAMES) {
     brandRaw: BRAND_RAW[d.brand] || d.brand,
     brand: d.brand,
     debtorName: name,
-    debtorRole: "주채무자",
-    mainDebtorName: "",
+    debtorRole: main ? "연대보증인" : "주채무자",
+    mainDebtorName: main || "",
     requestAmount: d.bal || 0,
     amountDetail: "",
     requestDate: REQUEST_DATE,
@@ -58,10 +66,10 @@ for (const name of NAMES) {
     activities: "",
     monthlyUpdates: [],
     recoveredAmount: 0,
-    debtorId: d.id,
+    debtorId: own[0] ? own[0].id : null,
     createdAt: new Date().toISOString().slice(0, 10),
   });
-  console.log(`+ ${name} (${d.id}, 브랜드 ${d.brand}, 현재 분류 '${d.category}', 원금잔액 ${d.bal}) → ${AGENCY}, 요청일 ${REQUEST_DATE}`);
+  console.log(`+ ${name}${main ? ` (${main}의 연대보증인, ${own[0] ? "채무자 연동" : "미연동"})` : ""} (${d.id}, 브랜드 ${d.brand}, 원금잔액 ${d.bal}) → ${AGENCY}, 요청일 ${REQUEST_DATE}`);
 }
 
 if (!APPLY) {
@@ -78,7 +86,7 @@ if (!add.length) { console.log("추가할 건이 없습니다."); process.exit(0
   db.transaction(() => {
     put.run("collection_manual", JSON.stringify([...manual, ...add]));
     const nextOv = { ...ov };
-    add.forEach(o => { nextOv[o.id] = o.debtorId; });
+    add.forEach(o => { if (o.debtorId) nextOv[o.id] = o.debtorId; });
     put.run("collection_manual_overrides", JSON.stringify(nextOv));
   })();
   console.log(`\n✓ ${add.length}건 추가 완료. DB 백업: ${bak}`);
