@@ -10974,6 +10974,13 @@ function MainApp({ authUser, onLogout }) {
     const setF = (k, v) => setEditFields(prev => ({ ...prev, [k]: v }));
 
     const inpS = { padding: "5px 8px", fontSize: 12, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--card)", color: "var(--tp)", width: "100%" };
+    // 수정 모드에서는 입력칸, 아니면 읽기 전용 행 (컴포넌트가 아닌 함수라 입력 중 포커스가 유지된다)
+    const editRow = (label, key, shown, placeholder) => editMode
+      ? <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
+          <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
+          <KoreanInput value={cur(key) ?? ""} onChange={e => setF(key, e.target.value)} placeholder={placeholder} style={inpS} />
+        </div>
+      : <DL label={label} val={shown} />;
     const DL = ({ label, val, children }) => (val || children) ? (
       <div style={{ display: "flex", gap: 8, fontSize: 13, padding: "5px 0", borderBottom: "1px solid var(--brd)" }}>
         <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>{label}</span>
@@ -11135,17 +11142,22 @@ function MainApp({ authUser, onLogout }) {
             <DL label="브랜드"     val={selOrder.brandRaw} />
             <DL label="채무자"     val={selOrder.debtorName} />
             <DL label="분류"       val={selOrder.debtorRole ? (selOrder.debtorRole === "연대보증인" && selOrder.mainDebtorName ? `${selOrder.mainDebtorName}의 연대보증인` : selOrder.debtorRole) : ""} />
-            <DL label="채권내용"   val={selOrder.claimType} />
-            <DL label="채권 발생일" val={selOrder.claimDate} />
-            <DL label="집행권원"   val={selOrder.execTitle} />
-            <DL label="채권액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>
-            {selOrder.amountDetail && !selOrder.delayRate && <DL label="금액 상세" val={selOrder.amountDetail} />}
-            <DL label="지연손해금" val={selOrder.delayRate} />
-            <DL label="추심요청일" val={selOrder.requestDate} />
-            <DL label="수수료"     val={selOrder.feeRate || selOrder.condition} />
-            <DL label="특이사항"   val={selOrder.note} />
-            <DL label="담당자"     val={selOrder.agencyPerson} />
-            <DL label="연락처"     val={selOrder.agencyPhone} />
+            {editRow("채권내용", "claimType", selOrder.claimType, "예: 대여금")}
+            {editRow("채권 발생일", "claimDate", selOrder.claimDate, "YYYY.MM.DD")}
+            {editRow("집행권원", "execTitle", selOrder.execTitle)}
+            {editMode
+              ? <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
+                  <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>채권액</span>
+                  <MoneyInput value={cur("requestAmount") ?? ""} onChange={v => setF("requestAmount", Number(v) || 0)} placeholder="0" style={inpS} />
+                </div>
+              : <DL label="채권액"><span className="mono" style={{ fontWeight: 600, color: "var(--ok)" }}>{fmt(selOrder.requestAmount)}</span></DL>}
+            {!editMode && selOrder.amountDetail && !selOrder.delayRate && <DL label="금액 상세" val={selOrder.amountDetail} />}
+            {editRow("지연손해금", "delayRate", selOrder.delayRate, "예: 연 20%")}
+            {editRow("추심요청일", "requestDate", selOrder.requestDate, "YYYY.MM.DD")}
+            {editRow("수수료", "feeRate", selOrder.feeRate || selOrder.condition, "예: 20%")}
+            {editRow("특이사항", "note", selOrder.note)}
+            {editRow("담당자", "agencyPerson", selOrder.agencyPerson)}
+            {editRow("연락처", "agencyPhone", selOrder.agencyPhone)}
             {editMode
               ? <div style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--brd)", fontSize: 13 }}>
                   <span style={{ color: "var(--tm)", minWidth: 120, flexShrink: 0 }}>소요비용</span>
