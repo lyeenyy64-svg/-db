@@ -10969,6 +10969,14 @@ function MainApp({ authUser, onLogout }) {
     }, [orders, data.payments]);
     const recOf = (o) => payRec.get(o.id) || o.recoveredAmount || 0;
 
+    // 카드 합계(필터 적용). 같은 채무자에 추심의뢰가 2건 이상 매칭돼도 입금은 한 번만 합산
+    const seenRecDebtorIds = new Set();
+    const sumClaim = filtered.reduce((t, o) => t + (o.requestAmount || 0), 0);
+    const sumRec = filtered.reduce((t, o) => {
+      if (o.debtorId) { if (seenRecDebtorIds.has(o.debtorId)) return t; seenRecDebtorIds.add(o.debtorId); }
+      return t + recOf(o);
+    }, 0);
+
     // 팝업에서 현재 값 (편집 중이면 editFields 우선)
     const cur = (key) => editMode ? (editFields[key] !== undefined ? editFields[key] : selOrder?.[key]) : selOrder?.[key];
     const setF = (k, v) => setEditFields(prev => ({ ...prev, [k]: v }));
@@ -11010,12 +11018,26 @@ function MainApp({ authUser, onLogout }) {
           </div>
           <div style={{ background: "var(--card)", borderRadius: 12, padding: 16, border: "1px solid var(--brd)", position: "relative", overflow: "hidden" }}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg,#10b981,#10b98100)" }} />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#3b82f6", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(sumClaim)}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>총 채권액</div>
+                </div>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#10b981", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(sumRec)}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>회수금액</div>
+                </div>
+                <div style={{ textAlign: "center", padding: "10px 6px", borderRadius: 10, background: "var(--bg2)" }}>
+                  <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: "#f97316", lineHeight: 1.3, wordBreak: "keep-all" }}>{fmt(Math.max(sumClaim - sumRec, 0))}</div>
+                  <div style={{ fontSize: 11, color: "var(--tm)", marginTop: 2 }}>잔액</div>
+                </div>
+            </div>
             {(() => {
               const brandTiles = [...new Map(orders.filter(o => o.brand).map(o => [o.brand, o.brandRaw || o.brand])).entries()]
                 .map(([code, name], idx) => ({ code, name, count: orders.filter(o => o.brand === code).length, color: ["#f97316", "#8b5cf6", "#10b981", "#ef4444", "#3b82f6"][idx % 5] }));
               const tiles = [{ code: "전체", name: "총 추심의뢰", count: orders.length, color: "#6366f1" }, ...brandTiles];
               return (
-                <div style={{ display: "grid", gridTemplateColumns: `repeat(${tiles.length}, 1fr)`, gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${tiles.length}, 1fr)`, gap: 8, marginTop: 8 }}>
                   {tiles.map(t => {
                     const on = brandF === t.code;
                     return (
