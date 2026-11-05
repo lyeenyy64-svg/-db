@@ -74,7 +74,7 @@ if (!add.length) { console.log("추가할 건이 없습니다."); process.exit(0
   const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
   const bak = `${DB_PATH}.bak-addorders-${stamp}`;
   await db.backup(bak);
-  const put = db.prepare("INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+  const put = db.prepare("INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now', 'localtime')");
   db.transaction(() => {
     put.run("collection_manual", JSON.stringify([...manual, ...add]));
     const nextOv = { ...ov };
