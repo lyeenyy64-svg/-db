@@ -38,7 +38,11 @@ const addOrderFor = (db, name, agencyName, requestDate) => {
   const sel = "SELECT id, name, brand_code AS brand, principal_balance AS bal FROM debtors WHERE ";
   let cands = db.prepare(sel + "name = ?").all(name);
   if (!cands.length) cands = db.prepare(sel + "name LIKE ?").all(name + "(%");   // '이름(보증인)' 형태 표기
-  if (cands.length !== 1) throw new Error(`${name}: 채무자 ${cands.length}명 — 1명이어야 합니다`);
+  if (cands.length !== 1) {
+    const list = db.prepare("SELECT id, name, brand_code AS brand, category, principal_balance AS bal FROM debtors WHERE REPLACE(name, ' ', '') LIKE ?").all(`%${name}%`)
+      .map(c => `${c.id}:${c.name}/${c.brand}/${c.category}/${c.bal}`).join(", ");
+    throw new Error(`${name}: 정확히 일치하는 채무자 ${cands.length}명 — 1명이어야 합니다. 이름 포함 후보: ${list || "없음"}`);
+  }
   const d = cands[0];
   const kvGet = (key, fb) => { try { return JSON.parse(db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key)?.value) ?? fb; } catch { return fb; } };
   const manual = kvGet("collection_manual", []);
