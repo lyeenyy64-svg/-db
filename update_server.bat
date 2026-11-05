@@ -9,6 +9,10 @@ echo [DEBTFLOW] 패키지 업데이트 확인 중...
 call npm install
 
 echo.
+echo [DEBTFLOW] 데이터 일회성 작업 확인 중...
+node backend\run_migrations.cjs
+
+echo.
 echo [DEBTFLOW] 서버 재시작 중...
 pm2 restart debtflow-backend debtflow-frontend --update-env
 
