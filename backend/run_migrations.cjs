@@ -34,7 +34,7 @@ const crypto = require("crypto");
 const BRAND_RAW = { B: "바로고", D: "딜버", M: "바다코리아", G: "그라이더", E: "에이퍼스", A2: "A2" };
 
 const kvGet = (db, key, fb) => { try { return JSON.parse(db.prepare("SELECT value FROM kv_store WHERE key = ?").get(key)?.value) ?? fb; } catch { return fb; } };
-const DEBTOR_SEL = "SELECT id, name, brand_code AS brand, principal_balance AS bal, final_balance_legal AS legal FROM debtors WHERE ";
+const DEBTOR_SEL = "SELECT id, name, brand_code AS brand, principal_balance AS bal, (principal_balance + adjustment - collected_amount) AS legal FROM debtors WHERE ";
 const claimOf = (d) => d.bal || d.legal || 0;   // 원채무액이 0이면 법무기준잔액을 채권액으로 본다
 
 // 이름으로 채무자 1명 특정. 정확히 1명이 아니면 예외 (→ 다음 배포 때 다시 시도).
