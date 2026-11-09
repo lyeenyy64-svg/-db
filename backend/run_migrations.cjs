@@ -129,6 +129,22 @@ const MIGRATIONS = [
       return `새한신용정보 ${targets.length}건 요청일 2026.11.09 기록`;
     },
   },
+  {
+    // 새한신용정보 의뢰건 전체의 수수료를 25%로 변경 (조건 문구가 '추심금액의 N%' 형태면 함께 맞춤)
+    id: "2026-11-09-saehan-fee-25",
+    run(db) {
+      const { orders, ed } = loadOrders(db);
+      const targets = orders.filter(o => o.agencyName === "새한신용정보");
+      const next = { ...ed };
+      targets.forEach(o => {
+        const patch = { feeRate: "25%" };
+        if (/^추심금액의\s*\d+(\.\d+)?%$/.test((o.condition || "").trim())) patch.condition = "추심금액의 25%";
+        next[o.id] = { ...(next[o.id] || {}), ...patch };
+      });
+      putKv(db, "collection_edits", next);
+      return `새한신용정보 ${targets.length}건 수수료 25% 기록`;
+    },
+  },
 ];
 
 (async () => {
