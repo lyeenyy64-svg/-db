@@ -105,6 +105,18 @@ const MIGRATIONS = [
       return fixed.length ? `채권액 보정: ${fixed.join(", ")}` : "보정할 건 없음";
     },
   },
+  {
+    // 미래신용정보 의뢰건 전체의 추심요청일을 2026.11.09 로 통일 (기존 날짜도 덮어씀)
+    id: "2026-11-09-mirae-request-date",
+    run(db) {
+      const { orders, ed } = loadOrders(db);
+      const targets = orders.filter(o => o.agencyName === "미래신용정보");
+      const next = { ...ed };
+      targets.forEach(o => { next[o.id] = { ...(next[o.id] || {}), requestDate: "2026.11.09" }; });
+      putKv(db, "collection_edits", next);
+      return `미래신용정보 ${targets.length}건 요청일 2026.11.09 기록`;
+    },
+  },
 ];
 
 (async () => {
