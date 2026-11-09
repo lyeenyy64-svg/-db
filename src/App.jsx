@@ -11123,7 +11123,7 @@ function MainApp({ authUser, onLogout }) {
                 <span style={{ fontSize: 11, color: "var(--ts)", width: 46, flexShrink: 0, textAlign: "center" }}>{o.feeRate || "-"}</span>
                 {(() => { const ra = recOf(o); return <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: ra > 0 ? "#3b82f6" : "var(--ts)", width: 90, flexShrink: 0, textAlign: "right" }}>{ra > 0 ? fmt(ra) : "-"}</span>; })()}
                 <div style={{ flex: 1, fontSize: 11, color: "var(--ts)", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, minWidth: 0, textAlign: "left" }}>
-                  {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content}</> : o.note && <><span style={{ color: "var(--tm)", fontWeight: 600 }}>특이사항 </span>{o.note}</>}
+                  {lastUpdate ? <><span style={{ color: "var(--tm)", fontWeight: 600 }}>{lastUpdate.month} </span>{lastUpdate.content}</> : o.note}
                 </div>
                 <span style={{ width: 56, flexShrink: 0, textAlign: "center" }}>
                   {debtor
