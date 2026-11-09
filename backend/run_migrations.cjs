@@ -117,6 +117,18 @@ const MIGRATIONS = [
       return `미래신용정보 ${targets.length}건 요청일 2026.11.09 기록`;
     },
   },
+  {
+    // 새한신용정보 의뢰건 전체의 추심요청일을 2026.11.09 로 통일 (기존 날짜도 덮어씀)
+    id: "2026-11-09-saehan-request-date",
+    run(db) {
+      const { orders, ed } = loadOrders(db);
+      const targets = orders.filter(o => o.agencyName === "새한신용정보");
+      const next = { ...ed };
+      targets.forEach(o => { next[o.id] = { ...(next[o.id] || {}), requestDate: "2026.11.09" }; });
+      putKv(db, "collection_edits", next);
+      return `새한신용정보 ${targets.length}건 요청일 2026.11.09 기록`;
+    },
+  },
 ];
 
 (async () => {
