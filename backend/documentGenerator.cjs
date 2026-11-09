@@ -23,7 +23,7 @@ function bankItemXml(num, name, amount, debtorName, residentId) {
   const body =
     `채무자[${debtorName}][(주민등록번호 : ${residentId})]이 제3채무자 [${name}]에 대하여 ` +
     `가지는 다음의 예금채권 중 현재 입금되어 있거나 장래 입금될 예금채권으로서 다음에서 기재한 ` +
-    `순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 7호,  8호 및 ` +
+    `순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 8호, 9호 및 ` +
     `동법시행령에 의하여 압류가 금지되는 예금은 제외한다.) `;
   return (
     `<hp:p id="0" paraPrIDRef="12" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="6"><hp:t>${num}. [${name}]에 대하여</hp:t></hp:run>${LS}</hp:p>` +
@@ -162,7 +162,7 @@ function buildPreviewHtml(docData) {
   const formula  = buildFormula(allItems.length);
 
   const bankBody  = (name) =>
-    `채무자[${debtorName}][(주민등록번호 : ${residentId})]이 제3채무자 [${name}]에 대하여 가지는 다음의 예금채권 중 현재 입금되어 있거나 장래 입금될 예금채권으로서 다음에서 기재한 순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 7호, 8호 및 동법시행령에 의하여 압류가 금지되는 예금은 제외한다.)`;
+    `채무자[${debtorName}][(주민등록번호 : ${residentId})]이 제3채무자 [${name}]에 대하여 가지는 다음의 예금채권 중 현재 입금되어 있거나 장래 입금될 예금채권으로서 다음에서 기재한 순서에 따라 위 청구금액에 이를 때까지의 금액(단, 민사집행법상 246조 1항 8호, 9호 및 동법시행령에 의하여 압류가 금지되는 예금은 제외한다.)`;
   const platBody  = (name) =>
     `채무자[${debtorName}][(주민등록번호 : ${residentId})]이 제3채무자 [${name}]의 배달대행 프로그램상 가지는 배달수수료 및 이에 따른 수당채권 일체중 제3채무자가 채무자에게 현재 지급해야 할 금액 및 장래에 지급해야 금액 중 위 청구금액에 이를 때까지의 금액`;
 
