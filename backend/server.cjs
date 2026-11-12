@@ -173,6 +173,8 @@ try { db.exec("ALTER TABLE installment_schedules ADD COLUMN rolled_over_from TEX
     // 시작되는 날짜). 값이 있으면 대여일자 대신 이 날짜를 기준으로 소멸시효를 계산한다 —
     // 지정하지 않은 채무자는 기존 대여일자 기준 계산이 그대로 유지된다.
     ["statute_extension_date",      "TEXT"],
+    // 소멸시효 연장 사유근거(자유 텍스트) — 연장일 아래에 표시/수정
+    ["statute_extension_reason",    "TEXT"],
   ]) {
     if (!debtorCols.includes(col)) {
       db.exec(`ALTER TABLE debtors ADD COLUMN ${col} ${type}`);
@@ -1250,7 +1252,7 @@ app.get("/api/debtors", (req, res) => {
            phone, hub_code AS hubCode, hub_name AS hubName, debt_cause AS debtCause,
            collection_status AS collectionStatus, exec_title AS execTitle,
            exec_title_url AS execTitleUrl,
-           loan_date AS loanDate, statute_extension_date AS statuteExtensionDate,
+           loan_date AS loanDate, statute_extension_date AS statuteExtensionDate, statute_extension_reason AS statuteExtensionReason,
            subrogation_month AS subrogationMonth,
            subrogation_month_cleared AS subrogationMonthCleared,
            subrogation_doc_url AS subrogationDocUrl,
@@ -2830,6 +2832,7 @@ const DEBTOR_FIELD_MAP = {
   hubCode:"hub_code",hubName:"hub_name",debtCause:"debt_cause",collectionStatus:"collection_status",
   execTitle:"exec_title",execTitleUrl:"exec_title_url",loanDate:"loan_date",
   statuteExtensionDate:"statute_extension_date",
+  statuteExtensionReason:"statute_extension_reason",
   subrogationMonth:"subrogation_month",subrogationDocUrl:"subrogation_doc_url",
   creditCheck:"credit_check_date",creditGrade:"credit_grade",creditReportUrl:"credit_report_url",
   residentCopy:"resident_copy_date",residentCopyUrl:"resident_copy_url",
@@ -2859,6 +2862,7 @@ const DEBTOR_FIELD_LABELS = {
   hubCode:"코드",hubName:"허브/지점",debtCause:"채무발생원인",collectionStatus:"추심상태",
   execTitle:"집행권원",execTitleUrl:"집행권원PDF",loanDate:"대여일자",
   statuteExtensionDate:"채권 소멸시효 연장일",
+  statuteExtensionReason:"소멸시효 연장 사유근거",
   subrogationMonth:"대위변제월",subrogationDocUrl:"대위변제증명서PDF",
   creditCheck:"신용조회일자",creditGrade:"신용점수",creditReportUrl:"CB종합보고서PDF",
   residentCopy:"주민등록초본",residentCopyUrl:"주민등록초본PDF",

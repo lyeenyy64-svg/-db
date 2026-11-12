@@ -4066,7 +4066,7 @@ function MainApp({ authUser, onLogout }) {
     }
     return changes;
   };
-  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", statuteExtensionDate: "채권 소멸시효 연장일", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", manualAddress: "직접 입력 주소", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
+  const DEBTOR_FIELD_LABELS = { brand: "브랜드", category: "분류", assignee: "담당", name: "채무자명", phone: "연락처", hubCode: "코드", hubName: "허브/지점", debtCause: "채무발생원인", collectionStatus: "추심상태", principalBalance: "재무잔액", adjustment: "조정액", collectedAmount: "회수액", execTitle: "집행권원", execTitleType: "집행권원종류", execTitleUrl: "집행권원PDF", loanDate: "대여일자", statuteExtensionDate: "채권 소멸시효 연장일", statuteExtensionReason: "소멸시효 연장 사유근거", subrogationMonth: "대위변제월", subrogationDocUrl: "대위변제증명서PDF", creditCheck: "신용조회일자", creditReportUrl: "CB종합보고서PDF", creditGrade: "신용점수", residentCopy: "주민등록초본", residentNumber: "주민등록번호", birthDate: "생년월일", salesRep: "영업담당자", keyNotes: "주요사항", manualAddress: "직접 입력 주소", residentAddress: "최근 주소(초본)", residentRegisteredDate: "등록일(초본)", residentNote: "비고(세대주및관계)", creditPhone: "연락처(CB)" };
 
   // ─── Excel Download ─────────────────────────────────────
   const downloadCSV = async (filename, headers, rows) => {
@@ -4847,7 +4847,7 @@ function MainApp({ authUser, onLogout }) {
       brand: config.brands[0]?.code || "B", category: config.categories[0], assignee: config.assignees[0],
       name: "", phone: "", hubCode: "", hubName: "", debtCause: config.debtCauses[0] || "",
       collectionStatus: config.collStatuses[0], execTitle: false, execTitleType: "", execTitleUrl: "",
-      loanDate: today(), statuteExtensionDate: "", principalBalance: 0, adjustment: 0, collectedAmount: 0,
+      loanDate: today(), statuteExtensionDate: "", statuteExtensionReason: "", principalBalance: 0, adjustment: 0, collectedAmount: 0,
       salesRep: "", residentNumber: "",
       keyNotes: "", guarantors: [], subrogationMonth: "", subrogationDocUrl: "", creditReportUrl: "",
       ...modal.data, // "+항목"으로 넘어온 brand/name/category/assignee/hubName 기본값 적용
@@ -4921,6 +4921,7 @@ function MainApp({ authUser, onLogout }) {
           <Field label="회수액"><input type="text" value={f.collectedAmount === 0 || f.collectedAmount == null ? "" : Number(f.collectedAmount).toLocaleString("ko-KR")} onChange={e => { const n = Number(e.target.value.replace(/,/g, "")); set("collectedAmount", isNaN(n) ? 0 : n); }} style={inp} placeholder="0" /></Field>
           <Field label="대여일자"><input type="date" value={f.loanDate} onChange={e => set("loanDate", e.target.value)} style={inp} /></Field>
           <Field label="채권 소멸시효 연장일"><input type="date" value={f.statuteExtensionDate || ""} onChange={e => set("statuteExtensionDate", e.target.value)} style={inp} /></Field>
+          <Field label="소멸시효 연장 사유근거"><KoreanInput value={f.statuteExtensionReason || ""} onChange={e => set("statuteExtensionReason", e.target.value)} style={inp} placeholder="예: 지급명령 확정, 채무 승인 등" /></Field>
           <Field label="집행권원 종류"><select value={f.execTitleType || ""} onChange={e => { set("execTitleType", e.target.value); set("execTitle", e.target.value ? 1 : 0); }} style={inp}><option value="">없음</option><option value="공정증서+집행문">공정증서+집행문</option><option value="지급명령결정정본">지급명령결정정본</option><option value="판결정본+집행문+송달증명원+확정증명원">판결정본+집행문+송달증명원+확정증명원</option></select></Field>
           <Field label="집행권원 PDF (OneDrive)"><KoreanInput value={f.execTitleUrl || ""} onChange={e => set("execTitleUrl", e.target.value)} style={inp} placeholder="OneDrive 공유 링크" /></Field>
           <Field label="대위변제일"><KoreanInput value={f.subrogationMonth || ""} onChange={e => set("subrogationMonth", e.target.value)} style={inp} placeholder="예: 2026.03.31" /></Field>
@@ -7115,6 +7116,13 @@ function MainApp({ authUser, onLogout }) {
               <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>채권 소멸시효 연장일</span>
               <span className="mono" style={{ fontSize: 12, fontWeight: d.statuteExtensionDate ? 600 : 400, color: d.statuteExtensionDate ? "#3b82f6" : "var(--tm)" }}>
                 {d.statuteExtensionDate ? fmtDate(d.statuteExtensionDate) : "-"}
+              </span>
+            </div>
+            {/* 소멸시효 연장 사유근거 — 자유 텍스트, 수정 모달에서 편집 */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, padding: "7px 0", borderBottom: "1px solid var(--brd)" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", flexShrink: 0 }}>소멸시효 연장 사유근거</span>
+              <span style={{ fontSize: 12, fontWeight: d.statuteExtensionReason ? 500 : 400, color: d.statuteExtensionReason ? "var(--tp)" : "var(--tm)", textAlign: "right", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                {d.statuteExtensionReason || "-"}
               </span>
             </div>
             {/* 집행권원 종류 — 있으면 소멸시효가 10년, 없으면 5년으로 계산된다 */}
