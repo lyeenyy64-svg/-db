@@ -7734,10 +7734,20 @@ function MainApp({ authUser, onLogout }) {
         {paymentsSubTab === "미매칭" && <PendingPaymentsView refreshKey={pendingRefreshKey} />}
         <div style={{ display: paymentsSubTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-          <KPI label="총 입금건수" value={`${pFiltered.length}건`} color="#3b82f6" />
-          <KPI label="총 입금액" value={fmt(totalAmt)} color="#10b981" />
-          <KPI label="본사계좌" value={fmt(pFiltered.reduce((s, p) => s + p.companyAccount, 0))} color="#8b5cf6" />
-          <KPI label="캐쉬충전+웰컴" value={fmt(pFiltered.reduce((s, p) => s + p.cashCharge + p.welcomeDirect, 0))} color="#f59e0b" />
+          {(() => {
+            const BR = ["B", "M", "D", "G"];
+            const brSub = (val, fmtFn) => (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {BR.map(c => <span key={c}><b>{c}</b> {fmtFn(pFiltered.filter(p => p.brand === c).reduce((s, p) => s + val(p), 0))}</span>)}
+              </div>
+            );
+            return (<>
+              <KPI label="총 입금건수" value={`${pFiltered.length}건`} sub={brSub(() => 1, n => `${n}건`)} color="#3b82f6" />
+              <KPI label="총 입금액" value={fmt(totalAmt)} sub={brSub(p => p.totalAmount || 0, fmt)} color="#10b981" />
+              <KPI label="본사계좌" value={fmt(pFiltered.reduce((s, p) => s + p.companyAccount, 0))} sub={brSub(p => p.companyAccount || 0, fmt)} color="#8b5cf6" />
+              <KPI label="캐쉬충전+웰컴" value={fmt(pFiltered.reduce((s, p) => s + p.cashCharge + p.welcomeDirect, 0))} sub={brSub(p => (p.cashCharge || 0) + (p.welcomeDirect || 0), fmt)} color="#f59e0b" />
+            </>);
+          })()}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
