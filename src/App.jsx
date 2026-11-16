@@ -6281,7 +6281,7 @@ function MainApp({ authUser, onLogout }) {
         <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={q} onChange={e => setQ(e.target.value)} placeholder="채무자명, ID, 연대보증인, 허브명, 코드, 히스토리 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
         {canEdit && <button onClick={() => setModal({ type: "debtor" })} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--acc)15", color: "var(--acc)", fontSize: 12, fontWeight: 600, border: "1px solid var(--acc)40", cursor: "pointer" }}>등록</button>}
         <button onClick={() => exportDebtors(filtered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
-        <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}건</div>
+        <div className="mono" style={{ fontSize: 12, color: "var(--tm)" }}>{filtered.length}명</div>
       </div>
       {canEdit && checkedDebtorIds.size > 0 && (
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--acc)10", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--acc)40" }}>
