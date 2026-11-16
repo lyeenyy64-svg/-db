@@ -6245,7 +6245,7 @@ function MainApp({ authUser, onLogout }) {
         const sumOf = key => sumRows.reduce((s, x) => s + (Number(x[key]) || 0), 0);
         const sumColor = CC[catFilter] || "#6b7280";
         const sumItems = [
-          ["총 채무자수", `${sumRows.length.toLocaleString()}건`],
+          ["총 채무자수", `${sumRows.length.toLocaleString()}명`],
           ["원채무액", fmtM(sumOf("principalBalance"))],
           ["회수액", fmtM(sumOf("collectedAmount"))],
           ["재무기준 잔액", fmtM(sumOf("finalBalanceFinance"))],
@@ -6285,9 +6285,9 @@ function MainApp({ authUser, onLogout }) {
       </div>
       {canEdit && checkedDebtorIds.size > 0 && (
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "var(--acc)10", borderRadius: 12, padding: "10px 14px", border: "1px solid var(--acc)40" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>{checkedDebtorIds.size}건 선택됨</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--acc)" }}>{checkedDebtorIds.size}명 선택됨</span>
           {checkedDebtorIds.size < filteredFlatIds.length && (
-            <button onClick={() => setCheckedDebtorIds(new Set(filteredFlatIds))} style={{ fontSize: 11, color: "var(--acc)", textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>필터링된 전체 {filteredFlatIds.length}건 선택</button>
+            <button onClick={() => setCheckedDebtorIds(new Set(filteredFlatIds))} style={{ fontSize: 11, color: "var(--acc)", textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>필터링된 전체 {filteredFlatIds.length}명 선택</button>
           )}
           <button onClick={() => setBulkModal({ type: "assignee" })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>담당자 일괄변경</button>
           <button onClick={() => setBulkModal({ type: "status" })} style={{ padding: "6px 12px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600, border: "none", cursor: "pointer" }}>상태 일괄변경</button>
