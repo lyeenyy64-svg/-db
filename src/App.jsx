@@ -6261,7 +6261,7 @@ function MainApp({ authUser, onLogout }) {
                 return (
                   <div key={k} onClick={() => setCatFilter(active && k !== "전체" ? "전체" : k)} style={{ cursor: "pointer", flex: "0 0 auto", minWidth: 64, padding: "7px 10px", borderRadius: 10, border: `1.5px solid ${active ? color : "var(--brd)"}`, background: active ? color + "18" : "var(--card)", transition: "all 0.15s" }}>
                     <div style={{ fontSize: 10, fontWeight: 600, color: active ? color : "var(--tm)", whiteSpace: "nowrap", marginBottom: 4 }}>{k}</div>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}건</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: active ? color : "var(--tx)", lineHeight: 1 }}>{cnt}<span style={{ fontSize: 10, fontWeight: 500, color: "var(--tm)", marginLeft: 1 }}>건</span></div>
                   </div>
                 );
               })}
