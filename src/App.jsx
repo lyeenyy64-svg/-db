@@ -4831,7 +4831,7 @@ function MainApp({ authUser, onLogout }) {
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${color},${color}00)` }} />
       <div style={{ fontSize: 12, color: "var(--tm)", marginBottom: 8, fontWeight: 500 }}>{label}</div>
       <div className="mono" style={{ fontSize: 22, fontWeight: 700, color, marginBottom: 4 }}>{value}</div>
-      <div style={{ fontSize: 11, color: "var(--ts)" }}>{sub}</div>
+      {sub && <div style={{ fontSize: 11, color: "var(--ts)" }}>{sub}</div>}
     </div>
   );
 
@@ -7734,10 +7734,10 @@ function MainApp({ authUser, onLogout }) {
         {paymentsSubTab === "미매칭" && <PendingPaymentsView refreshKey={pendingRefreshKey} />}
         <div style={{ display: paymentsSubTab === "목록" ? "flex" : "none", flexDirection: "column", gap: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-          <KPI label="총 입금건수" value={`${pFiltered.length}건`} sub={`전체 ${data.payments.length}건`} color="#3b82f6" />
-          <KPI label="총 입금액" value={fmt(totalAmt)} sub="필터 적용 합계" color="#10b981" />
-          <KPI label="본사계좌" value={fmt(pFiltered.reduce((s, p) => s + p.companyAccount, 0))} sub="입금 채널별" color="#8b5cf6" />
-          <KPI label="캐쉬충전+웰컴" value={fmt(pFiltered.reduce((s, p) => s + p.cashCharge + p.welcomeDirect, 0))} sub="기타 채널 합계" color="#f59e0b" />
+          <KPI label="총 입금건수" value={`${pFiltered.length}건`} color="#3b82f6" />
+          <KPI label="총 입금액" value={fmt(totalAmt)} color="#10b981" />
+          <KPI label="본사계좌" value={fmt(pFiltered.reduce((s, p) => s + p.companyAccount, 0))} color="#8b5cf6" />
+          <KPI label="캐쉬충전+웰컴" value={fmt(pFiltered.reduce((s, p) => s + p.cashCharge + p.welcomeDirect, 0))} color="#f59e0b" />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
