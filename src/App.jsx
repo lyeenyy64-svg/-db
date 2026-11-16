@@ -7752,20 +7752,20 @@ function MainApp({ authUser, onLogout }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "var(--card)", borderRadius: 12, padding: 14, border: "1px solid var(--brd)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <div style={{ position: "relative", flex: 1, minWidth: 200 }}><div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--tm)" }}><I name="search" size={14} /></div><KoreanInput value={pq} onChange={e => { setPq(e.target.value); setPPage(1); }} placeholder="채무자명, 입금자명, 허브명 검색..." style={{ width: "100%", paddingLeft: 32 }} /></div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 600 }}>입금일 :</span>
+              <input type="date" value={pFrom} onChange={e => { setPFrom(e.target.value); setPPage(1); }} style={{ width: 140, fontSize: 12 }} />
+              <span style={{ color: "var(--tm)" }}>~</span>
+              <input type="date" value={pTo} onChange={e => { setPTo(e.target.value); setPPage(1); }} style={{ width: 140, fontSize: 12 }} />
+              <button onClick={() => setQuickRange(7)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 7일</button>
+              <button onClick={() => setQuickRange(30)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 30일</button>
+              <button onClick={() => setQuickRange(90)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 90일</button>
+              {(pFrom || pTo) && <button onClick={clearRange} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444440" }}>날짜 해제</button>}
+            </div>
             <select value={pBrand} onChange={e => { setPBrand(e.target.value); setPPage(1); }} style={{ width: 110 }}><option value="전체">브랜드: 전체</option>{config.brands.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}</select>
             <button onClick={() => setModal({ type: "payment" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 14px", borderRadius: 8, background: "var(--acc)", color: "#fff", fontSize: 12, fontWeight: 600 }}><I name="plus" size={14} />입금 등록</button>
             <button onClick={() => exportPayments(pFiltered)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#10b98118", color: "#10b981", fontSize: 12, fontWeight: 600, border: "1px solid #10b98140" }}><I name="arrowDown" size={14} />엑셀</button>
             {canEdit && <button onClick={() => setModal({ type: "verifyExcel" })} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, background: "#8b5cf618", color: "#8b5cf6", fontSize: 12, fontWeight: 600, border: "1px solid #8b5cf640" }}><I name="shield" size={14} />검증</button>}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: "1px dashed var(--brd)", paddingTop: 10 }}>
-            <span style={{ fontSize: 12, color: "var(--tm)", fontWeight: 600, marginRight: 4 }}>입금일 :</span>
-            <input type="date" value={pFrom} onChange={e => { setPFrom(e.target.value); setPPage(1); }} style={{ width: 150, fontSize: 12 }} />
-            <span style={{ color: "var(--tm)" }}>~</span>
-            <input type="date" value={pTo} onChange={e => { setPTo(e.target.value); setPPage(1); }} style={{ width: 150, fontSize: 12 }} />
-            <button onClick={() => setQuickRange(7)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 7일</button>
-            <button onClick={() => setQuickRange(30)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 30일</button>
-            <button onClick={() => setQuickRange(90)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 90일</button>
-            {(pFrom || pTo) && <button onClick={clearRange} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444440" }}>날짜 해제</button>}
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
