@@ -7766,7 +7766,6 @@ function MainApp({ authUser, onLogout }) {
             <button onClick={() => setQuickRange(30)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 30일</button>
             <button onClick={() => setQuickRange(90)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "var(--bg)", color: "var(--ts)", border: "1px solid var(--brd)" }}>최근 90일</button>
             {(pFrom || pTo) && <button onClick={clearRange} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 11, background: "#ef444418", color: "var(--err)", border: "1px solid #ef444440" }}>날짜 해제</button>}
-            <span className="mono" style={{ marginLeft: "auto", fontSize: 12, color: "var(--tm)" }}>총 <b style={{ color: "var(--acc)" }}>{pFiltered.length}건</b> / 합계 <b style={{ color: "var(--acc)" }}>{fmt(totalAmt)}</b></span>
           </div>
         </div>
         <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
