@@ -9098,9 +9098,16 @@ function MainApp({ authUser, onLogout }) {
       const withCoords = locations.filter(d => d.lat != null && d.lng != null);
       withCoords.forEach(d => {
         const color = config.brands.find(b => b.code === d.brand)?.color || "#64748b";
+        // 깃발 형태: 깃대의 맨 아래 끝(좌표 위치)이 실제 위치를 가리킨다 (xAnchor 0 / yAnchor 1)
         const el = document.createElement("div");
-        el.style.cssText = `padding:3px 8px;border-radius:6px;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35);cursor:pointer;`;
-        el.textContent = `${d.brand} ${d.name} (${d.addressSource === "manual" ? "수" : d.addressSource === "resident" ? "초" : "신"})`;
+        el.style.cssText = "position:relative;display:inline-block;padding:0 0 14px 0;cursor:pointer;";
+        const pole = document.createElement("div");
+        pole.style.cssText = `position:absolute;left:-1px;top:0;bottom:0;width:2px;background:${color};box-shadow:0 0 0 1px rgba(255,255,255,.8);`;
+        const flag = document.createElement("div");
+        flag.style.cssText = `padding:3px 8px;border-radius:0 6px 6px 0;background:${color};color:#fff;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.35);`;
+        flag.textContent = `${d.brand} ${d.name} (${d.addressSource === "manual" ? "수" : d.addressSource === "resident" ? "초" : "신"})`;
+        el.appendChild(pole);
+        el.appendChild(flag);
         el.addEventListener("click", () => {
           const debtor = data.debtors.find(x => x.id === d.id);
           if (debtor) navigateToDebtor(debtor);
@@ -9108,6 +9115,7 @@ function MainApp({ authUser, onLogout }) {
         const overlay = new window.kakao.maps.CustomOverlay({
           position: new window.kakao.maps.LatLng(d.lat, d.lng),
           content: el,
+          xAnchor: 0,
           yAnchor: 1,
         });
         overlay.setMap(mapObjRef.current);
