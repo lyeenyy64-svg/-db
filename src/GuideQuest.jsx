@@ -11,11 +11,13 @@ const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pa
 // 기본 미션 순서. 사람마다 다르게 하려면 USER_ORDER에 이름으로 추가한다.
 const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "todo"];
 const USER_ORDER = {
+  "김준원": ["installment", "credit", "forced"],
   "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
 };
 
 const ITEM_POINTS = 10;   // 항목(채무자/사건) 하나를 처리할 때
 const STEP_POINTS = 20;   // 한 단계(미션) 전체를 끝낼 때
+const NONE_POINTS = 5;    // 대상자가 없음을 확인했을 때
 const CHECK_POINTS = 5;   // 확인만 하는 항목(주요일정)
 
 // 담당자 표기가 "준원"/"김준원"처럼 다를 수 있어 포함 관계로 비교한다 (2글자 이상일 때만)
@@ -31,23 +33,23 @@ const hitPath = (rows, pred) => rows.some(r => pred(String(r.path || ""), r));
 // mode "item": 항목마다 완료 판정(detect) / mode "step": 해당 저장 경로에 오늘 입력이 있으면 단계 전체 완료
 // mode "check": 항목을 눈으로 확인하고 [확인] 버튼으로 완료
 function buildMissions(ctx) {
-  const { data, today, isMine, getCaseEventDate, nav } = ctx;
+  const { data, today, isMine, getCaseEventDate, nav, awarded } = ctx;
   const debtors = data.debtors || [];
   const debtorById = new Map(debtors.map(d => [d.id, d]));
   const dayDiff = ev => Math.round((new Date(ev) - new Date(today)) / 86400000);
 
   return {
     installment: {
-      label: "오늘 분할상환 대상자 연락", mode: "item", points: ITEM_POINTS,
-      hint: "문자·전화로 연락하고 히스토리에 남기세요",
+      label: "오늘 분할상환 대상자", mode: "item", points: ITEM_POINTS, confirmEmpty: true,
+      hint: "연락 후 채무자 히스토리에 글을 남기세요 (대상자 모두)",
       items: () => (data.installmentSchedules || [])
-        .filter(s => s.dueDate === today && s.status !== "이월" && isMine(s.assignee))
+        .filter(s => s.dueDate === today && isMine(s.assignee) && (s.status !== "이월" || awarded.has(`installment|${s.id}`)))
         .map(s => ({
           id: String(s.id), title: s.debtorName || "-", sub: `${s.brand || ""} · 예정 ${Number(s.scheduledAmount || 0).toLocaleString()}원 · ${s.status || "미납"}`,
           debtorId: s.debtorId,
           go: () => { const d = debtorById.get(s.debtorId); if (d) nav.debtor(d); },
         })),
-      detect: (it, rows) => hitPath(rows, (p, r) => (it.debtorId != null && String(r.refDebtorId) === String(it.debtorId)) || p === `/api/kv/hist_m_${it.debtorId}`),
+      detect: (it, rows) => it.debtorId != null && hitPath(rows, p => p === `/api/kv/hist_m_${it.debtorId}`),
     },
     civil: {
       label: "민/형사 이벤트 확인", mode: "item", points: ITEM_POINTS,
@@ -87,19 +89,31 @@ function buildMissions(ctx) {
         return out;
       },
     },
-    forced: {
-      label: "주요현안 · 강제집행 대상사", mode: "step", points: STEP_POINTS,
-      hint: "진행 중인 건의 처리내용을 입력/수정하세요",
-      items: () => (data.forcedExecutions || []).filter(f => !f.completed && !f.deleted && isMine(f.assignee))
-        .map(f => ({ id: String(f.id), title: f.debtorName || "-", sub: f.executionContent || "", go: () => nav.tab("issues") })),
-      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_forced_executions")),
-    },
     credit: {
-      label: "신용분석 대상자", mode: "step", points: STEP_POINTS,
-      hint: "조회 결과를 입력하세요",
-      items: () => (data.creditAnalyses || []).filter(f => !f.completed && !f.deleted && isMine(f.assignee))
-        .map(f => ({ id: String(f.id), title: f.target || "-", sub: `${f.brand || ""} ${f.requestDate ? "· 요청 " + f.requestDate : ""}`, go: () => nav.tab("issues") })),
-      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_credit_analyses")),
+      label: "신용분석 대상자", mode: "item", points: ITEM_POINTS, confirmEmpty: true,
+      hint: "담당 대상자의 신용조회 결과를 입력하세요",
+      items: () => (data.creditAnalyses || [])
+        .filter(f => !f.deleted && isMine(f.assignee) && (!f.completed || awarded.has(`credit|${f.id}`)))
+        .map(f => ({
+          id: String(f.id), title: f.target || "-", badge: f.assignee ? `담당 ${f.assignee}` : "",
+          sub: `${f.requestDate ? "요청 " + f.requestDate : ""}${f.checkResult ? " · 결과 " + f.checkResult + "점" : " · 결과 미입력"}`,
+          hasValue: String(f.checkResult || "").trim() !== "",
+          go: () => nav.tab("issues"),
+        })),
+      detect: (it, rows) => it.hasValue && hitPath(rows, p => p.startsWith("/api/kv/manual_credit_analyses")),
+    },
+    forced: {
+      label: "주요현안 · 강제집행 대상자", mode: "item", points: ITEM_POINTS, confirmEmpty: true, allowHold: true,
+      hint: "처리일을 입력하면 완료, 사정이 있으면 [보류] (보류는 점수 없음)",
+      items: () => (data.forcedExecutions || [])
+        .filter(f => !f.deleted && isMine(f.assignee) && (!f.completed || awarded.has(`forced|${f.id}`)))
+        .map(f => ({
+          id: String(f.id), title: f.debtorName || "-", badge: f.assignee ? `담당 ${f.assignee}` : "",
+          sub: `${f.executionContent || ""}${f.resolvedDate ? " · 처리일 " + f.resolvedDate : " · 처리일 미입력"}`,
+          hasValue: String(f.resolvedDate || "").trim() !== "",
+          go: () => nav.tab("issues"),
+        })),
+      detect: (it, rows) => it.hasValue && hitPath(rows, p => p.startsWith("/api/kv/manual_forced_executions")),
     },
     todo: {
       label: "To Do List", mode: "step", points: STEP_POINTS,
@@ -130,9 +144,11 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
 
   const isMine = useMemo(() => makeIsMine(currentUser?.name), [currentUser?.name]);
   const order = USER_ORDER[currentUser?.name] || DEFAULT_ORDER;
+  const awardedSet = useMemo(() => new Set(awards.map(a => `${a.mission}|${a.itemId}`)), [awards]);
+  const pointsOf = useMemo(() => new Map(awards.map(a => [`${a.mission}|${a.itemId}`, a.points || 0])), [awards]);
   const missions = useMemo(
-    () => buildMissions({ data, today, isMine, getCaseEventDate, nav }),
-    [data, today, isMine, getCaseEventDate, nav]
+    () => buildMissions({ data, today, isMine, getCaseEventDate, nav, awarded: awardedSet }),
+    [data, today, isMine, getCaseEventDate, nav, awardedSet]
   );
 
   const award = useCallback(async (mission, itemId, points) => {
@@ -163,45 +179,54 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
     return () => clearInterval(t);
   }, [refresh]);
 
-  const awardedSet = useMemo(() => new Set(awards.map(a => `${a.mission}|${a.itemId}`)), [awards]);
+  const grant = useCallback((mission, itemId, points) => award(mission, itemId, points).then(ok => ok && refresh()), [award, refresh]);
 
   // 단계별 상태 계산
+  //  - 항목마다 done(처리됨) / held(보류: 점수 없이 통과)
+  //  - 대상자가 없는 단계는 confirmEmpty면 [없음]을 눌러야 통과, 아니면 자동으로 건너뜀(skip)
   const steps = useMemo(() => order.filter(k => missions[k]).map(key => {
     const m = missions[key];
     const items = m.items();
     let done;
     if (m.mode === "item") {
-      items.forEach(it => { it.done = awardedSet.has(`${key}|${it.id}`) || m.detect(it, rows); });
-      done = items.length > 0 && items.every(i => i.done);
+      items.forEach(it => {
+        const k = `${key}|${it.id}`;
+        it.held = !!m.allowHold && awardedSet.has(k) && (pointsOf.get(k) || 0) === 0;
+        it.done = it.held || awardedSet.has(k) || !!m.detect(it, rows);
+      });
     } else if (m.mode === "check") {
       items.forEach(it => { it.done = awardedSet.has(`${key}|${it.id}`); });
-      done = items.length > 0 && items.every(i => i.done);
     } else {
       const hit = awardedSet.has(`${key}|step`) || m.stepDetect(rows);
       items.forEach(it => { it.done = hit; });
-      done = items.length > 0 && hit;
     }
-    return { key, m, items, done, empty: items.length === 0 };
-  }), [order, missions, awardedSet, rows]);
+    const empty = items.length === 0;
+    const noneConfirmed = awardedSet.has(`${key}|none`);
+    if (empty) done = !!m.confirmEmpty && noneConfirmed;
+    else done = items.every(i => i.done);
+    return { key, m, items, done, empty, skip: empty && !m.confirmEmpty };
+  }), [order, missions, awardedSet, pointsOf, rows]);
 
   // 새로 감지된 완료를 점수로 지급 (서버가 중복은 막는다)
   useEffect(() => {
     if (!loaded || failed) return;
     for (const s of steps) {
       if (s.m.mode === "item") {
-        for (const it of s.items) if (it.done && !awardedSet.has(`${s.key}|${it.id}`)) award(s.key, it.id, s.m.points).then(ok => ok && refresh());
+        for (const it of s.items) if (it.done && !it.held && !awardedSet.has(`${s.key}|${it.id}`)) grant(s.key, it.id, s.m.points);
       } else if (s.m.mode === "step" && s.done && !awardedSet.has(`${s.key}|step`)) {
-        award(s.key, "step", s.m.points).then(ok => ok && refresh());
+        grant(s.key, "step", s.m.points);
       }
-      if (s.done && !awardedSet.has(`${s.key}|__clear__`)) award(s.key, "__clear__", STEP_POINTS).then(ok => ok && refresh());
+      // 단계 보너스는 실제로 처리한 항목이 하나라도 있을 때만 (전부 보류거나 대상자 없음이면 없음)
+      if (s.done && !s.empty && s.items.some(i => !i.held) && !awardedSet.has(`${s.key}|__clear__`)) grant(s.key, "__clear__", STEP_POINTS);
     }
-  }, [steps, loaded, failed, awardedSet, award, refresh]);
+  }, [steps, loaded, failed, awardedSet, grant]);
 
   const total = awards.reduce((n, a) => n + (a.points || 0), 0);
-  const active = steps.filter(s => !s.empty);
+  const active = steps.filter(s => !s.skip);
   const doneCount = active.filter(s => s.done).length;
   const current = active.find(s => !s.done);
   const allClear = loaded && active.length > 0 && !current;
+  const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
     <div style={{ position: "fixed", right: 20, bottom: 20, width: 360, maxHeight: "78vh", zIndex: 1200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,.22)", display: "flex", flexDirection: "column", overflow: "hidden", textAlign: "left" }}>
@@ -233,30 +258,38 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
           <div style={{ border: "2px solid var(--acc)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>STEP {active.indexOf(current) + 1} / {active.length}</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", margin: "2px 0" }}>{current.m.label}</div>
-            <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8 }}>{current.m.hint} · {current.m.mode === "item" ? `건당 ${current.m.points}점` : current.m.mode === "check" ? `건당 ${current.m.points}점` : `완료 시 ${current.m.points}점`} + 단계 보너스 {STEP_POINTS}점</div>
+            <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8 }}>{current.m.hint} · {current.m.mode === "step" ? `완료 시 ${current.m.points}점` : `건당 ${current.m.points}점`} + 단계 보너스 {STEP_POINTS}점</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {current.items.map(it => (
-                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: it.done ? "rgba(16,185,129,.1)" : "var(--bg2)" }}>
-                  <div style={{ width: 18, height: 18, borderRadius: 9, flexShrink: 0, border: it.done ? "none" : "2px solid var(--brd)", background: it.done ? "var(--ok)" : "transparent", color: "#fff", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{it.done ? "✓" : ""}</div>
+                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: it.held ? "rgba(148,163,184,.18)" : it.done ? "rgba(16,185,129,.1)" : "var(--bg2)" }}>
+                  <div style={{ width: 18, height: 18, borderRadius: 9, flexShrink: 0, border: it.done ? "none" : "2px solid var(--brd)", background: it.held ? "var(--tm)" : it.done ? "var(--ok)" : "transparent", color: "#fff", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{it.held ? "–" : it.done ? "✓" : ""}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: it.done ? "line-through" : "none" }}>{it.title}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: it.done ? "line-through" : "none" }}>{it.title}{it.badge && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "var(--acc)", background: "var(--hover)", borderRadius: 4, padding: "1px 5px", textDecoration: "none", display: "inline-block" }}>{it.badge}</span>}{it.held && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--tm)" }}>보류</span>}</div>
                     {it.sub && <div style={{ fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</div>}
                   </div>
-                  {!it.done && current.m.mode === "check" && <button style={{ ...btn, background: "var(--acc)", color: "#fff", border: "none" }} onClick={() => award(current.key, it.id, current.m.points).then(ok => ok && refresh())}>확인</button>}
+                  {!it.done && current.m.mode === "check" && <button style={{ ...btn, background: "var(--acc)", color: "#fff", border: "none" }} onClick={() => grant(current.key, it.id, current.m.points)}>확인</button>}
+                  {!it.done && current.m.allowHold && <button style={btn} onClick={() => grant(current.key, it.id, 0)}>보류</button>}
                   {!it.done && it.go && <button style={btn} onClick={it.go}>이동</button>}
                 </div>
               ))}
             </div>
+            {current.empty && (
+              <div style={{ textAlign: "center", padding: "10px 0 4px" }}>
+                <div style={{ fontSize: 13, color: "var(--ts)", marginBottom: 10 }}>오늘 해당 대상자가 없습니다.</div>
+                <button disabled={!dataReady} onClick={() => grant(current.key, "none", NONE_POINTS)} style={{ ...btn, padding: "8px 28px", fontSize: 13, background: "var(--acc)", color: "#fff", border: "none", opacity: dataReady ? 1 : 0.5 }}>없음</button>
+                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 6 }}>확인 후 [없음]을 누르면 다음 단계로 넘어갑니다 (+{NONE_POINTS}점)</div>
+              </div>
+            )}
             {current.m.mode === "step" && <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 8 }}>이 단계는 해당 화면에서 데이터를 한 번 입력/수정하면 완료됩니다.</div>}
           </div>
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {steps.map((s, i) => (
-            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: s.empty ? "var(--tm)" : s.done ? "var(--ok)" : "var(--ts)", opacity: s.empty ? 0.6 : 1 }}>
-              <span style={{ width: 16, textAlign: "center", fontWeight: 700 }}>{s.empty ? "–" : s.done ? "✓" : current === s ? "▶" : i + 1}</span>
+            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: s.skip ? "var(--tm)" : s.done ? "var(--ok)" : "var(--ts)", opacity: s.skip ? 0.6 : 1 }}>
+              <span style={{ width: 16, textAlign: "center", fontWeight: 700 }}>{s.skip ? "–" : s.done ? "✓" : current === s ? "▶" : i + 1}</span>
               <span style={{ flex: 1, fontWeight: current === s ? 700 : 500 }}>{s.m.label}</span>
-              <span style={{ fontSize: 10, color: "var(--tm)" }}>{s.empty ? "해당 없음" : `${s.items.filter(x => x.done).length}/${s.items.length}`}</span>
+              <span style={{ fontSize: 10, color: "var(--tm)" }}>{s.empty ? (s.done ? "없음 확인" : "해당 없음") : `${s.items.filter(x => x.done).length}/${s.items.length}`}</span>
             </div>
           ))}
         </div>
