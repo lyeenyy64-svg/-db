@@ -860,6 +860,8 @@ function logAiAnalysis(req, kind, targetName, debtorId, question, answer) {
 // 훨씬 크게 잡힌다 — 아래 kv 핸들러에서 실제 변경분만 따로 정확히 계산해서 기록하므로
 // 여기서는 중복 집계하지 않도록 제외한다.
 const STATS_EXCLUDED_PATHS = ["/api/admin/heartbeat"];
+// 업무 길라잡이(데일리 미션) 점수 API — 접속기록 미들웨어보다 먼저 등록해 입력량 통계에 섞이지 않게 한다
+require("./guide.cjs")(app, db, extractUserName);
 // PATCH /api/debtors/:id는 debtor_edit_log에 필드별 실제 변경분을 이미 정확히 기록하므로,
 // 여기서 요청 본문 전체 크기까지 또 세면 같은 저장 1번이 두 번 잡혀 입력량/수정 건수가 부풀려진다.
 const isDebtorPatch = (req) => req.method === "PATCH" && /^\/api\/debtors\/[^/]+$/.test(req.path);

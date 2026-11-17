@@ -1,0 +1,266 @@
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+
+// ─── 업무 길라잡이 (데일리 미션) ───────────────────────────────────────────────
+// 담당자가 출근해서 뭘 할지 모를 때, 오늘 해야 할 일을 단계(미션)별로 순서대로 보여준다.
+// 완료 판정: 서버의 접속기록(오늘 내가 입력한 데이터)을 보고 자동으로 체크 → 점수 지급 → 다음 단계.
+// 점수는 서버(guide_scores)에 (사용자·날짜·미션·항목) 단위로 한 번만 쌓이고, 어드민 통계에서 일/월/연 합계를 본다.
+
+const pad2 = n => String(n).padStart(2, "0");
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+
+// 기본 미션 순서. 사람마다 다르게 하려면 USER_ORDER에 이름으로 추가한다.
+const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "todo"];
+const USER_ORDER = {
+  "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
+};
+
+const ITEM_POINTS = 10;   // 항목(채무자/사건) 하나를 처리할 때
+const STEP_POINTS = 20;   // 한 단계(미션) 전체를 끝낼 때
+const CHECK_POINTS = 5;   // 확인만 하는 항목(주요일정)
+
+// 담당자 표기가 "준원"/"김준원"처럼 다를 수 있어 포함 관계로 비교한다 (2글자 이상일 때만)
+const makeIsMine = (name) => (assignee) => {
+  const a = String(assignee || "").trim(), n = String(name || "").trim();
+  if (!a || !n) return false;
+  return a === n || (a.length >= 2 && n.includes(a)) || (n.length >= 2 && a.includes(n));
+};
+
+const hitPath = (rows, pred) => rows.some(r => pred(String(r.path || ""), r));
+
+// 미션 정의 ────────────────────────────────────────────────────────────────
+// mode "item": 항목마다 완료 판정(detect) / mode "step": 해당 저장 경로에 오늘 입력이 있으면 단계 전체 완료
+// mode "check": 항목을 눈으로 확인하고 [확인] 버튼으로 완료
+function buildMissions(ctx) {
+  const { data, today, isMine, getCaseEventDate, nav } = ctx;
+  const debtors = data.debtors || [];
+  const debtorById = new Map(debtors.map(d => [d.id, d]));
+  const dayDiff = ev => Math.round((new Date(ev) - new Date(today)) / 86400000);
+
+  return {
+    installment: {
+      label: "오늘 분할상환 대상자 연락", mode: "item", points: ITEM_POINTS,
+      hint: "문자·전화로 연락하고 히스토리에 남기세요",
+      items: () => (data.installmentSchedules || [])
+        .filter(s => s.dueDate === today && s.status !== "이월" && isMine(s.assignee))
+        .map(s => ({
+          id: String(s.id), title: s.debtorName || "-", sub: `${s.brand || ""} · 예정 ${Number(s.scheduledAmount || 0).toLocaleString()}원 · ${s.status || "미납"}`,
+          debtorId: s.debtorId,
+          go: () => { const d = debtorById.get(s.debtorId); if (d) nav.debtor(d); },
+        })),
+      detect: (it, rows) => hitPath(rows, (p, r) => (it.debtorId != null && String(r.refDebtorId) === String(it.debtorId)) || p === `/api/kv/hist_m_${it.debtorId}`),
+    },
+    civil: {
+      label: "민/형사 이벤트 확인", mode: "item", points: ITEM_POINTS,
+      hint: "7일 이내 기일이 있는 사건의 진행내용을 입력하세요",
+      items: () => {
+        const groups = [
+          { tab: "minsa", list: data.minsaCases, kind: "민사소송" },
+          { tab: "legal", list: [...(data.legalCases || []), ...(data.assetDisclosures || [])], kind: "법적절차" },
+          { tab: "rehabBankruptcy", list: data.rehabilitations, kind: "회생/파산" },
+        ];
+        return groups.flatMap(g => (g.list || []).map(c => ({ c, g }))).filter(({ c }) => {
+          const ev = getCaseEventDate(c.id);
+          if (!ev) return false;
+          const diff = dayDiff(ev);
+          return diff >= 0 && diff <= 7 && isMine(debtorById.get(c.debtorId)?.assignee);
+        }).map(({ c, g }) => ({
+          id: String(c.id), title: c.defendant || c.debtorName || "-",
+          sub: `${g.kind} · 기일 ${getCaseEventDate(c.id)} · ${c.court || "-"} ${c.caseNumber || ""}`,
+          go: () => nav.caseOf(g.tab, c.id),
+        })).sort((a, b) => a.sub.localeCompare(b.sub));
+      },
+      detect: (it, rows) => hitPath(rows, p => p.includes(`case_notes_${it.id}`) || p.includes(`case_event_${it.id}`)),
+    },
+    schedule: {
+      label: "주요일정 이벤트 체크", mode: "check", points: CHECK_POINTS,
+      hint: "오늘 일정을 확인하고 [확인]을 누르세요",
+      items: () => {
+        const out = [];
+        for (const s of (data.monthlySchedule || [])) {
+          if (today >= s.date && today <= (s.endDate || s.date)) out.push({ id: `S${s.id}`, title: s.text || "-", sub: "월간 주요일정", go: () => nav.schedule() });
+        }
+        for (const [kind, list] of [["민사소송", data.minsaCases], ["법적절차", data.legalCases], ["재산명시", data.assetDisclosures], ["회생/파산", data.rehabilitations]]) {
+          for (const c of (list || [])) {
+            if (getCaseEventDate(c.id) === today) out.push({ id: `C${c.id}`, title: c.defendant || c.debtorName || "-", sub: `${kind} 기일 오늘`, go: () => nav.schedule() });
+          }
+        }
+        return out;
+      },
+    },
+    forced: {
+      label: "주요현안 · 강제집행 대상사", mode: "step", points: STEP_POINTS,
+      hint: "진행 중인 건의 처리내용을 입력/수정하세요",
+      items: () => (data.forcedExecutions || []).filter(f => !f.completed && !f.deleted && isMine(f.assignee))
+        .map(f => ({ id: String(f.id), title: f.debtorName || "-", sub: f.executionContent || "", go: () => nav.tab("issues") })),
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_forced_executions")),
+    },
+    credit: {
+      label: "신용분석 대상자", mode: "step", points: STEP_POINTS,
+      hint: "조회 결과를 입력하세요",
+      items: () => (data.creditAnalyses || []).filter(f => !f.completed && !f.deleted && isMine(f.assignee))
+        .map(f => ({ id: String(f.id), title: f.target || "-", sub: `${f.brand || ""} ${f.requestDate ? "· 요청 " + f.requestDate : ""}`, go: () => nav.tab("issues") })),
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_credit_analyses")),
+    },
+    todo: {
+      label: "To Do List", mode: "step", points: STEP_POINTS,
+      hint: "할 일을 처리하거나 등록/갱신하세요",
+      items: () => (data.todoList || []).filter(t => t.status !== "완료" && !t.deleted && isMine(t.assignee))
+        .map(t => ({ id: String(t.id), title: t.task || "-", sub: `${t.priority || ""} · ${t.status || "진행중"}`, go: () => nav.tab("issues") })),
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_todo_list")),
+    },
+    rehab: {
+      label: "회생/파산 현황", mode: "step", points: STEP_POINTS,
+      hint: "담당 회생/파산 건의 진행내용을 입력하세요",
+      items: () => (data.rehabilitations || []).filter(c => !c.dismissed && isMine(debtorById.get(c.debtorId)?.assignee)).slice(0, 15)
+        .map(c => ({ id: String(c.id), title: c.debtorName || "-", sub: `${c.type || ""} ${c.court || ""} ${c.caseNumber || ""}`, go: () => nav.caseOf("rehabBankruptcy", c.id) })),
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_rehabilitations") || p.startsWith("/api/kv/rehab") || /case_notes_/.test(p)),
+    },
+  };
+}
+
+const btn = { padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)", color: "var(--ts)" };
+
+export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, onClose }) {
+  const [rows, setRows] = useState([]);          // 오늘 내가 입력한 기록
+  const [awards, setAwards] = useState([]);      // 이미 지급된 점수 [{mission,itemId,points}]
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [today] = useState(localToday);
+  const posting = useRef(new Set());
+
+  const isMine = useMemo(() => makeIsMine(currentUser?.name), [currentUser?.name]);
+  const order = USER_ORDER[currentUser?.name] || DEFAULT_ORDER;
+  const missions = useMemo(
+    () => buildMissions({ data, today, isMine, getCaseEventDate, nav }),
+    [data, today, isMine, getCaseEventDate, nav]
+  );
+
+  const award = useCallback(async (mission, itemId, points) => {
+    const k = `${mission}|${itemId}`;
+    if (posting.current.has(k)) return false;
+    posting.current.add(k);
+    try {
+      await fetch("/api/guide/award", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mission, itemId, points }) });
+      return true;
+    } catch { posting.current.delete(k); return false; }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [a, w] = await Promise.all([
+        fetch("/api/guide/activity").then(r => r.ok ? r.json() : Promise.reject()),
+        fetch("/api/guide/awards").then(r => r.ok ? r.json() : Promise.reject()),
+      ]);
+      setRows(a.rows || []); setAwards(w.rows || []); setFailed(false);
+    } catch { setFailed(true); }
+    setLoaded(true);
+  }, []);
+
+  // 열려 있는 동안 5초마다 입력 기록을 다시 확인 — 채무자 화면에서 히스토리를 쓰고 오면 자동으로 체크된다
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  const awardedSet = useMemo(() => new Set(awards.map(a => `${a.mission}|${a.itemId}`)), [awards]);
+
+  // 단계별 상태 계산
+  const steps = useMemo(() => order.filter(k => missions[k]).map(key => {
+    const m = missions[key];
+    const items = m.items();
+    let done;
+    if (m.mode === "item") {
+      items.forEach(it => { it.done = awardedSet.has(`${key}|${it.id}`) || m.detect(it, rows); });
+      done = items.length > 0 && items.every(i => i.done);
+    } else if (m.mode === "check") {
+      items.forEach(it => { it.done = awardedSet.has(`${key}|${it.id}`); });
+      done = items.length > 0 && items.every(i => i.done);
+    } else {
+      const hit = awardedSet.has(`${key}|step`) || m.stepDetect(rows);
+      items.forEach(it => { it.done = hit; });
+      done = items.length > 0 && hit;
+    }
+    return { key, m, items, done, empty: items.length === 0 };
+  }), [order, missions, awardedSet, rows]);
+
+  // 새로 감지된 완료를 점수로 지급 (서버가 중복은 막는다)
+  useEffect(() => {
+    if (!loaded || failed) return;
+    for (const s of steps) {
+      if (s.m.mode === "item") {
+        for (const it of s.items) if (it.done && !awardedSet.has(`${s.key}|${it.id}`)) award(s.key, it.id, s.m.points).then(ok => ok && refresh());
+      } else if (s.m.mode === "step" && s.done && !awardedSet.has(`${s.key}|step`)) {
+        award(s.key, "step", s.m.points).then(ok => ok && refresh());
+      }
+      if (s.done && !awardedSet.has(`${s.key}|__clear__`)) award(s.key, "__clear__", STEP_POINTS).then(ok => ok && refresh());
+    }
+  }, [steps, loaded, failed, awardedSet, award, refresh]);
+
+  const total = awards.reduce((n, a) => n + (a.points || 0), 0);
+  const active = steps.filter(s => !s.empty);
+  const doneCount = active.filter(s => s.done).length;
+  const current = active.find(s => !s.done);
+  const allClear = loaded && active.length > 0 && !current;
+
+  return (
+    <div style={{ position: "fixed", right: 20, bottom: 20, width: 360, maxHeight: "78vh", zIndex: 1200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,.22)", display: "flex", flexDirection: "column", overflow: "hidden", textAlign: "left" }}>
+      <div style={{ padding: "12px 14px", background: "var(--acc)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800 }}>업무 길라잡이</div>
+          <div style={{ fontSize: 11, opacity: 0.9 }}>오늘 미션 {doneCount}/{active.length} · 오늘 점수 <b>{total}</b>점</div>
+        </div>
+        <button onClick={onClose} aria-label="닫기" style={{ background: "none", color: "#fff", fontSize: 18, lineHeight: 1, cursor: "pointer", border: "none" }}>×</button>
+      </div>
+      <div style={{ height: 5, background: "var(--bg)" }}>
+        <div style={{ height: "100%", width: `${active.length ? (doneCount / active.length) * 100 : 0}%`, background: "var(--ok)", transition: "width .4s" }} />
+      </div>
+
+      <div style={{ padding: 14, overflow: "auto", flex: 1 }}>
+        {!loaded && <div style={{ fontSize: 12, color: "var(--tm)" }}>오늘 할 일을 불러오는 중…</div>}
+        {loaded && failed && <div style={{ fontSize: 12, color: "var(--err)" }}>서버와 연결하지 못했습니다. 잠시 후 다시 시도합니다.</div>}
+        {loaded && !failed && active.length === 0 && (
+          <div style={{ fontSize: 13, color: "var(--ts)", lineHeight: 1.6 }}>오늘 배정된 미션이 없습니다.<br />담당자 이름과 채무자 담당자 표기가 같은지 확인해 주세요.</div>
+        )}
+        {allClear && (
+          <div style={{ textAlign: "center", padding: "10px 0 14px" }}>
+            <div style={{ fontSize: 30 }}>🎉</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", marginTop: 4 }}>오늘의 미션을 모두 완료했어요!</div>
+            <div style={{ fontSize: 12, color: "var(--ts)", marginTop: 4 }}>오늘 획득 점수 {total}점</div>
+          </div>
+        )}
+        {current && (
+          <div style={{ border: "2px solid var(--acc)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>STEP {active.indexOf(current) + 1} / {active.length}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", margin: "2px 0" }}>{current.m.label}</div>
+            <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8 }}>{current.m.hint} · {current.m.mode === "item" ? `건당 ${current.m.points}점` : current.m.mode === "check" ? `건당 ${current.m.points}점` : `완료 시 ${current.m.points}점`} + 단계 보너스 {STEP_POINTS}점</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {current.items.map(it => (
+                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: it.done ? "rgba(16,185,129,.1)" : "var(--bg2)" }}>
+                  <div style={{ width: 18, height: 18, borderRadius: 9, flexShrink: 0, border: it.done ? "none" : "2px solid var(--brd)", background: it.done ? "var(--ok)" : "transparent", color: "#fff", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{it.done ? "✓" : ""}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: it.done ? "line-through" : "none" }}>{it.title}</div>
+                    {it.sub && <div style={{ fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</div>}
+                  </div>
+                  {!it.done && current.m.mode === "check" && <button style={{ ...btn, background: "var(--acc)", color: "#fff", border: "none" }} onClick={() => award(current.key, it.id, current.m.points).then(ok => ok && refresh())}>확인</button>}
+                  {!it.done && it.go && <button style={btn} onClick={it.go}>이동</button>}
+                </div>
+              ))}
+            </div>
+            {current.m.mode === "step" && <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 8 }}>이 단계는 해당 화면에서 데이터를 한 번 입력/수정하면 완료됩니다.</div>}
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {steps.map((s, i) => (
+            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: s.empty ? "var(--tm)" : s.done ? "var(--ok)" : "var(--ts)", opacity: s.empty ? 0.6 : 1 }}>
+              <span style={{ width: 16, textAlign: "center", fontWeight: 700 }}>{s.empty ? "–" : s.done ? "✓" : current === s ? "▶" : i + 1}</span>
+              <span style={{ flex: 1, fontWeight: current === s ? 700 : 500 }}>{s.m.label}</span>
+              <span style={{ fontSize: 10, color: "var(--tm)" }}>{s.empty ? "해당 없음" : `${s.items.filter(x => x.done).length}/${s.items.length}`}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

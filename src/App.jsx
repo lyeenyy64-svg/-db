@@ -3,6 +3,7 @@ import { EXCEL_DEBTORS } from "./excelData.js";
 import { EXCEL_REHABS } from "./rehabData.js";
 import { LEGAL_CASES, MINSA_CASES, ASSET_DISCLOSURE_CASES } from "./legalData.js";
 import { COLLECTION_ORDERS } from "./collectionData.js";
+import GuideQuest from "./GuideQuest.jsx";
 import { addIntervals, generateInstallmentDates, computeInstallmentCount, buildScheduleAmounts, suggestEndDate } from "./lib/installmentCalc.js";
 
 // ─── Utilities ────────────────────────────────────────────
@@ -3663,6 +3664,8 @@ function MainApp({ authUser, onLogout }) {
   const [assigneeDrill, setAssigneeDrill] = useState(null); // {assignee, label, year, month(null=연간)} | null
   const [regMonthFilter, setRegMonthFilter] = useState(() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() + 1 }; });
   const [regDrillModal, setRegDrillModal] = useState(null); // {year, month, brand(null=전체), type('new'|'add')} | null
+  const [guideOpen, setGuideOpen] = useState(false); // 업무 길라잡이(데일리 미션) 패널
+  const [statsGuideGran, setStatsGuideGran] = useState("daily");
   const [ccEventDrillOpen, setCcEventDrillOpen] = useState(false); // "민/형사 이벤트" 클릭 시 전체 목록 표시
   const [legalSearchInit, setLegalSearchInit] = useState(null);
   const [minsaSearchInit, setMinsaSearchInit] = useState(null);
@@ -13563,13 +13566,15 @@ function MainApp({ authUser, onLogout }) {
         {mainTab === "audit" && isSuperAdmin && <AuditLogPanel />}
         {mainTab === "stats" && isSuperAdmin && (() => {
           const EMPTY_GRAN = { daily: [], monthly: [], yearly: [] };
-          const EMPTY_STATS = { access: EMPTY_GRAN, volume: EMPTY_GRAN, todo: { register: EMPTY_GRAN, complete: EMPTY_GRAN, remove: EMPTY_GRAN }, summary: [] };
+          const EMPTY_STATS = { access: EMPTY_GRAN, volume: EMPTY_GRAN, todo: { register: EMPTY_GRAN, complete: EMPTY_GRAN, remove: EMPTY_GRAN }, guide: EMPTY_GRAN, summary: [] };
           const stats = adminStats || EMPTY_STATS;
           const loadStats = () => {
             setAdminStatsLoading(true);
-            fetch("/api/admin/stats")
-              .then(r => r.ok ? r.json() : null)
-              .then(data => { setAdminStats(data || EMPTY_STATS); setAdminStatsLoading(false); })
+            Promise.all([
+              fetch("/api/admin/stats").then(r => r.ok ? r.json() : null),
+              fetch("/api/guide/stats").then(r => r.ok ? r.json() : null).catch(() => null),
+            ])
+              .then(([data, guide]) => { setAdminStats(data ? { ...data, guide: guide || EMPTY_GRAN } : EMPTY_STATS); setAdminStatsLoading(false); })
               .catch(() => setAdminStatsLoading(false));
           };
           const knownNames = users.map(u => u.name);
@@ -13669,6 +13674,7 @@ function MainApp({ authUser, onLogout }) {
                 })}
               {renderStatTable(stats.todo.register, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 등록", "ToDo등록", "표시할 데이터가 없습니다")}
               {renderStatTable(stats.todo.complete, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 완료", "ToDo완료", "표시할 데이터가 없습니다")}
+              {renderStatTable(stats.guide || EMPTY_GRAN, statsGuideGran, setStatsGuideGran, "score", n => (n ? `${n.toLocaleString()}점` : "-"), "사용자별 업무 길라잡이 점수", "길라잡이점수", "표시할 데이터가 없습니다")}
               {renderStatTable(stats.todo.remove, statsTodoGran, setStatsTodoGran, "count", fmtCount, "사용자별 To Do 삭제", "ToDo삭제", "표시할 데이터가 없습니다")}
               <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--brd)" }}>
@@ -14123,9 +14129,15 @@ function MainApp({ authUser, onLogout }) {
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <HeaderClock currentUser={currentUser} lastSaved={lastSaved} compact={isNarrow} />
-            <button title="업무 길라잡이" aria-label="업무 길라잡이" style={{ width: 36, height: 36, borderRadius: 8, background: "var(--card)", color: "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: "pointer" }}>
+            <button title="업무 길라잡이" aria-label="업무 길라잡이" onClick={() => setGuideOpen(o => !o)} style={{ width: 36, height: 36, borderRadius: 8, background: guideOpen ? "var(--acc)" : "var(--card)", color: guideOpen ? "#fff" : "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: "pointer" }}>
               <I name="compass" size={18} />
             </button>
+            {guideOpen && <GuideQuest data={data} currentUser={currentUser} getCaseEventDate={getCaseEventDate} onClose={() => setGuideOpen(false)} nav={{
+              debtor: d => navigateToDebtor(d, "히스토리"),
+              caseOf: (t, id) => { setTab(t); ({ minsa: setMinsaOpenCaseId, legal: setLegalOpenCaseId, rehabBankruptcy: setRehabOpenCaseId })[t]?.(id); },
+              tab: t => setTab(t),
+              schedule: () => { setTab("issues"); setTimeout(() => { document.getElementById("monthly-schedule-calendar")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 50); },
+            }} />}
             <div style={{ width: 1, height: 28, background: "var(--brd)" }} />
             <button onClick={() => loadData()} disabled={isRefreshing} title="데이터 새로고침" style={{ width: 36, height: 36, borderRadius: 8, background: isRefreshing ? "var(--acc)" : "var(--card)", color: isRefreshing ? "#fff" : "var(--ts)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: isRefreshing ? "default" : "pointer" }}>
               <span className={isRefreshing ? "spinning" : ""}><I name="refresh" size={16} /></span>
