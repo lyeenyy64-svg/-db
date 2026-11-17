@@ -3841,7 +3841,7 @@ function MainApp({ authUser, onLogout }) {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
+          guarantors: d.guarantors || [],
           history: ex?.history || [],
           phoneHistory: [],
           monthlyCollected: {},
@@ -4315,7 +4315,7 @@ function MainApp({ authUser, onLogout }) {
           ...d,
           brandColor: brandColorMap[d.brand] || "#64748b",
           execTitle: !!d.execTitle,
-          guarantors: d.guarantors?.length > 0 ? d.guarantors : (ex?.guarantors || []),
+          guarantors: d.guarantors || [],
           history: ex?.history || [],
           phoneHistory: [], monthlyCollected: {},
         };
