@@ -11,12 +11,19 @@ const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pa
 // 기본 미션 순서. 사람마다 다르게 하려면 USER_ORDER에 이름으로 추가한다.
 const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "todo"];
 const USER_ORDER = {
+  "배현진": ["todo", "schedule", "credit", "forced"],
   "김준원": ["installment", "credit", "forced"],
   "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
 };
 
+// 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내
+const USER_FINALE_NOTE = {
+  "배현진": "이메일 확인하여 계약서 검토할 부분 체크해 주세요",
+};
+
 const ITEM_POINTS = 10;   // 항목(채무자/사건) 하나를 처리할 때
 const STEP_POINTS = 20;   // 한 단계(미션) 전체를 끝낼 때
+const WIP_POINTS = 5;     // 진행 중으로 표시하고 넘어갈 때
 const NONE_POINTS = 5;    // 대상자가 없음을 확인했을 때
 const CHECK_POINTS = 5;   // 확인만 하는 항목(주요일정)
 
@@ -27,13 +34,21 @@ const makeIsMine = (name) => (assignee) => {
   return a === n || (a.length >= 2 && n.includes(a)) || (n.length >= 2 && a.includes(n));
 };
 
+// 이름/이름 뒷 두 글자(예: 배현진/현진)가 문장에 들어 있으면 그 사람과 관련된 일정으로 본다
+const mentionsUser = (name, ...texts) => {
+  const n = String(name || "").trim(); if (n.length < 2) return false;
+  const keys = [n, n.length >= 3 ? n.slice(-2) : null].filter(Boolean);
+  const t = texts.map(x => String(x || "")).join(" ");
+  return keys.some(k => t.includes(k));
+};
+
 const hitPath = (rows, pred) => rows.some(r => pred(String(r.path || ""), r));
 
 // 미션 정의 ────────────────────────────────────────────────────────────────
 // mode "item": 항목마다 완료 판정(detect) / mode "step": 해당 저장 경로에 오늘 입력이 있으면 단계 전체 완료
 // mode "check": 항목을 눈으로 확인하고 [확인] 버튼으로 완료
 function buildMissions(ctx) {
-  const { data, today, isMine, getCaseEventDate, nav, awarded } = ctx;
+  const { data, today, isMine, getCaseEventDate, nav, awarded, userName } = ctx;
   const debtors = data.debtors || [];
   const debtorById = new Map(debtors.map(d => [d.id, d]));
   const dayDiff = ev => Math.round((new Date(ev) - new Date(today)) / 86400000);
@@ -74,16 +89,18 @@ function buildMissions(ctx) {
       detect: (it, rows) => hitPath(rows, p => p.includes(`case_notes_${it.id}`) || p.includes(`case_event_${it.id}`)),
     },
     schedule: {
-      label: "주요일정 이벤트 체크", mode: "check", points: CHECK_POINTS,
-      hint: "오늘 일정을 확인하고 [확인]을 누르세요",
+      label: "월간 주요일정 확인", mode: "check", points: CHECK_POINTS, confirmEmpty: true,
+      hint: "오늘 나와 관련된 일정을 확인하고 [확인]을 누르세요",
       items: () => {
         const out = [];
         for (const s of (data.monthlySchedule || [])) {
-          if (today >= s.date && today <= (s.endDate || s.date)) out.push({ id: `S${s.id}`, title: s.text || "-", sub: "월간 주요일정", go: () => nav.schedule() });
+          if (today >= s.date && today <= (s.endDate || s.date) && mentionsUser(userName, s.text, s.detail)) {
+            out.push({ id: `S${s.id}`, title: s.text || "-", sub: `월간 주요일정${s.detail ? " · " + s.detail : ""}`, go: () => nav.schedule() });
+          }
         }
         for (const [kind, list] of [["민사소송", data.minsaCases], ["법적절차", data.legalCases], ["재산명시", data.assetDisclosures], ["회생/파산", data.rehabilitations]]) {
           for (const c of (list || [])) {
-            if (getCaseEventDate(c.id) === today) out.push({ id: `C${c.id}`, title: c.defendant || c.debtorName || "-", sub: `${kind} 기일 오늘`, go: () => nav.schedule() });
+            if (getCaseEventDate(c.id) === today && isMine(debtorById.get(c.debtorId)?.assignee)) out.push({ id: `C${c.id}`, title: c.defendant || c.debtorName || "-", sub: `${kind} 기일 오늘`, go: () => nav.schedule() });
           }
         }
         return out;
@@ -116,11 +133,17 @@ function buildMissions(ctx) {
       detect: (it, rows) => it.hasValue && hitPath(rows, p => p.startsWith("/api/kv/manual_forced_executions")),
     },
     todo: {
-      label: "To Do List", mode: "step", points: STEP_POINTS,
-      hint: "할 일을 처리하거나 등록/갱신하세요",
-      items: () => (data.todoList || []).filter(t => t.status !== "완료" && !t.deleted && isMine(t.assignee))
-        .map(t => ({ id: String(t.id), title: t.task || "-", sub: `${t.priority || ""} · ${t.status || "진행중"}`, go: () => nav.tab("issues") })),
-      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_todo_list")),
+      label: "주요현안 · To Do List", mode: "item", points: ITEM_POINTS, confirmEmpty: true, allowProgress: true,
+      hint: "항목별로 결과를 수정하거나, 아직 진행 중이면 [진행중]을 누르세요",
+      items: () => (data.todoList || [])
+        .filter(t => !t.deleted && isMine(t.assignee) && (t.status !== "완료" || awarded.has(`todo|${t.id}`) || awarded.has(`todo|${t.id}~wip`)))
+        .map(t => ({
+          id: String(t.id), title: t.task || "-", badge: t.assignee ? `담당 ${t.assignee}` : "",
+          sub: `${t.priority || ""} · ${t.status || "진행중"}${t.result ? " · 결과 입력됨" : " · 결과 미입력"}`,
+          hasValue: String(t.result || "").trim() !== "",
+          go: () => nav.tab("issues"),
+        })),
+      detect: (it, rows) => it.hasValue && hitPath(rows, p => p.startsWith("/api/kv/manual_todo_list")),
     },
     rehab: {
       label: "회생/파산 현황", mode: "step", points: STEP_POINTS,
@@ -131,6 +154,15 @@ function buildMissions(ctx) {
     },
   };
 }
+
+// 폭죽: 3곳에서 터지는 점 파티클 (CSS 애니메이션 한 번)
+const FW_COLORS = ["#ff5f00", "#f59e0b", "#10b981", "#3b82f6", "#ec4899", "#8b5cf6"];
+const FIREWORKS = [[22, 38], [50, 22], [78, 40]].flatMap(([x, y], c) => Array.from({ length: 16 }, (_, k) => {
+  const ang = (k / 16) * Math.PI * 2, r = 38 + (k % 3) * 14;
+  return { i: c * 16 + k, x, y, dx: Math.round(Math.cos(ang) * r), dy: Math.round(Math.sin(ang) * r), color: FW_COLORS[(k + c) % FW_COLORS.length], delay: c * 0.35 };
+}));
+const FIREWORK_CSS = `@keyframes gqFw{0%{transform:translate(0,0) scale(1);opacity:1}80%{opacity:1}100%{transform:translate(var(--dx),var(--dy)) scale(.4);opacity:0}}
+.gq-fw{position:absolute;width:6px;height:6px;border-radius:50%;pointer-events:none;opacity:0;animation:gqFw 1.2s ease-out both}`;
 
 const btn = { padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)", color: "var(--ts)" };
 
@@ -147,8 +179,8 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const awardedSet = useMemo(() => new Set(awards.map(a => `${a.mission}|${a.itemId}`)), [awards]);
   const pointsOf = useMemo(() => new Map(awards.map(a => [`${a.mission}|${a.itemId}`, a.points || 0])), [awards]);
   const missions = useMemo(
-    () => buildMissions({ data, today, isMine, getCaseEventDate, nav, awarded: awardedSet }),
-    [data, today, isMine, getCaseEventDate, nav, awardedSet]
+    () => buildMissions({ data, today, isMine, getCaseEventDate, nav, awarded: awardedSet, userName: currentUser?.name }),
+    [data, today, isMine, getCaseEventDate, nav, awardedSet, currentUser?.name]
   );
 
   const award = useCallback(async (mission, itemId, points) => {
@@ -192,7 +224,8 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
       items.forEach(it => {
         const k = `${key}|${it.id}`;
         it.held = !!m.allowHold && awardedSet.has(k) && (pointsOf.get(k) || 0) === 0;
-        it.done = it.held || awardedSet.has(k) || !!m.detect(it, rows);
+        it.wip = !!m.allowProgress && awardedSet.has(`${k}~wip`) && !awardedSet.has(k);
+        it.done = it.held || it.wip || awardedSet.has(k) || !!m.detect(it, rows);
       });
     } else if (m.mode === "check") {
       items.forEach(it => { it.done = awardedSet.has(`${key}|${it.id}`); });
@@ -212,7 +245,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
     if (!loaded || failed) return;
     for (const s of steps) {
       if (s.m.mode === "item") {
-        for (const it of s.items) if (it.done && !it.held && !awardedSet.has(`${s.key}|${it.id}`)) grant(s.key, it.id, s.m.points);
+        for (const it of s.items) if (it.done && !it.held && !it.wip && !awardedSet.has(`${s.key}|${it.id}`)) grant(s.key, it.id, s.m.points);
       } else if (s.m.mode === "step" && s.done && !awardedSet.has(`${s.key}|step`)) {
         grant(s.key, "step", s.m.points);
       }
@@ -226,6 +259,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const doneCount = active.filter(s => s.done).length;
   const current = active.find(s => !s.done);
   const allClear = loaded && active.length > 0 && !current;
+  const finaleNote = USER_FINALE_NOTE[currentUser?.name];
   const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
@@ -248,9 +282,11 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
           <div style={{ fontSize: 13, color: "var(--ts)", lineHeight: 1.6 }}>오늘 배정된 미션이 없습니다.<br />담당자 이름과 채무자 담당자 표기가 같은지 확인해 주세요.</div>
         )}
         {allClear && (
-          <div style={{ textAlign: "center", padding: "10px 0 14px" }}>
-            <div style={{ fontSize: 30 }}>🎉</div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", marginTop: 4 }}>오늘의 미션을 모두 완료했어요!</div>
+          <div style={{ position: "relative", textAlign: "center", padding: "18px 0 14px", overflow: "hidden" }}>
+            <style>{FIREWORK_CSS}</style>
+            {FIREWORKS.map(p => <span key={p.i} className="gq-fw" style={{ left: p.x + "%", top: p.y + "%", background: p.color, "--dx": p.dx + "px", "--dy": p.dy + "px", animationDelay: p.delay + "s" }} />)}
+            <div style={{ fontSize: 34 }}>🎆🎉🎆</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "var(--tp)", marginTop: 6 }}>오늘 주요업무를 끝냈습니다!</div>
             <div style={{ fontSize: 12, color: "var(--ts)", marginTop: 4 }}>오늘 획득 점수 {total}점</div>
           </div>
         )}
@@ -261,13 +297,14 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
             <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8 }}>{current.m.hint} · {current.m.mode === "step" ? `완료 시 ${current.m.points}점` : `건당 ${current.m.points}점`} + 단계 보너스 {STEP_POINTS}점</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {current.items.map(it => (
-                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: it.held ? "rgba(148,163,184,.18)" : it.done ? "rgba(16,185,129,.1)" : "var(--bg2)" }}>
+                <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, background: (it.held || it.wip) ? "rgba(148,163,184,.18)" : it.done ? "rgba(16,185,129,.1)" : "var(--bg2)" }}>
                   <div style={{ width: 18, height: 18, borderRadius: 9, flexShrink: 0, border: it.done ? "none" : "2px solid var(--brd)", background: it.held ? "var(--tm)" : it.done ? "var(--ok)" : "transparent", color: "#fff", fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center" }}>{it.held ? "–" : it.done ? "✓" : ""}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: it.done ? "line-through" : "none" }}>{it.title}{it.badge && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "var(--acc)", background: "var(--hover)", borderRadius: 4, padding: "1px 5px", textDecoration: "none", display: "inline-block" }}>{it.badge}</span>}{it.held && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--tm)" }}>보류</span>}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--tp)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: it.done ? "line-through" : "none" }}>{it.title}{it.badge && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: "var(--acc)", background: "var(--hover)", borderRadius: 4, padding: "1px 5px", textDecoration: "none", display: "inline-block" }}>{it.badge}</span>}{it.held && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--tm)" }}>보류</span>}{it.wip && <span style={{ marginLeft: 6, fontSize: 10, color: "var(--tm)" }}>진행중</span>}</div>
                     {it.sub && <div style={{ fontSize: 10, color: "var(--tm)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</div>}
                   </div>
                   {!it.done && current.m.mode === "check" && <button style={{ ...btn, background: "var(--acc)", color: "#fff", border: "none" }} onClick={() => grant(current.key, it.id, current.m.points)}>확인</button>}
+                  {!it.done && current.m.allowProgress && <button style={btn} onClick={() => grant(current.key, `${it.id}~wip`, WIP_POINTS)}>진행중</button>}
                   {!it.done && current.m.allowHold && <button style={btn} onClick={() => grant(current.key, it.id, 0)}>보류</button>}
                   {!it.done && it.go && <button style={btn} onClick={it.go}>이동</button>}
                 </div>
@@ -294,6 +331,9 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
           ))}
         </div>
       </div>
+      {allClear && finaleNote && (
+        <div style={{ padding: "10px 14px", borderTop: "1px solid var(--brd)", background: "var(--hover)", fontSize: 12, fontWeight: 700, color: "var(--tp)" }}>📧 {finaleNote}</div>
+      )}
     </div>
   );
 }
