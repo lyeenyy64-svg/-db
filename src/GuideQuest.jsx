@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import GuideBreak from "./GuideBreak.jsx";
+import GuideLegalTip from "./GuideLegalTip.jsx";
 
 // ─── 업무 길라잡이 (데일리 미션) ───────────────────────────────────────────────
 // 담당자가 출근해서 뭘 할지 모를 때, 오늘 해야 할 일을 단계(미션)별로 순서대로 보여준다.
@@ -266,6 +267,10 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const [breakDone, setBreakDone] = useState(() => { try { return localStorage.getItem(breakKey) === "1"; } catch { return false; } });
   const endBreak = () => { setBreakDone(true); try { localStorage.setItem(breakKey, "1"); } catch { /* 무시 */ } };
   const showBreak = loaded && !failed && !breakDone && !allClear && active.length > 1 && active[0].done && !!current;
+  // 열자마자 오늘의 법률상식을 먼저 보여준다 — [확인]을 누르면 오늘은 다시 안 뜬다 (브라우저별 기억)
+  const tipKey = `gqTipDone_${currentUser?.name || ""}_${today}`;
+  const [tipDone, setTipDone] = useState(() => { try { return localStorage.getItem(tipKey) === "1"; } catch { return false; } });
+  const endTip = () => { setTipDone(true); try { localStorage.setItem(tipKey, "1"); } catch { /* 무시 */ } };
   const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
@@ -282,6 +287,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
       </div>
 
       <div style={{ padding: 14, overflow: "auto", flex: 1 }}>
+        {!tipDone && <GuideLegalTip today={today} onDone={endTip} />}
         {!loaded && <div style={{ fontSize: 12, color: "var(--tm)" }}>오늘 할 일을 불러오는 중…</div>}
         {loaded && failed && <div style={{ fontSize: 12, color: "var(--err)" }}>서버와 연결하지 못했습니다. 잠시 후 다시 시도합니다.</div>}
         {loaded && !failed && active.length === 0 && (
