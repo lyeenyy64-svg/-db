@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import GuideBreak from "./GuideBreak.jsx";
 
 // ─── 업무 길라잡이 (데일리 미션) ───────────────────────────────────────────────
 // 담당자가 출근해서 뭘 할지 모를 때, 오늘 해야 할 일을 단계(미션)별로 순서대로 보여준다.
@@ -260,6 +261,11 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const current = active.find(s => !s.done);
   const allClear = loaded && active.length > 0 && !current;
   const finaleNote = USER_FINALE_NOTE[currentUser?.name];
+  // 첫 단계를 끝낸 순간부터 휴식 카드를 보여준다 — [휴식 끝]을 누르면 오늘은 다시 안 뜬다 (브라우저별 기억)
+  const breakKey = `gqBreakDone_${currentUser?.name || ""}_${today}`;
+  const [breakDone, setBreakDone] = useState(() => { try { return localStorage.getItem(breakKey) === "1"; } catch { return false; } });
+  const endBreak = () => { setBreakDone(true); try { localStorage.setItem(breakKey, "1"); } catch { /* 무시 */ } };
+  const showBreak = loaded && !failed && !breakDone && !allClear && active.length > 1 && active[0].done && !!current;
   const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
@@ -290,7 +296,8 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
             <div style={{ fontSize: 12, color: "var(--ts)", marginTop: 4 }}>오늘 획득 점수 {total}점</div>
           </div>
         )}
-        {current && (
+        {showBreak && <GuideBreak onSkip={endBreak} />}
+        {current && !showBreak && (
           <div style={{ border: "2px solid var(--acc)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>STEP {active.indexOf(current) + 1} / {active.length}</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", margin: "2px 0" }}>{current.m.label}</div>
