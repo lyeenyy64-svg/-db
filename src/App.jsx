@@ -2534,6 +2534,43 @@ const IssueTableCard = ({ title, count, onAdd, viewMode, setViewMode, showComple
   );
 };
 
+// 엑셀 메모처럼: 이름 칸을 우클릭(또는 📝 버튼)하면 메모 작성/수정/삭제, 메모가 있으면 칸 오른쪽 위에
+// 빨간 삼각형이 표시되고 마우스를 올리면 노란 말풍선으로 내용이 보인다.
+// 표가 overflow 스크롤 영역 안이라 말풍선은 position: fixed로 띄워 잘리지 않게 한다.
+const MemoCell = ({ memo, onSave, canEdit = true, children }) => {
+  const ref = useRef(null);
+  const [hover, setHover] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const place = () => { const b = ref.current?.getBoundingClientRect(); if (b) setPos({ x: Math.min(b.right + 6, window.innerWidth - 260), y: Math.max(8, b.top) }); };
+  const openEditor = () => { place(); setDraft(memo || ""); setEditing(true); setHover(false); };
+  const save = () => { onSave(draft.trim()); setEditing(false); };
+  const noteBox = { position: "fixed", left: pos.x, top: pos.y, zIndex: 9999, width: 240, background: "#fffbcc", border: "1px solid #d9c84a", boxShadow: "0 3px 10px rgba(0,0,0,.25)", padding: 8, fontSize: 12, color: "#222", textAlign: "left", lineHeight: 1.5 };
+  return (
+    <div ref={ref} style={{ position: "relative" }}
+      onMouseEnter={() => { if (memo && !editing) { place(); setHover(true); } }}
+      onMouseLeave={() => setHover(false)}
+      onContextMenu={canEdit ? (e => { e.preventDefault(); openEditor(); }) : undefined}>
+      {children}
+      {memo && <span style={{ position: "absolute", top: -4, right: -7, width: 0, height: 0, borderTop: "9px solid #ef4444", borderLeft: "9px solid transparent", pointerEvents: "none" }} />}
+      {canEdit && !memo && <button onClick={openEditor} title="메모 추가 (우클릭도 가능)" style={{ position: "absolute", top: -3, right: -6, fontSize: 10, lineHeight: 1, padding: 0, background: "none", border: "none", cursor: "pointer", opacity: 0.35 }}>📝</button>}
+      {hover && memo && !editing && <div style={{ ...noteBox, whiteSpace: "pre-wrap", pointerEvents: "none" }}>{memo}</div>}
+      {editing && (
+        <div style={noteBox} onClick={e => e.stopPropagation()}>
+          <KoreanTextarea autoFocus value={draft} onChange={e => setDraft(e.target.value)} placeholder="메모 입력"
+            style={{ width: "100%", minHeight: 80, fontSize: 12, padding: 4, boxSizing: "border-box", background: "#fffef0", color: "#222", border: "1px solid #d9c84a", resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 6 }}>
+            {memo && <button onClick={() => { onSave(""); setEditing(false); }} style={{ fontSize: 11, padding: "3px 8px", cursor: "pointer", color: "#b91c1c" }}>메모 삭제</button>}
+            <button onClick={() => setEditing(false)} style={{ fontSize: 11, padding: "3px 8px", cursor: "pointer" }}>취소</button>
+            <button onClick={save} style={{ fontSize: 11, padding: "3px 8px", cursor: "pointer", fontWeight: 700, background: "#3b82f6", color: "#fff", border: "1px solid #3b82f6" }}>저장</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue, deleteKeyIssue, canDelete }) => {
   const cols = ["채무자명", "강제집행 내용", "브랜드", "집행권원", "주민등록초본", "신용분석", "담당자", "등록일", "처리일", "처리결과", "삭제"];
   const sortFields = ["debtorName", "executionContent", "brand", "execTitleDate", "residentCopyDate", "creditOk", "assignee", "registeredDate", "resolvedDate", null, null];
@@ -2565,7 +2602,7 @@ const ForcedExecutionTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue
           const onDeleteClick = () => updateKeyIssue("forcedExecutions", r.id, { deleted: true });
           return (
             <tr key={r.id}>
-              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" /></td>
+              <td style={strike({ width: colWidths[0] })}><MemoCell memo={r.memo} onSave={m => updateKeyIssue("forcedExecutions", r.id, { memo: m })}><KoreanInput value={r.debtorName || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { debtorName: e.target.value })} style={issueInp} placeholder="채무자명" /></MemoCell></td>
               <td style={strike({ width: colWidths[1] })}><KoreanInput value={r.executionContent || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { executionContent: e.target.value })} style={issueInp} placeholder="강제집행 내용" />{strikeLine}</td>
               <td style={strike({ width: colWidths[2] })}>
                 <select value={r.brand || ""} onChange={e => updateKeyIssue("forcedExecutions", r.id, { brand: e.target.value })} style={{ ...issueInp, border: "1px solid var(--brd)" }}>
@@ -2650,7 +2687,7 @@ const CreditAnalysisTable = ({ rows, users, brands, addKeyIssue, updateKeyIssue,
           const onDeleteClick = () => updateKeyIssue("creditAnalyses", r.id, { deleted: true });
           return (
             <tr key={r.id}>
-              <td style={strike({ width: colWidths[0] })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" /></td>
+              <td style={strike({ width: colWidths[0] })}><MemoCell memo={r.memo} onSave={m => updateKeyIssue("creditAnalyses", r.id, { memo: m })}><KoreanInput value={r.target || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { target: e.target.value })} style={issueInp} placeholder="대상자명" /></MemoCell></td>
               <td style={strike({ width: colWidths[1] })}><input value={r.residentId || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { residentId: e.target.value })} style={issueInp} placeholder="주민등록번호" />{strikeLine}</td>
               <td style={strike({ width: colWidths[2] })}><input value={r.phone || ""} onChange={e => updateKeyIssue("creditAnalyses", r.id, { phone: e.target.value })} style={issueInp} placeholder="연락처" />{strikeLine}</td>
               <td style={strike({ width: colWidths[3] })}>
