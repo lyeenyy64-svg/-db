@@ -185,9 +185,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
     const r = el.getBoundingClientRect();
     const dx = e.clientX - r.left, dy = e.clientY - r.top;
     const move = (ev) => {
-      const x = Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - 80);
-      const y = Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - 40);
-      setPos({ x, y });
+      setPos({ x: ev.clientX - dx, y: ev.clientY - dy });
     };
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
     window.addEventListener("pointermove", move);
@@ -293,7 +291,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
-    <div ref={boxRef} style={{ position: "fixed", ...(pos ? { left: pos.x, top: pos.y } : { right: 20, bottom: 20 }), width: 360, maxHeight: pos ? `calc(100vh - ${pos.y}px - 8px)` : "78vh", zIndex: 1200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,.22)", display: "flex", flexDirection: "column", overflow: "hidden", textAlign: "left" }}>
+    <div ref={boxRef} style={{ position: "fixed", ...(pos ? { left: pos.x, top: pos.y } : { right: 20, bottom: 20 }), width: 360, maxHeight: "78vh", zIndex: 1200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,.22)", display: "flex", flexDirection: "column", overflow: "hidden", textAlign: "left" }}>
       <div onPointerDown={startDrag} title="드래그해서 이동" style={{ padding: "12px 14px", background: "var(--acc)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "move", userSelect: "none", touchAction: "none" }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800 }}>업무 길라잡이</div>
