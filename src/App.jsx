@@ -5386,7 +5386,9 @@ function MainApp({ authUser, onLogout }) {
                 <div key={b.key} style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center", whiteSpace: "nowrap" }}>{b.label}</div>
               ))}
               {contactStats.rows.filter(a => a !== "미배정" || CONTACT_BUCKETS.some(b => contactStats.table["미배정"][b.key].count > 0)).flatMap(a => [
-                <div key={`${a}-label`} style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                <div key={`${a}-label`} style={{ textAlign: "center", padding: "12px 8px", borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)" }}>
+                  <div style={{ fontSize: 16, fontWeight: 700 }}>{a}</div>
+                </div>,
                 ...CONTACT_BUCKETS.map(b => {
                   const cell = contactStats.table[a][b.key];
                   return (
