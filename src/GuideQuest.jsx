@@ -14,7 +14,7 @@ const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pa
 const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "todo"];
 const USER_ORDER = {
   "배현진": ["todo", "schedule", "credit", "forced"],
-  "김준원": ["installment", "credit", "forced"],
+  "김준원": ["installment", "credit", "forced", "todo", "schedule", "contact"],
   "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
   "김덕진": ["installment", "credit", "forced", "todo", "schedule", "contact"],
 };
@@ -24,6 +24,7 @@ const USER_ORDER = {
 const DEFAULT_INTERLUDES = { 1: "break" };
 const USER_INTERLUDES = {
   "김덕진": { 1: "break", 3: "tip", 5: "break" },
+  "김준원": { 1: "break", 3: "tip", 5: "break" },
 };
 
 // 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내
