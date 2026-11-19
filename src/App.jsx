@@ -3700,6 +3700,8 @@ function MainApp({ authUser, onLogout }) {
   const [assigneeMonthlyModal, setAssigneeMonthlyModal] = useState(null); // {year, month} | null
   const [assigneeDrill, setAssigneeDrill] = useState(null); // {assignee, label, year, month(null=연간)} | null
   const [regMonthFilter, setRegMonthFilter] = useState(() => { const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() + 1 }; });
+  const [instMonth, setInstMonth] = useState(() => today().slice(0, 7)); // 종합현황 분할상환 이행현황 조회월 (YYYY-MM)
+  const [instModal, setInstModal] = useState(null); // {assignee(null=전체), key: 'paid'|'partial'|'overdue'|'upcoming'} | null
   const [regDrillModal, setRegDrillModal] = useState(null); // {year, month, brand(null=전체), type('new'|'add')} | null
   const [guideOpen, setGuideOpen] = useState(false); // 업무 길라잡이(데일리 미션) 패널
   const [statsGuideGran, setStatsGuideGran] = useState("daily");
@@ -5486,6 +5488,142 @@ function MainApp({ authUser, onLogout }) {
                         <td className="mono" style={{ padding: "8px 10px", fontWeight: 600 }}>{fmt(d.finalBalanceLegal)}</td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </Overlay>
+          );
+        })()}
+        {/* ── 분할상환 이행현황 ── */}
+        <SectionHeader sectionId="installment">분할상환 이행현황</SectionHeader>
+        {!collapsedSections.has("installment") && (() => {
+          const todayStr = today();
+          const INST_KEYS = [
+            { key: "paid", label: "완납", color: "#10b981" },
+            { key: "partial", label: "일부납", color: "#fb923c" },
+            { key: "overdue", label: "미납", color: "#ef4444" },
+            { key: "upcoming", label: "예정(미도래)", color: "#3b82f6" },
+          ];
+          const classify = (s) => {
+            if (s.status === "완납") return "paid";
+            if (s.status === "일부납") return "partial";
+            if (s.status === "미납" || s.status === "지연") return "overdue";
+            return s.dueDate && s.dueDate < todayStr ? "overdue" : "upcoming";
+          };
+          const monthScheds = (data.installmentSchedules || []).filter(s =>
+            (s.dueMonth === instMonth || (s.dueDate && s.dueDate.startsWith(instMonth))) && s.status !== "이월");
+          const paidOf = (s) => s.status === "완납" ? (s.paidAmount || s.scheduledAmount || 0) : (s.paidAmount || 0);
+          const mk = () => ({ paid: [], partial: [], overdue: [], upcoming: [], sched: 0, due: 0, paidAmt: 0 });
+          const total = mk(); const byA = {};
+          [...config.assignees, "미배정"].forEach(a => { byA[a] = mk(); });
+          monthScheds.forEach(s => {
+            const k = classify(s);
+            const a = byA[s.assignee] ? s.assignee : "미배정";
+            [total, byA[a]].forEach(g => {
+              g[k].push(s);
+              g.sched += s.scheduledAmount || 0;
+              if (k !== "upcoming") g.due += s.scheduledAmount || 0;
+              g.paidAmt += paidOf(s);
+            });
+          });
+          const rate = (g) => g.due > 0 ? Math.min(100, (g.paidAmt / g.due) * 100) : null;
+          const rateColor = (r) => r == null ? "var(--tm)" : r >= 90 ? "#10b981" : r >= 60 ? "#f59e0b" : "#ef4444";
+          const [iy, im] = instMonth.split("-").map(Number);
+          const shiftInst = (delta) => { let y = iy, m = im + delta; if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; } setInstMonth(`${y}-${String(m).padStart(2, "0")}`); };
+          const atMaxInst = instMonth >= todayStr.slice(0, 7);
+          const rows = Object.keys(byA).filter(a => a !== "미배정" || monthScheds.some(s => !byA[s.assignee] || !s.assignee));
+          const cellStyle = (n, color) => ({ textAlign: "center", padding: "10px 6px", borderRadius: 8, background: "var(--bg)", cursor: n > 0 ? "pointer" : "default", border: `1px solid ${color}30` });
+          const totalRate = rate(total);
+          return (
+            <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: "var(--tm)" }}>해당월 예정 일정 대비 입금 상태 (이월 처리된 일정 제외) · 이행률 = 입금액 ÷ 기일 도래분 예정액</div>
+                <span style={{ flex: 1 }} />
+                <button onClick={() => shiftInst(-1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>‹</button>
+                <span className="mono" style={{ fontSize: 12, fontWeight: 700, minWidth: 74, textAlign: "center" }}>{iy}년 {im}월</span>
+                <button onClick={() => shiftInst(1)} disabled={atMaxInst} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: atMaxInst ? "default" : "pointer", opacity: atMaxInst ? 0.4 : 1, fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>›</button>
+              </div>
+              {monthScheds.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>해당월 분할상환 일정이 없습니다.</div>
+              ) : (<>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 16 }}>
+                  {INST_KEYS.map(k => (
+                    <div key={k.key} onClick={() => total[k.key].length > 0 && setInstModal({ assignee: null, key: k.key })}
+                      style={{ ...cellStyle(total[k.key].length, k.color), padding: 14 }}
+                      onMouseEnter={e => { if (total[k.key].length > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                      <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>{k.label}</div>
+                      <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: k.color, marginBottom: 4 }}>{total[k.key].length}건</div>
+                      <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(total[k.key].reduce((a, s) => a + (k.key === "paid" || k.key === "partial" ? paidOf(s) : (s.scheduledAmount || 0)), 0))}</div>
+                    </div>
+                  ))}
+                  <div style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", border: `1px solid ${rateColor(totalRate)}30` }}>
+                    <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>이행률</div>
+                    <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: rateColor(totalRate), marginBottom: 4 }}>{totalRate == null ? "-" : `${totalRate.toFixed(1)}%`}</div>
+                    <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(total.paidAmt)} / {fmt(total.due)}</div>
+                  </div>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "100px repeat(4,1fr) 110px", gap: 8, minWidth: 640, alignItems: "center" }}>
+                    <div />
+                    {INST_KEYS.map(k => <div key={k.key} style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center" }}>{k.label}</div>)}
+                    <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center" }}>이행률</div>
+                    {rows.flatMap(a => {
+                      const g = byA[a]; const r = rate(g);
+                      return [
+                        <div key={`${a}-l`} style={{ textAlign: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                        ...INST_KEYS.map(k => (
+                          <div key={`${a}-${k.key}`} onClick={() => g[k.key].length > 0 && setInstModal({ assignee: a, key: k.key })}
+                            style={cellStyle(g[k.key].length, k.color)}
+                            onMouseEnter={e => { if (g[k.key].length > 0) e.currentTarget.style.background = "var(--hover)"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = "var(--bg)"; }}>
+                            <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: g[k.key].length > 0 ? k.color : "var(--tm)" }}>{g[k.key].length > 0 ? `${g[k.key].length}건` : "-"}</div>
+                          </div>
+                        )),
+                        <div key={`${a}-r`} className="mono" style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: rateColor(r) }}>{r == null ? "-" : `${r.toFixed(1)}%`}</div>,
+                      ];
+                    })}
+                  </div>
+                </div>
+              </>)}
+            </div>
+          );
+        })()}
+        {instModal && (() => {
+          const todayStr = today();
+          const classify = (s) => s.status === "완납" ? "paid" : s.status === "일부납" ? "partial" : (s.status === "미납" || s.status === "지연") ? "overdue" : (s.dueDate && s.dueDate < todayStr ? "overdue" : "upcoming");
+          const labels = { paid: "완납", partial: "일부납", overdue: "미납", upcoming: "예정(미도래)" };
+          const rows = (data.installmentSchedules || [])
+            .filter(s => (s.dueMonth === instMonth || (s.dueDate && s.dueDate.startsWith(instMonth))) && s.status !== "이월" && classify(s) === instModal.key
+              && (!instModal.assignee || (instModal.assignee === "미배정" ? !config.assignees.includes(s.assignee) : s.assignee === instModal.assignee)))
+            .sort((a, b) => (a.dueDate || "").localeCompare(b.dueDate || ""));
+          const debtorById = (id) => data.debtors.find(d => d.id === id);
+          return (
+            <Overlay onClose={() => setInstModal(null)} wide>
+              <ModalHeader title={`${instMonth.replace("-", "년 ")}월 분할상환 ${labels[instModal.key]}${instModal.assignee ? ` — ${instModal.assignee}` : ""} (${rows.length}건)`} onClose={() => setInstModal(null)} />
+              <div style={{ maxHeight: 460, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "var(--bg2)" }}>{["채무자", "브랜드", "담당", "납부예정일", "예정액", "입금액", "부족액", "상태"].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {rows.map(s => {
+                      const paid = s.status === "완납" ? (s.paidAmount || s.scheduledAmount || 0) : (s.paidAmount || 0);
+                      const short = Math.max(0, (s.scheduledAmount || 0) - paid);
+                      return (
+                        <tr key={s.id} style={{ borderBottom: "1px solid var(--brd)", cursor: "pointer" }}
+                          onClick={() => { const d = debtorById(s.debtorId); if (d) { navigateToDebtor(d); setInstModal(null); } }}
+                          onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <td style={{ padding: "8px 10px", fontWeight: 500 }}>{s.debtorName}</td>
+                          <td style={{ padding: "8px 10px" }}><BrandBadge code={s.brand} brands={config.brands} /></td>
+                          <td style={{ padding: "8px 10px" }}>{s.assignee || "-"}</td>
+                          <td className="mono" style={{ padding: "8px 10px", color: "var(--tm)" }}>{s.dueDate ? fmtDate(s.dueDate) : "-"}</td>
+                          <td className="mono" style={{ padding: "8px 10px" }}>{fmt(s.scheduledAmount || 0)}</td>
+                          <td className="mono" style={{ padding: "8px 10px" }}>{paid > 0 ? fmt(paid) : "-"}</td>
+                          <td className="mono" style={{ padding: "8px 10px", fontWeight: 600, color: short > 0 ? "#ef4444" : "var(--tm)" }}>{short > 0 ? fmt(short) : "-"}</td>
+                          <td style={{ padding: "8px 10px" }}>{s.status}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
