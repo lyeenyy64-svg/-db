@@ -14343,6 +14343,7 @@ function MainApp({ authUser, onLogout }) {
               debtor: d => navigateToDebtor(d, "히스토리"),
               caseOf: (t, id) => { setTab(t); ({ minsa: setMinsaOpenCaseId, legal: setLegalOpenCaseId, rehabBankruptcy: setRehabOpenCaseId })[t]?.(id); },
               tab: t => setTab(t),
+              pending: () => { setTab("payments"); setPaymentsSubTab("미매칭"); },
               schedule: () => { setTab("issues"); setTimeout(() => { document.getElementById("monthly-schedule-calendar")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, 50); },
             }} />}
             <div style={{ width: 1, height: 28, background: "var(--brd)" }} />

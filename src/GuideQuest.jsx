@@ -15,7 +15,8 @@ const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "
 const USER_ORDER = {
   "배현진": ["todo", "schedule", "credit", "forced"],
   "김준원": ["installment", "credit", "forced", "todo", "schedule", "contact"],
-  "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
+  // 실제 사용 내역(최근 60일 입력 건수) 기준: 사건 메모/기일·법적절차 수정 > 입금 처리 > 신용분석 > To Do > 회생/파산 > 강제집행
+  "조혜원": ["civil", "pending", "credit", "todo", "rehab", "forced"],
   "김덕진": ["installment", "credit", "forced", "todo", "schedule", "contact"],
 };
 
@@ -25,6 +26,7 @@ const DEFAULT_INTERLUDES = { 1: "break" };
 const USER_INTERLUDES = {
   "김덕진": { 1: "break", 3: "tip", 5: "break" },
   "김준원": { 1: "break", 3: "tip", 5: "break" },
+  "조혜원": { 1: "break", 3: "tip", 5: "break" },
 };
 
 // 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내
@@ -187,6 +189,16 @@ function buildMissions(ctx) {
         });
       },
     },
+    pending: {
+      label: "입금 미매칭 처리", mode: "step", points: STEP_POINTS, confirmEmpty: true,
+      hint: "미매칭 관리의 입금 대기건을 채무자에 연결하거나 정리하세요 (한 건이라도 처리하면 완료)",
+      items: () => (ctx.pendingItems || []).map(r => ({
+        id: String(r.id), title: r.excel_debtor_name || r.payer_name || "-",
+        sub: `${r.payment_date || ""} · ${Number(r.total_amount || 0).toLocaleString()}원`,
+        go: () => nav.pending(),
+      })),
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/pending-payments/")),
+    },
     rehab: {
       label: "회생/파산 현황", mode: "step", points: STEP_POINTS,
       hint: "담당 회생/파산 건의 진행내용을 입력하세요",
@@ -217,6 +229,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const posting = useRef(new Set());
   const boxRef = useRef(null);
   const contactSnapRef = useRef(null); // CONTACT 단계 목록 고정용
+  const [pendingItems, setPendingItems] = useState(null); // 입금 미매칭 대기건 (null = 아직 못 불러옴), 열 때 한 번만 읽어 고정
   const [pos, setPos] = useState(null); // null이면 기본(우하단), 드래그하면 {x,y}
 
   const startDrag = (e) => {
@@ -242,8 +255,9 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
     () => buildMissions({
       data, today, isMine, getCaseEventDate, nav, awarded: awardedSet, userName: currentUser?.name,
       contactRows: (contactStats?.rows || []).filter(a => a !== "미배정" && isMine(a)), contactTable: contactStats?.table, contactSnapRef,
+      pendingItems,
     }),
-    [data, today, isMine, getCaseEventDate, nav, awardedSet, currentUser?.name, contactStats]
+    [data, today, isMine, getCaseEventDate, nav, awardedSet, currentUser?.name, contactStats, pendingItems]
   );
 
   const award = useCallback(async (mission, itemId, points) => {
@@ -265,6 +279,15 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
       setRows(a.rows || []); setAwards(w.rows || []); setFailed(false);
     } catch { setFailed(true); }
     setLoaded(true);
+  }, []);
+
+  // 입금 미매칭 대기건은 연 시점에 한 번만 읽는다 — 처리하면 목록에서 사라지므로 계속 읽으면 완료 판정이 흔들린다
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/pending-payments").then(r => r.ok ? r.json() : Promise.reject())
+      .then(rows => { if (alive) setPendingItems(Array.isArray(rows) ? rows.slice(0, 10) : []); })
+      .catch(() => { if (alive) setPendingItems([]); });
+    return () => { alive = false; };
   }, []);
 
   // 열려 있는 동안 5초마다 입력 기록을 다시 확인 — 채무자 화면에서 히스토리를 쓰고 오면 자동으로 체크된다
@@ -298,7 +321,8 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
     }
     const empty = items.length === 0;
     const noneConfirmed = awardedSet.has(`${key}|none`);
-    if (empty) done = !!m.confirmEmpty && noneConfirmed;
+    // 목록이 비었어도 이미 이 단계를 끝냈다면(패널을 다시 열었더니 처리한 건이 사라진 경우) 완료로 본다
+    if (empty) done = (!!m.confirmEmpty && noneConfirmed) || (m.mode === "step" && awardedSet.has(`${key}|step`));
     else done = items.every(i => i.done);
     return { key, m, items, done, empty, skip: empty && !m.confirmEmpty };
   }), [order, missions, awardedSet, pointsOf, rows]);
@@ -343,7 +367,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const tipKey = `gqTipDone_${currentUser?.name || ""}_${today}`;
   const [tipDone, setTipDone] = useState(() => { try { return localStorage.getItem(tipKey) === "1"; } catch { return false; } });
   const endTip = () => { setTipDone(true); try { localStorage.setItem(tipKey, "1"); } catch { /* 무시 */ } };
-  const dataReady = (data.debtors || []).length > 0; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
+  const dataReady = (data.debtors || []).length > 0 && pendingItems !== null; // 데이터 로딩 전에 [없음]을 눌러 잘못 통과하는 것을 막는다
 
   return (
     <div ref={boxRef} style={{ position: "fixed", ...(pos ? { left: pos.x, top: pos.y } : { right: 20, bottom: 20 }), width: 360, maxHeight: "78vh", zIndex: 1200, background: "var(--card)", border: "1px solid var(--brd)", borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,.22)", display: "flex", flexDirection: "column", overflow: "hidden", textAlign: "left" }}>
