@@ -5526,7 +5526,8 @@ function MainApp({ authUser, onLogout }) {
               g.paidAmt += paidOf(s);
             });
           });
-          const rate = (g) => g.due > 0 ? Math.min(100, (g.paidAmt / g.due) * 100) : null;
+          // 이행률은 건수 기준(완납 ÷ 기일 도래분). 금액 기준은 예정액이 비어있는 미납 건이 분모에서 빠져 100%로 왜곡될 수 있어 보조 표시로만 쓴다.
+          const rate = (g) => { const dueCnt = g.paid.length + g.partial.length + g.overdue.length; return dueCnt > 0 ? (g.paid.length / dueCnt) * 100 : null; };
           const rateColor = (r) => r == null ? "var(--tm)" : r >= 90 ? "#10b981" : r >= 60 ? "#f59e0b" : "#ef4444";
           const [iy, im] = instMonth.split("-").map(Number);
           const shiftInst = (delta) => { let y = iy, m = im + delta; if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; } setInstMonth(`${y}-${String(m).padStart(2, "0")}`); };
@@ -5537,7 +5538,7 @@ function MainApp({ authUser, onLogout }) {
           return (
             <div style={{ background: "var(--card)", borderRadius: 12, padding: 20, border: "1px solid var(--brd)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                <div style={{ fontSize: 12, color: "var(--tm)" }}>해당월 예정 일정 대비 입금 상태 (이월 처리된 일정 제외) · 이행률 = 입금액 ÷ 기일 도래분 예정액</div>
+                <div style={{ fontSize: 12, color: "var(--tm)" }}>해당월 예정 일정 대비 입금 상태 (이월 처리된 일정 제외) · 이행률 = 완납 건수 ÷ 기일 도래분 건수(완납+일부납+미납)</div>
                 <span style={{ flex: 1 }} />
                 <button onClick={() => shiftInst(-1)} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>‹</button>
                 <span className="mono" style={{ fontSize: 12, fontWeight: 700, minWidth: 74, textAlign: "center" }}>{iy}년 {im}월</span>
@@ -5575,7 +5576,7 @@ function MainApp({ authUser, onLogout }) {
                   <div style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", border: `1px solid ${rateColor(totalRate)}30` }}>
                     <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>이행률</div>
                     <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: rateColor(totalRate), marginBottom: 4 }}>{totalRate == null ? "-" : `${totalRate.toFixed(1)}%`}</div>
-                    <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(total.paidAmt)} / {fmt(total.due)}</div>
+                    <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{total.paid.length} / {total.paid.length + total.partial.length + total.overdue.length}건 · 입금 {fmt(total.paidAmt)}</div>
                   </div>
                 </div>
                 <div style={{ overflowX: "auto" }}>
