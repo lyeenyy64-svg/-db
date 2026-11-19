@@ -5544,7 +5544,22 @@ function MainApp({ authUser, onLogout }) {
                 <button onClick={() => shiftInst(1)} disabled={atMaxInst} style={{ width: 24, height: 24, borderRadius: 6, border: "1px solid var(--brd)", background: "var(--bg)", cursor: atMaxInst ? "default" : "pointer", opacity: atMaxInst ? 0.4 : 1, fontSize: 14, fontWeight: 700, color: "var(--tp)" }}>›</button>
               </div>
               {monthScheds.length === 0 ? (
-                <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>해당월 분할상환 일정이 없습니다.</div>
+                (() => {
+                  const all = data.installmentSchedules || [];
+                  const monthsWith = [...new Set(all.map(s => (s.dueMonth || (s.dueDate || "").slice(0, 7))).filter(Boolean))].sort().reverse();
+                  return (
+                    <div style={{ padding: 24, textAlign: "center", color: "var(--tm)", fontSize: 13 }}>
+                      <div>해당월 분할상환 일정이 없습니다.</div>
+                      <div style={{ marginTop: 8, fontSize: 12 }}>
+                        {all.length === 0
+                          ? "불러온 분할상환 일정이 0건입니다 (분할상환 데이터 로드 실패 가능 — 새로고침 후에도 같으면 알려주세요)."
+                          : <>불러온 일정 {all.length}건 · 일정이 있는 달: {monthsWith.slice(0, 6).map(m => (
+                              <span key={m} onClick={() => setInstMonth(m)} style={{ cursor: "pointer", textDecoration: "underline", marginLeft: 6, color: "var(--acc)" }}>{m}</span>
+                            ))}</>}
+                      </div>
+                    </div>
+                  );
+                })()
               ) : (<>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 16 }}>
                   {INST_KEYS.map(k => (
