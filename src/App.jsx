@@ -5578,7 +5578,7 @@ function MainApp({ authUser, onLogout }) {
                       <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(total[k.key].reduce((a, s) => a + (k.key === "paid" || k.key === "partial" ? paidOf(s) : (s.scheduledAmount || 0)), 0))}</div>
                     </div>
                   ))}
-                  <div style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", border: `1px solid ${rateColor(totalRate)}30` }}>
+                  <div style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", border: `1px solid ${totalRate == null ? "#6b7280" : rateColor(totalRate)}30` }}>
                     <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>이행률</div>
                     <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: rateColor(totalRate), marginBottom: 4 }}>{totalRate == null ? "-" : `${totalRate.toFixed(1)}%`}</div>
                     <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{total.paid.length} / {total.paid.length + total.partial.length + total.overdue.length}건 · 입금 {fmt(total.paidAmt)}</div>
@@ -5594,7 +5594,10 @@ function MainApp({ authUser, onLogout }) {
                       const g = byA[a]; const r = rate(g);
                       return [
                         <div key={`${a}-l`} style={{ textAlign: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
-                        <div key={`${a}-t`} className="mono" style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: g.sched > 0 || INST_KEYS.some(k => g[k.key].length > 0) ? "var(--tp)" : "var(--tm)" }}>{INST_KEYS.reduce((n, k) => n + g[k.key].length, 0) || "-"}{INST_KEYS.some(k => g[k.key].length > 0) ? "건" : ""}</div>,
+                        (() => { const n = INST_KEYS.reduce((s, k) => s + g[k.key].length, 0); return (
+                          <div key={`${a}-t`} style={{ ...cellStyle(0, "#6b7280"), border: "1px solid var(--brd)" }}>
+                            <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: n > 0 ? "var(--tp)" : "var(--tm)" }}>{n > 0 ? `${n}건` : "-"}</div>
+                          </div>); })(),
                         ...INST_KEYS.map(k => (
                           <div key={`${a}-${k.key}`} onClick={() => g[k.key].length > 0 && setInstModal({ assignee: a, key: k.key })}
                             style={cellStyle(g[k.key].length, k.color)}
@@ -5603,7 +5606,9 @@ function MainApp({ authUser, onLogout }) {
                             <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: g[k.key].length > 0 ? k.color : "var(--tm)" }}>{g[k.key].length > 0 ? `${g[k.key].length}건` : "-"}</div>
                           </div>
                         )),
-                        <div key={`${a}-r`} className="mono" style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: rateColor(r) }}>{r == null ? "-" : `${r.toFixed(1)}%`}</div>,
+                        <div key={`${a}-r`} style={cellStyle(0, r == null ? "#6b7280" : rateColor(r))}>
+                          <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: rateColor(r) }}>{r == null ? "-" : `${r.toFixed(1)}%`}</div>
+                        </div>,
                       ];
                     })}
                   </div>
