@@ -13,7 +13,8 @@ const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${pa
 // 기본 미션 순서. 사람마다 다르게 하려면 USER_ORDER에 이름으로 추가한다.
 const DEFAULT_ORDER = ["installment", "civil", "schedule", "forced", "credit", "todo"];
 const USER_ORDER = {
-  "배현진": ["todo", "schedule", "credit", "forced"],
+  // 배현진: 채권추심보다 일반 법무 담당 — To Do 정리 → 계약서 검토 메일 → 신용분석 → 슬랙 요청 → 월간일정 → (휴식) → 전자소송 사건 현황
+  "배현진": ["todoEdit", "emailReview", "credit", "slackReq", "schedule", "eLitigation"],
   "김준원": ["installment", "credit", "forced", "todo", "schedule", "contact"],
   // 실제 사용 내역(최근 60일 입력 건수) 기준: 사건 메모/기일·법적절차 수정 > 입금 처리 > 신용분석 > To Do > 회생/파산 > 강제집행
   "조혜원": ["civil", "pending", "credit", "todo", "rehab", "forced"],
@@ -27,12 +28,11 @@ const USER_INTERLUDES = {
   "김덕진": { 1: "break", 3: "tip", 5: "break" },
   "김준원": { 1: "break", 3: "tip", 5: "break" },
   "조혜원": { 1: "break", 3: "tip", 5: "break" },
+  "배현진": { 1: "break", 3: "tip", 5: "break" },
 };
 
-// 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내
-const USER_FINALE_NOTE = {
-  "배현진": "이메일 확인하여 계약서 검토할 부분 체크해 주세요",
-};
+// 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내 (배현진은 이메일 확인이 정식 단계로 들어가 불필요)
+const USER_FINALE_NOTE = {};
 
 const ITEM_POINTS = 10;   // 항목(채무자/사건) 하나를 처리할 때
 const STEP_POINTS = 20;   // 한 단계(미션) 전체를 끝낼 때
@@ -136,8 +136,32 @@ function buildMissions(ctx) {
         return out;
       },
     },
+    // ─ 일반 법무 담당(배현진)용 단계 ─
+    // 주요현안 To Do List 등록/수정/삭제 중 하나라도 하면 완료 (모두 manual_todo_list 저장으로 기록됨)
+    todoEdit: {
+      label: "주요현안 · To Do List 등록/수정/삭제", mode: "step", points: STEP_POINTS,
+      hint: "To Do List를 등록·수정·삭제하면 다음 단계로 넘어갑니다",
+      items: () => [{ id: "todoEdit", title: "To Do List 정리하기", sub: "등록 · 수정 · 삭제 중 하나라도 하면 완료", go: () => nav.tab("issues") }],
+      stepDetect: rows => hitPath(rows, p => p.startsWith("/api/kv/manual_todo_list")),
+    },
+    emailReview: {
+      label: "이메일 확인 · 계약서 검토요청 처리", mode: "check", points: CHECK_POINTS,
+      hint: "이메일을 확인해 계약서 검토요청 사항을 처리한 뒤 [확인]을 누르세요",
+      items: () => [{ id: "emailReview", title: "이메일 확인 · 계약서 검토요청 처리", sub: "검토할 계약서가 없으면 바로 [확인]" }],
+    },
+    slackReq: {
+      label: "슬랙 요청사항 처리", mode: "check", points: CHECK_POINTS,
+      hint: "슬랙으로 들어온 요청사항을 처리한 뒤 [확인]을 누르세요",
+      items: () => [{ id: "slackReq", title: "슬랙 요청사항 처리", sub: "처리할 요청이 없으면 바로 [확인]" }],
+    },
+    eLitigation: {
+      label: "전자소송 사건 진행현황 파악", mode: "check", points: CHECK_POINTS,
+      hint: "바로고 / 모아라인 / 딜버 전자소송 사이트에서 사건 진행현황을 확인한 뒤 [확인]을 누르세요",
+      items: () => [{ id: "eLitigation", title: "전자소송 사건 진행현황 파악", sub: "바로고 · 모아라인 · 딜버", go: () => window.open("https://ecfs.scourt.go.kr", "_blank", "noopener") }],
+    },
     credit: {
       label: "신용분석 대상자", mode: "item", points: ITEM_POINTS, confirmEmpty: true,
+      emptyLabel: userName === "배현진" ? "확인" : undefined, // 대상자가 없을 때 누르는 버튼 이름
       hint: "담당 대상자의 신용조회 결과를 입력하세요",
       items: () => (data.creditAnalyses || [])
         .filter(f => !f.deleted && isMine(f.assignee) && (!f.completed || awarded.has(`credit|${f.id}`)))
@@ -423,8 +447,8 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
             {current.empty && (
               <div style={{ textAlign: "center", padding: "10px 0 4px" }}>
                 <div style={{ fontSize: 13, color: "var(--ts)", marginBottom: 10 }}>오늘 해당 대상자가 없습니다.</div>
-                <button disabled={!dataReady} onClick={() => grant(current.key, "none", NONE_POINTS)} style={{ ...btn, padding: "8px 28px", fontSize: 13, background: "var(--acc)", color: "#fff", border: "none", opacity: dataReady ? 1 : 0.5 }}>없음</button>
-                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 6 }}>확인 후 [없음]을 누르면 다음 단계로 넘어갑니다 (+{NONE_POINTS}점)</div>
+                <button disabled={!dataReady} onClick={() => grant(current.key, "none", NONE_POINTS)} style={{ ...btn, padding: "8px 28px", fontSize: 13, background: "var(--acc)", color: "#fff", border: "none", opacity: dataReady ? 1 : 0.5 }}>{current.m.emptyLabel || "없음"}</button>
+                <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 6 }}>확인 후 [{current.m.emptyLabel || "없음"}]을 누르면 다음 단계로 넘어갑니다 (+{NONE_POINTS}점)</div>
               </div>
             )}
             {current.m.mode === "step" && <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 8 }}>이 단계는 해당 화면에서 데이터를 한 번 입력/수정하면 완료됩니다.</div>}
