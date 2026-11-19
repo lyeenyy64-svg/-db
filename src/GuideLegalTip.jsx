@@ -22,16 +22,17 @@ function dayNumber(today) {
   return Math.floor(Date.UTC(y || 1970, (m || 1) - 1, d || 1) / 86400000);
 }
 
-export default function GuideLegalTip({ today, onDone }) {
-  const tip = TIPS[((dayNumber(today) % TIPS.length) + TIPS.length) % TIPS.length];
+// offset: 같은 날 두 번째 이후로 띄울 때 다른 항목이 나오게 한다 / title·doneLabel: 문구 변경
+export default function GuideLegalTip({ today, onDone, offset = 0, title = "오늘의 법률상식", doneLabel = "확인 · 오늘의 미션 시작" }) {
+  const tip = TIPS[(((dayNumber(today) + offset) % TIPS.length) + TIPS.length) % TIPS.length];
   return (
     <div style={{ border: "2px solid var(--acc)", borderRadius: 12, padding: 12, marginBottom: 12, background: "var(--hover)" }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>⚖️ 오늘의 법률상식</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>⚖️ {title}</div>
       <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", margin: "4px 0 6px" }}>{tip.t}</div>
       <div style={{ fontSize: 12, color: "var(--ts)", lineHeight: 1.65 }}>{tip.b}</div>
       <div style={{ fontSize: 10, color: "var(--tm)", marginTop: 8 }}>※ 일반적인 상식 수준의 안내입니다. 개별 사안의 법적 판단은 사내 법무팀에 확인하세요.</div>
       <div style={{ textAlign: "right", marginTop: 10 }}>
-        <button onClick={onDone} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none", background: "var(--acc)", color: "#fff" }}>확인 · 오늘의 미션 시작</button>
+        <button onClick={onDone} style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none", background: "var(--acc)", color: "#fff" }}>{doneLabel}</button>
       </div>
     </div>
   );

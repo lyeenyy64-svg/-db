@@ -14339,7 +14339,7 @@ function MainApp({ authUser, onLogout }) {
             <button title="업무 길라잡이" aria-label="업무 길라잡이" onClick={() => setGuideOpen(o => !o)} style={{ width: 36, height: 36, borderRadius: 8, background: guideOpen ? "var(--acc)" : "var(--card)", color: guideOpen ? "#fff" : "var(--acc)", display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid var(--brd)", cursor: "pointer" }}>
               <I name="compass" size={18} />
             </button>
-            {guideOpen && <GuideQuest data={data} currentUser={currentUser} getCaseEventDate={getCaseEventDate} onClose={() => setGuideOpen(false)} nav={{
+            {guideOpen && <GuideQuest data={data} currentUser={currentUser} contactStats={contactStats} getCaseEventDate={getCaseEventDate} onClose={() => setGuideOpen(false)} nav={{
               debtor: d => navigateToDebtor(d, "히스토리"),
               caseOf: (t, id) => { setTab(t); ({ minsa: setMinsaOpenCaseId, legal: setLegalOpenCaseId, rehabBankruptcy: setRehabOpenCaseId })[t]?.(id); },
               tab: t => setTab(t),

@@ -16,6 +16,14 @@ const USER_ORDER = {
   "배현진": ["todo", "schedule", "credit", "forced"],
   "김준원": ["installment", "credit", "forced"],
   "조혜원": ["civil", "todo", "credit", "forced", "rehab"],
+  "김덕진": ["installment", "credit", "forced", "todo", "schedule", "contact"],
+};
+
+// 단계 사이사이에 끼워 넣는 카드. 키 = "끝낸 단계 수", 값 = "break"(쉬는 시간) | "tip"(법률상식)
+// 지정하지 않은 사람은 첫 단계 후 휴식만 나온다.
+const DEFAULT_INTERLUDES = { 1: "break" };
+const USER_INTERLUDES = {
+  "김덕진": { 1: "break", 3: "tip", 5: "break" },
 };
 
 // 모든 미션을 끝낸 뒤 하단에 띄우는 사람별 안내
@@ -50,10 +58,27 @@ const hitPath = (rows, pred) => rows.some(r => pred(String(r.path || ""), r));
 // mode "item": 항목마다 완료 판정(detect) / mode "step": 해당 저장 경로에 오늘 입력이 있으면 단계 전체 완료
 // mode "check": 항목을 눈으로 확인하고 [확인] 버튼으로 완료
 function buildMissions(ctx) {
-  const { data, today, isMine, getCaseEventDate, nav, awarded, userName } = ctx;
+  const { data, today, isMine, getCaseEventDate, nav, awarded, userName } = ctx; // ctx.contactRows/contactTable: 내 담당 CONTACT 현황
   const debtors = data.debtors || [];
   const debtorById = new Map(debtors.map(d => [d.id, d]));
   const dayDiff = ev => Math.round((new Date(ev) - new Date(today)) / 86400000);
+
+  // CONTACT 현황: 내 담당 중 컨택한 지 가장 오래된 채무자 10명
+  // 패널을 연 시점의 목록을 고정(snapshot)한다 — 히스토리를 쓰면 그 채무자는 "최근 컨택"이 돼 목록에서 빠지므로, 고정하지 않으면 완료 판정이 사라진다.
+  const contactItems = () => {
+    if (ctx.contactSnapRef?.current) return ctx.contactSnapRef.current;
+    const list = (ctx.contactRows || [])
+      .flatMap(a => Object.values(ctx.contactTable?.[a] || {}).flatMap(c => c.items || []))
+      .sort((x, y) => (y.contactDays ?? Infinity) - (x.contactDays ?? Infinity))
+      .slice(0, 10)
+      .map(d => ({
+        id: String(d.id), debtorId: d.id, title: d.name || "-",
+        sub: `${d.category || ""} · ${d.contactDays != null ? `마지막 컨택 ${d.contactDays}일 전` : "히스토리 기록 없음"}`,
+        go: () => nav.debtor(d),
+      }));
+    if (list.length && ctx.contactSnapRef) ctx.contactSnapRef.current = list;
+    return list;
+  };
 
   return {
     installment: {
@@ -147,6 +172,20 @@ function buildMissions(ctx) {
         })),
       detect: (it, rows) => it.hasValue && hitPath(rows, p => p.startsWith("/api/kv/manual_todo_list")),
     },
+    contact: {
+      label: "채무자 CONTACT 현황", mode: "step", points: STEP_POINTS,
+      hint: "컨택한 지 오래된 채무자 중 한 명이라도 히스토리 작성·수정·변경하세요",
+      items: () => contactItems(),
+      // 목록에 뜬 채무자 중 누구든 오늘 히스토리 작성/수정/변경이 있으면 완료 (앞 단계에서 쓴 분할상환 대상자 기록으로 저절로 완료되지 않게 목록 속 채무자만 본다)
+      stepDetect: rows => {
+        const ids = new Set(contactItems().map(i => String(i.debtorId)));
+        return hitPath(rows, (p, r) => {
+          if (r.refDebtorId != null && ids.has(String(r.refDebtorId))) return true;
+          const m = p.match(/^\/api\/kv\/hist_m_(.+)$/) || p.match(/^\/api\/debtors\/([^/]+)/);
+          return !!m && ids.has(String(m[1]));
+        });
+      },
+    },
     rehab: {
       label: "회생/파산 현황", mode: "step", points: STEP_POINTS,
       hint: "담당 회생/파산 건의 진행내용을 입력하세요",
@@ -168,7 +207,7 @@ const FIREWORK_CSS = `@keyframes gqFw{0%{transform:translate(0,0) scale(1);opaci
 
 const btn = { padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid var(--brd)", background: "var(--card)", color: "var(--ts)" };
 
-export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, onClose }) {
+export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, onClose, contactStats }) {
   const [rows, setRows] = useState([]);          // 오늘 내가 입력한 기록
   const [awards, setAwards] = useState([]);      // 이미 지급된 점수 [{mission,itemId,points}]
   const [loaded, setLoaded] = useState(false);
@@ -176,6 +215,7 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const [today] = useState(localToday);
   const posting = useRef(new Set());
   const boxRef = useRef(null);
+  const contactSnapRef = useRef(null); // CONTACT 단계 목록 고정용
   const [pos, setPos] = useState(null); // null이면 기본(우하단), 드래그하면 {x,y}
 
   const startDrag = (e) => {
@@ -198,8 +238,11 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const awardedSet = useMemo(() => new Set(awards.map(a => `${a.mission}|${a.itemId}`)), [awards]);
   const pointsOf = useMemo(() => new Map(awards.map(a => [`${a.mission}|${a.itemId}`, a.points || 0])), [awards]);
   const missions = useMemo(
-    () => buildMissions({ data, today, isMine, getCaseEventDate, nav, awarded: awardedSet, userName: currentUser?.name }),
-    [data, today, isMine, getCaseEventDate, nav, awardedSet, currentUser?.name]
+    () => buildMissions({
+      data, today, isMine, getCaseEventDate, nav, awarded: awardedSet, userName: currentUser?.name,
+      contactRows: (contactStats?.rows || []).filter(a => a !== "미배정" && isMine(a)), contactTable: contactStats?.table, contactSnapRef,
+    }),
+    [data, today, isMine, getCaseEventDate, nav, awardedSet, currentUser?.name, contactStats]
   );
 
   const award = useCallback(async (mission, itemId, points) => {
@@ -280,10 +323,21 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
   const allClear = loaded && active.length > 0 && !current;
   const finaleNote = USER_FINALE_NOTE[currentUser?.name];
   // 첫 단계를 끝낸 순간부터 휴식 카드를 보여준다 — [휴식 끝]을 누르면 오늘은 다시 안 뜬다 (브라우저별 기억)
-  const breakKey = `gqBreakDone_${currentUser?.name || ""}_${today}`;
-  const [breakDone, setBreakDone] = useState(() => { try { return localStorage.getItem(breakKey) === "1"; } catch { return false; } });
-  const endBreak = () => { setBreakDone(true); try { localStorage.setItem(breakKey, "1"); } catch { /* 무시 */ } };
-  const showBreak = loaded && !failed && !breakDone && !allClear && active.length > 1 && active[0].done && !!current;
+  // 사람별로 지정한 시점(끝낸 단계 수)에 쉬는 시간/법률상식 카드를 끼워 넣는다 — 한 번 넘기면 오늘은 다시 안 뜬다
+  const interludes = USER_INTERLUDES[currentUser?.name] || DEFAULT_INTERLUDES;
+  const interludeKey = `gqInterludes_${currentUser?.name || ""}_${today}`;
+  const [interludeDone, setInterludeDone] = useState(() => {
+    try {
+      const a = JSON.parse(localStorage.getItem(interludeKey) || "[]");
+      if (localStorage.getItem(`gqBreakDone_${currentUser?.name || ""}_${today}`) === "1" && !a.includes(1)) a.push(1); // 예전 방식으로 이미 넘긴 첫 휴식
+      return a;
+    } catch { return []; }
+  });
+  const endInterlude = (n) => { setInterludeDone(prev => { const next = [...prev, n]; try { localStorage.setItem(interludeKey, JSON.stringify(next)); } catch { /* 무시 */ } return next; }); };
+  const curIdx = current ? active.indexOf(current) : -1;
+  const interludeKind = loaded && !failed && !allClear && curIdx > 0 && !interludeDone.includes(curIdx) ? interludes[curIdx] : null;
+  const showBreak = interludeKind === "break";
+  const showMidTip = interludeKind === "tip";
   // 열자마자 오늘의 법률상식을 먼저 보여준다 — [확인]을 누르면 오늘은 다시 안 뜬다 (브라우저별 기억)
   const tipKey = `gqTipDone_${currentUser?.name || ""}_${today}`;
   const [tipDone, setTipDone] = useState(() => { try { return localStorage.getItem(tipKey) === "1"; } catch { return false; } });
@@ -319,8 +373,9 @@ export default function GuideQuest({ data, currentUser, getCaseEventDate, nav, o
             <div style={{ fontSize: 12, color: "var(--ts)", marginTop: 4 }}>오늘 획득 점수 {total}점</div>
           </div>
         )}
-        {showBreak && <GuideBreak onSkip={endBreak} />}
-        {current && !showBreak && (
+        {showBreak && <GuideBreak onSkip={() => endInterlude(curIdx)} title={curIdx === 1 ? "첫 단계 완료! 잠깐 쉬어가세요" : `${curIdx}단계 완료! 잠깐 쉬어가세요`} />}
+        {showMidTip && <GuideLegalTip today={today} offset={curIdx} title="잠깐, 법률상식 한 가지" doneLabel="확인 · 다음 단계로" onDone={() => endInterlude(curIdx)} />}
+        {current && !showBreak && !showMidTip && (
           <div style={{ border: "2px solid var(--acc)", borderRadius: 12, padding: 12, marginBottom: 12 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "var(--acc)" }}>STEP {active.indexOf(current) + 1} / {active.length}</div>
             <div style={{ fontSize: 15, fontWeight: 800, color: "var(--tp)", margin: "2px 0" }}>{current.m.label}</div>

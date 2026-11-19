@@ -151,11 +151,11 @@ const Links = ({ items, note }) => (
   </div>
 );
 
-export default function GuideBreak({ onSkip }) {
+export default function GuideBreak({ onSkip, title = "첫 단계 완료! 잠깐 쉬어가세요" }) {
   const [t, setT] = useState("zone");
   return (
     <div style={{ border: "2px dashed var(--ok)", borderRadius: 12, padding: 10, marginBottom: 12, background: "rgba(16,185,129,.06)" }}>
-      <div style={{ fontSize: 13, fontWeight: 800, color: "var(--tp)" }}>☕ 첫 단계 완료! 잠깐 쉬어가세요</div>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "var(--tp)" }}>☕ {title}</div>
       <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 6 }}>쉬고 나서 [휴식 끝]을 누르면 다음 단계로 이어집니다.</div>
       <div style={{ display: "flex", borderBottom: "1px solid var(--brd)", marginBottom: 10 }}>
         <button style={tab(t === "zone")} onClick={() => setT("zone")}>멍때리기</button>
