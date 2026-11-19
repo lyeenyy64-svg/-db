@@ -5593,7 +5593,9 @@ function MainApp({ authUser, onLogout }) {
                     {rows.flatMap(a => {
                       const g = byA[a]; const r = rate(g);
                       return [
-                        <div key={`${a}-l`} style={{ textAlign: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                        <div key={`${a}-l`} style={{ ...cellStyle(0, "#6b7280"), border: "1px solid var(--brd)" }}>
+                          <div style={{ fontSize: 14, fontWeight: 700 }}>{a}</div>
+                        </div>,
                         (() => { const n = INST_KEYS.reduce((s, k) => s + g[k.key].length, 0); return (
                           <div key={`${a}-t`} style={{ ...cellStyle(0, "#6b7280"), border: "1px solid var(--brd)" }}>
                             <div className="mono" style={{ fontSize: 15, fontWeight: 700, color: n > 0 ? "var(--tp)" : "var(--tm)" }}>{n > 0 ? `${n}건` : "-"}</div>
