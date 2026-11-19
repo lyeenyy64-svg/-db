@@ -5562,7 +5562,12 @@ function MainApp({ authUser, onLogout }) {
                   );
                 })()
               ) : (<>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12, marginBottom: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 12, marginBottom: 16 }}>
+                  <div style={{ textAlign: "center", padding: 14, borderRadius: 10, background: "var(--bg)", border: "1px solid var(--brd)" }}>
+                    <div style={{ fontSize: 11, color: "var(--tm)", marginBottom: 8, fontWeight: 600 }}>총 일정</div>
+                    <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>{monthScheds.length}건</div>
+                    <div className="mono" style={{ fontSize: 12, color: "var(--ts)" }}>{fmt(total.sched)}</div>
+                  </div>
                   {INST_KEYS.map(k => (
                     <div key={k.key} onClick={() => total[k.key].length > 0 && setInstModal({ assignee: null, key: k.key })}
                       style={{ ...cellStyle(total[k.key].length, k.color), padding: 14 }}
@@ -5580,14 +5585,16 @@ function MainApp({ authUser, onLogout }) {
                   </div>
                 </div>
                 <div style={{ overflowX: "auto" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "100px repeat(4,1fr) 110px", gap: 8, minWidth: 640, alignItems: "center" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "100px 80px repeat(4,1fr) 110px", gap: 8, minWidth: 720, alignItems: "center" }}>
                     <div />
+                    <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center" }}>총건</div>
                     {INST_KEYS.map(k => <div key={k.key} style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center" }}>{k.label}</div>)}
                     <div style={{ fontSize: 11, color: "var(--tm)", fontWeight: 600, textAlign: "center" }}>이행률</div>
                     {rows.flatMap(a => {
                       const g = byA[a]; const r = rate(g);
                       return [
                         <div key={`${a}-l`} style={{ textAlign: "center", fontSize: 13, fontWeight: 700 }}>{a}</div>,
+                        <div key={`${a}-t`} className="mono" style={{ textAlign: "center", fontSize: 15, fontWeight: 700, color: g.sched > 0 || INST_KEYS.some(k => g[k.key].length > 0) ? "var(--tp)" : "var(--tm)" }}>{INST_KEYS.reduce((n, k) => n + g[k.key].length, 0) || "-"}{INST_KEYS.some(k => g[k.key].length > 0) ? "건" : ""}</div>,
                         ...INST_KEYS.map(k => (
                           <div key={`${a}-${k.key}`} onClick={() => g[k.key].length > 0 && setInstModal({ assignee: a, key: k.key })}
                             style={cellStyle(g[k.key].length, k.color)}
