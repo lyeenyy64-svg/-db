@@ -9,7 +9,7 @@ const os = require("os");
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const user = process.argv[2];
+const user = process.argv[2] || "조혜원"; // 인자 없이 usage_report.bat 으로 돌리면 기본 대상
 const days = Math.max(1, parseInt(process.argv[3] || "60", 10) || 60);
 if (!user) { console.log("사용법: node backend/usage_report.cjs <이름> [일수=60]"); process.exit(1); }
 
