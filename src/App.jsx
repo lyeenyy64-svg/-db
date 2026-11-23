@@ -5034,6 +5034,48 @@ function MainApp({ authUser, onLogout }) {
 
   // RematchModal → RematchModalStandalone (module-level) 사용
 
+  // ─── Payment Edit Modal ─────────────────────────────────
+  const PaymentEditModal = useStableComponent(() => {
+    const p = modal.payment;
+    const [f, setF] = useState({
+      paymentDate: (p.paymentDate || "").slice(0, 10), payerName: p.payerName || "", totalAmount: p.totalAmount || 0,
+      channel: p.cashCharge > 0 ? "캐쉬충전" : p.welcomeDirect > 0 ? "웰컴직접상환" : "본사계좌", note: p.note || "",
+    });
+    const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+    const [saving, setSaving] = useState(false);
+    const save = async () => {
+      if (saving) return;
+      if (!f.totalAmount || Number(f.totalAmount) <= 0) { showToast("금액을 입력하세요"); return; }
+      if (!f.paymentDate) { showToast("입금일을 입력하세요"); return; }
+      if (backendStatus !== "connected") { showToast("백엔드 연결이 끊겨 있어 수정할 수 없습니다."); return; }
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/payments/${p.id}`, {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ paymentDate: f.paymentDate, payerName: f.payerName, totalAmount: Number(f.totalAmount), channel: f.channel, note: f.note, userName: currentUser?.name }),
+        });
+        const result = await res.json();
+        if (!result.ok) { showToast(`수정 실패: ${result.error}`); setSaving(false); return; }
+        await reloadFromBackend();
+        showToast("입금 수정 완료");
+        setModal(null);
+      } catch (e) { showToast(`수정 실패: ${e.message}`); setSaving(false); }
+    };
+    return (
+      <Overlay onClose={() => setModal(null)}>
+        <ModalHeader title="입금 수정" onClose={() => setModal(null)} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="입금일"><input type="date" value={f.paymentDate} onChange={e => set("paymentDate", e.target.value)} style={inp} /></Field>
+          <Field label="입금자명"><KoreanInput value={f.payerName} onChange={e => set("payerName", e.target.value)} style={inp} /></Field>
+          <Field label="입금액"><MoneyInput value={f.totalAmount} onChange={v => set("totalAmount", v)} style={inp} placeholder="금액 입력" /></Field>
+          <Field label="입금 채널"><select value={f.channel} onChange={e => set("channel", e.target.value)} style={inp}>{config.paymentChannels.map(c => <option key={c}>{c}</option>)}</select></Field>
+          <Field label="비고" span={2}><KoreanInput value={f.note} onChange={e => set("note", e.target.value)} style={inp} placeholder="비고 사항" /></Field>
+        </div>
+        <ModalFooter onCancel={() => setModal(null)} onSave={save} saveLabel="수정" />
+      </Overlay>
+    );
+  });
+
   // ─── Activity Add Modal ─────────────────────────────────
   const ActivityFormModal = useStableComponent(() => {
     const debtorId = modal.debtorId || "";
@@ -7475,7 +7517,7 @@ function MainApp({ authUser, onLogout }) {
         {detailTab === "입금내역" && <div style={{ background: "var(--card)", borderRadius: 12, border: "1px solid var(--brd)", overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: "var(--bg2)" }}>{[...(isGrouped ? ["코드"] : []), "입금일","입금자","합계","본사계좌","캐쉬충전","웰컴직접","비고",""].map(h => <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "var(--tm)", fontWeight: 600, borderBottom: "1px solid var(--brd)", whiteSpace: "nowrap" }}>{h}</th>)}</tr></thead>
-            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}>{isGrouped && <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}><span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: p.debtorId === d.id ? "#3b82f618" : "var(--bg2)", color: p.debtorId === d.id ? "#1d4ed8" : "var(--tm)" }}>{codeByMemberId[p.debtorId] || "-"}</span></td>}<td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
+            <tbody>{debtorPayments.map(p => (<tr key={p.id} style={{ borderBottom: "1px solid var(--brd)" }}>{isGrouped && <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}><span className="mono" style={{ fontSize: 10, padding: "1px 6px", borderRadius: 8, background: p.debtorId === d.id ? "#3b82f618" : "var(--bg2)", color: p.debtorId === d.id ? "#1d4ed8" : "var(--tm)" }}>{codeByMemberId[p.debtorId] || "-"}</span></td>}<td className="mono" style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{fmtDate(p.paymentDate)}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{p.payerName}</td><td className="mono" style={{ padding: "8px 10px", fontWeight: 600, whiteSpace: "nowrap" }}>{fmt(p.totalAmount)}</td><td className="mono" style={{ padding: "8px 10px", color: p.companyAccount > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.companyAccount > 0 ? fmt(p.companyAccount) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.cashCharge > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.cashCharge > 0 ? fmt(p.cashCharge) : "-"}</td><td className="mono" style={{ padding: "8px 10px", color: p.welcomeDirect > 0 ? "var(--tp)" : "var(--tm)", whiteSpace: "nowrap" }}>{p.welcomeDirect > 0 ? fmt(p.welcomeDirect) : "-"}</td><td style={{ padding: "8px 10px", color: "var(--ts)", whiteSpace: "nowrap" }}>{p.note || "-"}</td><td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{canEdit && <button onClick={(e) => { e.stopPropagation(); setModal({ type: "paymentEdit", payment: p }); }} title="수정" style={{ background: "none", color: "var(--tm)", padding: 2, marginRight: 6 }}><I name="edit" size={13} /></button>}{canEdit && <button onClick={(e) => { e.stopPropagation(); if (confirm(`${fmtDate(p.paymentDate)} ${fmt(p.totalAmount)} 입금을 삭제하시겠습니까? 회수액/잔액이 원복됩니다.`)) { deletePayment(p.id).then(ok => { if (ok) addLog("삭제", "입금", `${p.debtorName} — ${fmt(p.totalAmount)} 삭제 (잔액 원복)`); }); } }} style={{ background: "none", color: "var(--err)", padding: 2 }}><I name="trash" size={13} /></button>}</td></tr>))}
               {debtorPayments.length === 0 && <tr><td colSpan={isGrouped ? 9 : 8} style={{ padding: 20, textAlign: "center", color: "var(--tm)" }}>입금 내역 없음</td></tr>}</tbody></table>
           </div>
         </div>}
@@ -14389,6 +14431,7 @@ function MainApp({ authUser, onLogout }) {
       {/* Modals */}
       {modal?.type === "debtor"          && <DebtorFormModal />}
       {modal?.type === "payment"         && <PaymentFormModal />}
+      {modal?.type === "paymentEdit"     && <PaymentEditModal />}
       {modal?.type === "paymentEdit"     && <PaymentEditModalStandalone pay={modal.payment} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} userName={currentUser?.name} />}
       {modal?.type === "rematch"         && <RematchModalStandalone pay={modal.payment} debtors={data.debtors} brands={config.brands} onClose={() => setModal(null)} onReload={reloadFromBackend} showToast={showToast} />}
       {modal?.type === "paymentHistory" && <PaymentHistoryModalStandalone pay={modal.payment} onClose={() => setModal(null)} />}

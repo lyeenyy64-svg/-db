@@ -1646,23 +1646,53 @@ app.delete("/api/payments/:id", (req, res) => {
 // PATCH /api/payments/:id
 app.patch("/api/payments/:id", (req, res) => {
   const payId = req.params.id;
-  const { payerName, note } = req.body || {};
+  const { payerName, note, paymentDate, totalAmount, channel } = req.body || {};
   const userName = extractUserName(req);
   const pay = db.prepare("SELECT * FROM payments WHERE id = ?").get(payId);
   if (!pay) return res.status(404).json({ ok: false, error: "해당 입금건 없음" });
 
   const newPayerName = payerName !== undefined ? payerName : pay.payer_name;
   const newNote = note !== undefined ? note : pay.note;
+  const newDate = paymentDate !== undefined && paymentDate !== "" ? String(paymentDate).slice(0, 10) : pay.payment_date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return res.status(400).json({ ok: false, error: "입금일 형식 오류" });
+  let newTotal = pay.total_amount;
+  if (totalAmount !== undefined) {
+    newTotal = Math.round(Number(totalAmount));
+    if (!Number.isFinite(newTotal) || newTotal <= 0) return res.status(400).json({ ok: false, error: "입금액 오류" });
+  }
+  let c = pay.company_account, ch = pay.cash_charge, w = pay.welcome_direct;
+  if (channel !== undefined || newTotal !== pay.total_amount) {
+    const chan = channel !== undefined ? channel
+      : (pay.cash_charge > 0 ? "캐쉬충전" : pay.welcome_direct > 0 ? "웰컴직접상환" : "본사계좌");
+    c = chan === "본사계좌" ? newTotal : 0;
+    ch = chan === "캐쉬충전" ? newTotal : 0;
+    w = chan === "웰컴직접상환" ? newTotal : 0;
+  }
 
-  db.prepare(`UPDATE payments SET payer_name = ?, note = ? WHERE id = ?`).run(newPayerName, newNote, payId);
+  const diff = newTotal - pay.total_amount;
+  db.transaction(() => {
+    db.prepare(`UPDATE payments SET payer_name = ?, note = ?, payment_date = ?, total_amount = ?, company_account = ?, cash_charge = ?, welcome_direct = ? WHERE id = ?`)
+      .run(newPayerName, newNote, newDate, newTotal, c, ch, w, payId);
+    if (diff !== 0) {
+      db.prepare(`UPDATE debtors SET collected_amount = collected_amount + ?, updated_at = datetime('now', 'localtime') WHERE id = ?`).run(diff, pay.debtor_id);
+    }
+    const changed = [];
+    if (newPayerName !== pay.payer_name) changed.push(`입금자 "${pay.payer_name || "-"}"→"${newPayerName || "-"}"`);
+    if (newDate !== pay.payment_date) changed.push(`입금일 ${pay.payment_date}→${newDate}`);
+    if (diff !== 0) changed.push(`금액 ${pay.total_amount.toLocaleString()}→${newTotal.toLocaleString()}원`);
+    if (c !== pay.company_account || ch !== pay.cash_charge || w !== pay.welcome_direct) changed.push("입금채널 변경");
+    if (newNote !== pay.note) changed.push("비고 수정");
+    if (changed.length) {
+      const debtor = db.prepare("SELECT name FROM debtors WHERE id = ?").get(pay.debtor_id);
+      db.prepare(`
+        INSERT INTO audit_logs (user_name, action, target, target_id, detail)
+        VALUES (?, '수정', '입금', ?, ?)
+      `).run(userName || "시스템", payId, `[입금 정보 수정] ${debtor?.name || pay.debtor_id}: ${changed.join(", ")}`);
+    }
+  })();
 
-  if (newPayerName !== pay.payer_name || newNote !== pay.note) {
-    const debtor = db.prepare("SELECT name FROM debtors WHERE id = ?").get(pay.debtor_id);
-    db.prepare(`
-      INSERT INTO audit_logs (user_name, action, target, target_id, detail)
-      VALUES (?, '수정', '입금', ?, ?)
-    `).run(userName || "시스템", payId,
-           `[입금 정보 수정] ${debtor?.name || pay.debtor_id}: 입금자 "${pay.payer_name || "-"}"→"${newPayerName || "-"}"`);
+  if (diff !== 0 || newDate !== pay.payment_date) {
+    try { runInstallmentAutoSync({ forceDebtorIds: [pay.debtor_id] }); } catch (e) { console.error("[auto-sync] 오류:", e.message); }
   }
 
   res.json({ ok: true });
